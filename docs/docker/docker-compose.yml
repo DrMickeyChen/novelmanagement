@@ -1,0 +1,197 @@
+# ============================================================
+# 小说管理系统 · 开发环境中间件
+# 目标机器：Ubuntu 22.04 / 4 核 / 8G 内存 / 60G 磁盘
+#
+# ★ 首次启动前必做三件事：
+#   1. cp .env.example .env  （然后改里面的 IP 和密码）
+#   2. 同步改 broker.conf 里的 brokerIP1（否则 RocketMQ 连不上）
+#   3. sudo sysctl -w vm.max_map_count=262144   （否则 ES 起不来）
+#
+# ★ 内存说明：下面所有堆内存都是按 8G 机器压过的，
+#   全开约吃 5G。别照抄网上教程的 -Xms2g / -Xmx8g，会 OOM。
+#   日常建议按需启动：docker compose up -d mysql redis
+# ============================================================
+
+name: novel-dev
+
+services:
+  # ----------------------------------------------------------
+  # MySQL 8 —— 业务主库
+  # ----------------------------------------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: novel-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --max_connections=500
+      - --default-time-zone=+08:00
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./data/mysql:/var/lib/mysql
+      # 把 schema.sql 放进 ./init/ 目录，容器首次启动会自动执行
+      - ./init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [novel-net]
+
+  # ----------------------------------------------------------
+  # Redis 7 —— 缓存 / 计数 / 榜单 / 分布式锁 / 幂等去重
+  # ----------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: novel-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --appendonly yes
+      --requirepass ${REDIS_PASSWORD}
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [novel-net]
+
+  # ----------------------------------------------------------
+  # Nacos —— 注册中心 + 配置中心
+  # ★ 2.x 版本除了 8848，还必须开 9848/9849 两个 gRPC 端口
+  #   很多人只映射 8848，客户端一直连不上还找不到原因
+  # ----------------------------------------------------------
+  nacos:
+    image: nacos/nacos-server:v2.3.2
+    container_name: novel-nacos
+    restart: unless-stopped
+    environment:
+      MODE: standalone
+      PREFER_HOST_MODE: hostname
+      JVM_XMS: 256m
+      JVM_XMX: 512m
+      JVM_XMN: 128m
+      NACOS_AUTH_ENABLE: "true"
+      NACOS_AUTH_TOKEN: ${NACOS_AUTH_TOKEN}
+      NACOS_AUTH_IDENTITY_KEY: serverIdentity
+      NACOS_AUTH_IDENTITY_VALUE: serverIdentity
+      TZ: Asia/Shanghai
+    ports:
+      - "8848:8848"   # 控制台 + OpenAPI
+      - "9848:9848"   # ★ gRPC 客户端端口
+      - "9849:9849"   # ★ gRPC 服务端端口
+    volumes:
+      - ./data/nacos/logs:/home/nacos/logs
+    networks: [novel-net]
+
+  # ----------------------------------------------------------
+  # RocketMQ —— 消息队列（NameServer + Broker）
+  # ----------------------------------------------------------
+  rmqnamesrv:
+    image: apache/rocketmq:5.3.1
+    container_name: novel-rmqnamesrv
+    restart: unless-stopped
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx256m -Xmn128m"
+      TZ: Asia/Shanghai
+    command: sh mqnamesrv
+    ports:
+      - "9876:9876"
+    volumes:
+      - ./data/rmq/namesrv/logs:/home/rocketmq/logs
+      - ./data/rmq/namesrv/store:/home/rocketmq/store
+    networks: [novel-net]
+
+  rmqbroker:
+    image: apache/rocketmq:5.3.1
+    container_name: novel-rmqbroker
+    restart: unless-stopped
+    depends_on: [rmqnamesrv]
+    environment:
+      NAMESRV_ADDR: rmqnamesrv:9876
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m -Xmn256m"
+      TZ: Asia/Shanghai
+    # brokerIP1 在 broker.conf 里配置，见该文件的说明 —— 这是最容易踩的坑
+    command: sh mqbroker -c /home/rocketmq/conf/broker.conf
+    ports:
+      - "10909:10909"   # VIP 通道
+      - "10911:10911"   # 主监听端口
+      - "10912:10912"   # HA 端口
+    volumes:
+      - ./data/rmq/broker/logs:/home/rocketmq/logs
+      - ./data/rmq/broker/store:/home/rocketmq/store
+      - ./broker.conf:/home/rocketmq/conf/broker.conf
+    networks: [novel-net]
+
+  # ----------------------------------------------------------
+  # Elasticsearch 8 —— 全文搜索
+  # ★ 单节点模式 + 关闭安全认证，仅用于本地开发
+  #   生产环境绝对不能这么配
+  # ----------------------------------------------------------
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: novel-es
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      xpack.security.enrollment.enabled: "false"
+      xpack.security.http.ssl.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"
+      TZ: Asia/Shanghai
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile: { soft: 65536, hard: 65536 }
+    ports:
+      - "9200:9200"
+    volumes:
+      - ./data/es:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks: [novel-net]
+
+  # ----------------------------------------------------------
+  # 以下是可选组件，需要时把注释去掉
+  # ----------------------------------------------------------
+
+  # Sentinel 控制台 —— 第三期 E2 限流熔断用，很轻量
+  # sentinel-dashboard:
+  #   image: bladex/sentinel-dashboard:1.8.7
+  #   container_name: novel-sentinel
+  #   restart: unless-stopped
+  #   environment:
+  #     JAVA_OPTS: "-Xms256m -Xmx256m"
+  #   ports:
+  #     - "8858:8858"
+  #   networks: [novel-net]
+
+  # Kibana —— 想用界面查 ES 数据时装，注意它单独吃 1G 内存
+  # kibana:
+  #   image: docker.elastic.co/kibana/kibana:8.13.4
+  #   container_name: novel-kibana
+  #   restart: unless-stopped
+  #   environment:
+  #     ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+  #   ports:
+  #     - "5601:5601"
+  #   networks: [novel-net]
+
+networks:
+  novel-net:
+    driver: bridge
