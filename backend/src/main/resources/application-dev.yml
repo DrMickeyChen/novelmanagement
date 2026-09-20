@@ -85,3 +85,33 @@ logging:
     com.novel: debug
     com.novel.modules: debug
     org.springframework.jdbc: debug
+
+  # ---------------- 同时写一份文件到 backend/logs/ ----------------
+  #
+  # ★ 为什么写文件：开发期后端是通过
+  #     Start-Process java -jar target/novel-backend.jar -WorkingDirectory backend
+  #   起的（隐藏窗口），控制台看不到；而且排障时经常需要回头翻
+  #   「刚才那次请求到底报了什么」，翻不了滚动的窗口就抓瞎。
+  #
+  # ★ 路径为什么可以写成相对路径：启动命令里 jar 本身就写成
+  #   `target/novel-backend.jar`（相对路径），所以工作目录必然是
+  #   backend/ 这一个；`logs/` 也就必然落到 backend/logs/。
+  #   用 `${user.dir}` 或绝对路径反而不必 —— 那会让这份配置换台机器就失效。
+  #
+  # ★ 放在 dev 而不是 application.yml：生产是跑在容器里的，
+  #   日志应该走 stdout 交给采集器，落文件反而会在容器里堆着。
+  #
+  # ★ .gitignore 里已有 `logs/` 和 `*.log`，不会误提交。
+  file:
+    name: logs/novel-backend.log
+
+  # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+  # ★ 一定要封顶：这个后端常年开着不重启，没有滚动策略的话
+  #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7
