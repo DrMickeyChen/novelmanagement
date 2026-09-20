@@ -80,7 +80,29 @@ public class SecurityConfig {
             "/error",
 
             /* 上传的文件（头像、封面）是静态资源，不需要登录才能看 */
-            "/uploads/**"
+            "/uploads/**",
+
+            /*
+             * ==================== 读者端（P2） ====================
+             * 看小说不需要注册登录，这是产品的硬要求（大纲 §5.3 约束 1 只约束
+             * 「未上架的作品查不到」，从没说「要登录才能查」）。
+             *
+             * ★★ 注意这里【不能】图省事写成 "/api/**"：
+             * 那会把 /api/admin/** 一起放行 —— 管理端接口变成匿名可调，
+             * 而且【不报错、不崩溃】，测试时一切正常，上线就是脱库。
+             * 白名单必须一条条列出来，多写一条的成本远低于写错一条。
+             *
+             * 路径与接口的对应关系：
+             *   /api/categories                    分类列表
+             *   /api/novels                        作品列表
+             *   /api/novels/{id}                   作品详情 + 目录
+             *   /api/novels/{id}/chapters/{cid}    章节正文（阅读器核心接口）
+             *
+             * ★ 这两个路径【只】覆盖读者端。/api/author/** 和 /api/admin/**
+             * 各自有自己的前缀，不会误伤。
+             */
+            "/api/categories",
+            "/api/novels/**"
     };
 
     /**
@@ -139,6 +161,33 @@ public class SecurityConfig {
                         /* 浏览器的 CORS 预检请求不带 token，必须放行，否则跨域时全部失败 */
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(WHITELIST).permitAll()
+
+                        /*
+                         * ==================== 角色闸（P2） ====================
+                         * ★ 顺序【必须】在白名单之后、anyRequest() 之前：
+                         *   放在白名单之前会把读者端也挡掉；
+                         *   放在 anyRequest() 之后则永远不生效（anyRequest 先命中）。
+                         *
+                         * 这两条是「URL 前缀级」的粗粒度为界，只管「能不能进这个门」，
+                         * 不管「这扇门里的东西是不是你的」。后者由 Service 的
+                         * 归属校验兜（见 NovelServiceImpl#requireOwnedNovel），
+                         * 两件事的分工见 P2 方案 C-6。
+                         *
+                         * ★ 故意【不】在这里挂 @PreAuthorize 之外的细粒度权限码：
+                         *   sys_menu.perms 只用于前端菜单显隐，不参与 API 鉴权。
+                         *   否则给作者开一个新接口就得先造一个权限点、
+                         *   再把它挂到角色上，接口和菜单数据被绑死在一起。
+                         */
+                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        /*
+                         * ★ 作者端放 ADMIN 进来是有意的：ADMIN 在种子数据里
+                         * 拥有全部菜单，是被当作超级角色设计的。挡住他只会制造
+                         * 「管理员点创作中心被 403」这种怪现象。
+                         * 真正的边界由归属校验兜住 —— 管理员能进这个门，
+                         * 但改不了别人的书（会得到 code 2002）。
+                         */
+                        .requestMatchers("/api/author/**").hasAnyRole("AUTHOR", "ADMIN")
+
                         /*
                          * 除白名单外一律要求已登录。
                          * 未登录 → 走 authenticationEntryPoint（body code:401）

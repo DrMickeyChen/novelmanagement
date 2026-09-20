@@ -3,6 +3,7 @@ package com.novel.common.security;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.novel.common.result.Result;
 import com.novel.common.result.ResultCode;
+import com.novel.common.result.ResultHttpStatus;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.MediaType;
 
@@ -19,10 +20,21 @@ import java.nio.charset.StandardCharsets;
  * {@link RestAuthenticationEntryPoint} / {@link RestAccessDeniedHandler}
  * 自己往 response 里写。
  *
- * <p><b>★ HTTP 状态码固定写 200，错误码放在 body 的 {@code code} 里。</b>
- * 这是全项目的统一约定（见 {@link Result} 的类注释）。
- * 代价要清楚：Postman 里看到的永远是 200，用 HTTP 状态码做的
- * 监控/告警看不见鉴权失败，排查时只能看 body。
+ * <p><b>★★ HTTP 状态码跟着 {@code code} 走，不再固定 200。</b>
+ * 由 {@link ResultHttpStatus} 统一翻译：401 / 403 落在 400~599 区间，
+ * 所以会原样发给前端；业务码（1001+）才返 200。
+ *
+ * <p><b>为什么必须和 {@code GlobalExceptionHandler} 用同一个规则：</b>
+ * 鉴权失败有两条路 ——
+ * <pre>
+ *   ① URL 级（这里）：filter chain 拦截 → EntryPoint / DeniedHandler → 本类
+ *   ② 方法级：{@code @PreAuthorize} 拒绝 → 已进 DispatcherServlet
+ *             → {@code @RestControllerAdvice}
+ * </pre>
+ * 同一个「权限不足」，走①和走②必须给出<b>一样的 HTTP 状态码</b>，
+ * 否则监控上要写两条规则才能统计全，而且两条规则的阈值还可能被改歪。
+ * 两边都调用 {@link ResultHttpStatus} 是保证一致性的唯一手段 ——
+ * 不靠人肉对齐，靠只有一处判断逻辑。
  *
  * @author MickeyChen
  */
@@ -39,8 +51,16 @@ public final class SecurityResponseWriter {
     public static void write(ObjectMapper objectMapper,
                              HttpServletResponse response,
                              ResultCode resultCode) throws IOException {
-        // ★ 200 而不是 401/403 —— 见类注释
-        response.setStatus(HttpServletResponse.SC_OK);
+        /*
+         * ★ 状态码从 resultCode 推导，不写死。
+         *
+         * 这里传进来的只会是 UNAUTHORIZED(401) 和 FORBIDDEN(403)，
+         * 都在 400~599 区间，所以发出去的就是真实的 401/403。
+         * 但仍然走 ResultHttpStatus 而不是直接写 SC_UNAUTHORIZED ——
+         * 让它和 GlobalExceptionHandler 共用同一处判断，
+         * 以后改规则（比如某个码想特殊处理）只用改一个地方。
+         */
+        response.setStatus(ResultHttpStatus.of(resultCode.getCode()).value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 

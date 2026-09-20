@@ -7,8 +7,16 @@
 --      MySQL 容器【首次启动】会按文件名顺序先跑 schema.sql 再跑这个
 --   ② 手动：sudo docker exec -i novel-mysql mysql -uroot -p密码 < seed.sql
 --
--- 【特点】全部用 INSERT IGNORE + 显式 id ——
---   重复执行不会报错、不会产生脏数据，可以放心反复跑。
+-- 【特点】全部用 INSERT IGNORE —— 重复执行不会报错、不会产生脏数据。
+--
+-- ★★ 但「可以放心反复跑」这句话有个例外，必须知道：
+--   INSERT IGNORE 对【已存在的行】是「跳过」，对【要新增的行】也是「跳过」——
+--   只要它撞上主键或唯一键。所以给一个旧库补一条【新数据】时，
+--   如果那条数据写死了 id，而那个 id 已经被别人占了，
+--   INSERT IGNORE 会一声不响地跳过，脚本输出一切正常，数据却没进去。
+--   这个坑真踩过：author01 原来写死 id=2，而测试库里 id=2 早被 reader01 占了，
+--   重跑 seed.sql 之后 author01 根本没建出来，也没有任何报错。
+--   结论：**新增的数据行不要写死 id**，用业务唯一键（username / role_code）关联。
 -- ============================================================
 
 USE `novel`;
@@ -27,16 +35,37 @@ INSERT IGNORE INTO `sys_role` (`id`, `role_code`, `role_name`, `remark`) VALUES
   (2, 'AUTHOR', '作者',   '可创建作品、提交审核'),
   (3, 'ADMIN',  '管理员', '审核、运营、AI 配置');
 
--- ---------- 管理员账号 ----------
--- ★ 明文密码：admin123
---   下面这串是 BCrypt(admin123, cost=10) 的结果，格式 $2a$10$...
+-- ---------- 测试账号 ----------
+-- ★ 明文密码：admin → admin123，author01 → 123456
+--   下面两串是 BCrypt(明文, cost=10) 的结果，格式 $2a$10$...
 --   和 Spring Security 的 BCryptPasswordEncoder 完全兼容。
 --   上线前务必改掉。
-INSERT IGNORE INTO `sys_user` (`id`, `username`, `password`, `nickname`, `status`) VALUES
-  (1, 'admin', '$2a$10$Jwayv0o7fFfQnySaxRQ7x.iujumvKLIbHjDfE3R2sL.EZbfBAZB3S', '系统管理员', 1);
+--
+-- ★ 为什么这里直接灌一个作者账号，而不走「申请成为作者」的流程：
+--   author_apply 那套申请 + 审核的流程是 P5 的内容，P2 只需要一个能调
+--   创作端接口的身份。等 P5 做完，这个账号依然有用 —— 它是最省事的
+--   回归测试账号（每次改完内容主干，用它跑一遍建书→提交→通过）。
+--
+-- ★ 别手抄网上找来的 BCrypt 哈希：不同 cost 值混用会让 BCryptPasswordEncoder
+--   的 matches() 静默返回 false，症状是「密码明明是对的却登录失败」，
+--   而且不报任何错，非常难查。这两串是用项目自己的编码器现算的。
+-- ★★ 故意【不写 id】：靠 uk_username 这个业务唯一键来保证幂等。
+--   写死 id 的后果见文件开头那段 —— 旧库上 id 早被注册用户占了，
+--   INSERT IGNORE 会静默跳过，脚本「成功」但账号没建出来。
+INSERT IGNORE INTO `sys_user` (`username`, `password`, `nickname`, `status`) VALUES
+  ('admin',    '$2a$10$Jwayv0o7fFfQnySaxRQ7x.iujumvKLIbHjDfE3R2sL.EZbfBAZB3S', '系统管理员', 1),
+  ('author01', '$2a$10$eQ27jDJZyUoI0VAMpOhfMuqRMreA3BU.p0LoPTrrEVgJhIjhGHF6W', '测试作者',   1);
 
-INSERT IGNORE INTO `sys_user_role` (`id`, `user_id`, `role_id`) VALUES
-  (1, 1, 3);
+-- ★ 同理不写 user_id / role_id 的字面量，改成按名字回查 ——
+--   否则账号的 id 变了、角色表被重排过，这里就会挂到错误的人身上，
+--   而且是【错得悄无声息】的：一个读者莫名其妙获得了管理员权限。
+--   幂等由 uk_user_role(user_id, role_id) 这个唯一键保证。
+INSERT IGNORE INTO `sys_user_role` (`user_id`, `role_id`)
+SELECT u.`id`, r.`id`
+FROM `sys_user` u
+         JOIN `sys_role` r
+WHERE (u.`username` = 'admin' AND r.`role_code` = 'ADMIN')
+   OR (u.`username` = 'author01' AND r.`role_code` = 'AUTHOR');
 
 -- ---------- 菜单 / 权限点 ----------
 INSERT IGNORE INTO `sys_menu` (`id`, `parent_id`, `name`, `type`, `path`, `perms`, `icon`, `sort`) VALUES
@@ -54,7 +83,7 @@ INSERT IGNORE INTO `sys_menu` (`id`, `parent_id`, `name`, `type`, `path`, `perms
   (12, NULL, '运营管理',   1, '/ops',          NULL,                      'DataLine', 3),
   (13, 12,   '公告管理',   2, '/notice/list',  'ops:notice:list',         'Bell',     1),
   (14, 12,   '审核日志',   2, '/auditlog/list','ops:auditlog:list',       'List',     2),
-  (15, 12,   '违禁审核',   2, '/ai/audit',     'ops:ai:audit:list',       'Warning',  3);
+  (15, 12,   '违禁审核',   2, '/ai/audit',     'ops:aiaudit:list',        'Warning',  3);
 
 -- 管理员拥有全部菜单
 INSERT IGNORE INTO `sys_role_menu` (`role_id`, `menu_id`)
@@ -109,14 +138,14 @@ INSERT IGNORE INTO `ai_prompt_template` (`id`, `scene`, `name`, `system_prompt`,
 -- 验收：
 --   USE novel;
 --   SHOW TABLES;                                    -- 应该有 21 张
---   SELECT username FROM sys_user;                  -- admin
+--   SELECT username FROM sys_user;                  -- admin, author01
 --   SELECT COUNT(*) FROM sys_menu;                  -- 15
 --   SELECT COUNT(*) FROM ai_prompt_template;        -- 5
 -- ============================================================
 
 -- ============================================================
 -- 验收（在 MySQL 里执行）：
---   SELECT username FROM sys_user;                      -- admin
+--   SELECT username FROM sys_user;                      -- admin, author01
 --   SELECT COUNT(*) FROM sys_menu;                      -- 15
 --   SELECT COUNT(*) FROM sys_role_menu;                 -- 17
 --   SELECT COUNT(*) FROM novel_category;                -- 8

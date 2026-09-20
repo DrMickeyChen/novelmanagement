@@ -3,6 +3,7 @@ package com.novel.modules.system.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.novel.common.result.Result;
 import com.novel.common.result.ResultCode;
+import com.novel.common.result.ResultHttpStatus;
 import com.novel.modules.system.entity.SysUser;
 import com.novel.modules.system.mapper.SysUserMapper;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +11,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -85,7 +87,7 @@ public class PingController {
                     返回的 total 应该是 1（种子数据里的 admin），
                     如果 total = 0 说明 seed.sql 没执行成功。""")
     @GetMapping("/db")
-    public Result<Map<String, Object>> pingDb() {
+    public ResponseEntity<Result<Map<String, Object>>> pingDb() {
         try {
             // ① 查总数。null 表示没有额外条件，MyBatis-Plus 会自动加上 deleted = 0
             Long total = sysUserMapper.selectCount(null);
@@ -122,7 +124,7 @@ public class PingController {
             }
 
             data.put("message", "MySQL 连接正常");
-            return Result.success(data);
+            return ResponseEntity.ok(Result.success(data));
 
         } catch (Exception e) {
             /*
@@ -138,7 +140,7 @@ public class PingController {
             data.put("reason", rootCauseMessage(e));
             data.put("hint", "检查 application-dev.yml 里的 IP 是否为虚拟机 IP；"
                     + "虚拟机上执行 `docker compose ps` 看 novel-mysql 是否 Up (healthy)");
-            return Result.error(ResultCode.SYSTEM_ERROR, "MySQL 连接失败，详见 data 字段");
+            return fail(data, "MySQL 连接失败，详见 data 字段");
         }
     }
 
@@ -152,7 +154,7 @@ public class PingController {
                     往 Redis 写一个对象再读回来，同时验证两件事：
                     ① 网络和密码没问题；② JSON 序列化配置生效（读回来的值应该是完整的，不是 null）。""")
     @GetMapping("/redis")
-    public Result<Map<String, Object>> pingRedis() {
+    public ResponseEntity<Result<Map<String, Object>>> pingRedis() {
         try {
             Map<String, Object> probe = new LinkedHashMap<>();
             probe.put("from", "novel-backend");
@@ -179,7 +181,7 @@ public class PingController {
                     ? "Redis 连接正常，JSON 序列化正常"
                     : "Redis 能连上，但读回来的值和写进去的不一样，请检查 RedisConfig");
 
-            return Result.success(data);
+            return ResponseEntity.ok(Result.success(data));
 
         } catch (Exception e) {
             log.error("Redis 连通性检测失败", e);
@@ -190,7 +192,7 @@ public class PingController {
             data.put("reason", rootCauseMessage(e));
             data.put("hint", "检查 application-dev.yml 里 spring.data.redis 的 host 和 password；"
                     + "注意 Spring Boot 3 的配置路径是 spring.data.redis，不是 spring.redis");
-            return Result.error(ResultCode.SYSTEM_ERROR, "Redis 连接失败，详见 data 字段");
+            return fail(data, "Redis 连接失败，详见 data 字段");
         }
     }
 
@@ -213,5 +215,26 @@ public class PingController {
             cause = cause.getCause();
         }
         return cause.getClass().getSimpleName() + ": " + cause.getMessage();
+    }
+
+    /**
+     * 依赖不通时的出口：<b>错误码 + 排查数据 + 真实的 HTTP 500</b>。
+     *
+     * <p><b>★ 为什么不能用 {@code return Result.error(...)} 了结：</b>
+     * 那样 HTTP 状态码还是 200 —— MySQL 挂了、Redis 挂了，
+     * 在监控上和「一切正常」长得一模一样。而这两个接口恰恰是
+     * <b>给监控和运维看的</b>，它们返回 200 就等于没有监控。
+     *
+     * <p>所以这里返回 {@code ResponseEntity}，状态码由
+     * {@link ResultHttpStatus} 从错误码推导（{@code SYSTEM_ERROR = 500}）。
+     * 判断逻辑和 {@code GlobalExceptionHandler} 是同一处，不重复实现。
+     *
+     * <p>注意 {@code data} 必须留在 body 里：这个接口存在的意义就是
+     * 告诉排查的人「到底哪一步断了、下一步该看什么」。
+     */
+    private ResponseEntity<Result<Map<String, Object>>> fail(Map<String, Object> data, String message) {
+        Integer code = ResultCode.SYSTEM_ERROR.getCode();
+        return ResponseEntity.status(ResultHttpStatus.of(code))
+                .body(Result.error(code, message, data));
     }
 }

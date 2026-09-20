@@ -2,6 +2,8 @@ package com.novel.common.enums;
 
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import com.fasterxml.jackson.annotation.JsonValue;
+import com.novel.common.exception.BusinessException;
+import com.novel.common.result.ResultCode;
 import lombok.Getter;
 
 import java.util.Arrays;
@@ -39,6 +41,7 @@ public enum CommentStatus {
         this.desc = desc;
     }
 
+    /** ★ 非法值抛 {@code PARAM_ERROR(400)} 而不是 {@code IllegalArgumentException} —— 理由见 {@link NovelStatus#fromCode} */
     public static CommentStatus fromCode(Integer code) {
         if (code == null) {
             return null;
@@ -46,7 +49,8 @@ public enum CommentStatus {
         return Arrays.stream(values())
                 .filter(s -> s.code.equals(code))
                 .findFirst()
-                .orElseThrow(() -> new IllegalArgumentException("未知的评论状态：" + code));
+                .orElseThrow(() -> new BusinessException(ResultCode.PARAM_ERROR,
+                        "未知的评论状态：" + code));
     }
 
     public boolean canTransitTo(CommentStatus target) {

@@ -18,10 +18,22 @@ import java.io.Serializable;
  * }
  * </pre>
  *
- * <p><b>为什么 HTTP 状态码恒为 200、错误信息放 body 里：</b>
- * 业务错误（比如「用户名已存在」）不是 HTTP 层面的错误，
- * 用 4xx/5xx 表达会让 axios 拦截器、网关、监控面板都把它当异常流量。
- * 真正的系统异常（比如数据库连不上）才走 HTTP 500，由
+ * <p><b>★★ body 里的 {@code code} 和 HTTP 状态码是什么关系：</b>
+ * <pre>
+ *   code 在 400 ~ 599（401/403/404/405/500…）→ HTTP 状态码 = code
+ *   其余业务码（1002 用户名或密码错误、2001 小说不存在…）→ HTTP 200
+ * </pre>
+ * 判断逻辑只有一处，在 {@link ResultHttpStatus}；两边都调它，
+ * 所以「同一个错误走不同路径返回不同状态码」这种事不会发生。
+ *
+ * <p><b>为什么业务错误仍然是 HTTP 200：</b>
+ * 「用户名已存在」是<b>一个合法请求的正常结果</b>，不是系统故障。
+ * 给它 4xx 会让 APM、告警、网关熔断统计把它当异常流量 ——
+ * 用户输错一次密码就报一次警。而且前端 {@code request.js} 靠
+ * {@code code === 401} 判断「该踢回登录页了」，业务码走的是
+ * 「弹提示、留在原地」，这两种处理必须分得开。
+ *
+ * <p>真正的系统异常走 HTTP 500，由
  * {@link com.novel.common.exception.GlobalExceptionHandler} 兜底。
  *
  * @param <T> 业务数据类型
@@ -82,6 +94,20 @@ public class Result<T> implements Serializable {
     /** 失败，完全自定义 */
     public static <T> Result<T> error(Integer code, String message) {
         return new Result<>(code, message, null);
+    }
+
+    /**
+     * 失败，<b>并且带数据</b>。
+     *
+     * <p>失败还给数据听起来矛盾，但对<b>排查类接口</b>是必需的 ——
+     * {@code /api/ping/db} 失败时，{@code message} 只能说「MySQL 连接失败」，
+     * 真正有用的东西（根因、该检查哪个配置）在 {@code data} 里。
+     * 没有这个重载的话，那两个接口就只能返回一句笼统的提示，等于白查。
+     *
+     * <p>业务接口一般用不到它 —— 失败就是失败，没什么可说的。
+     */
+    public static <T> Result<T> error(Integer code, String message, T data) {
+        return new Result<>(code, message, data);
     }
 
     /* ==================== 便捷判断 ==================== */

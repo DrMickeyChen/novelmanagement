@@ -43,10 +43,15 @@ request.interceptors.request.use(
 
 request.interceptors.response.use(
   /**
-   * HTTP 2xx —— 注意这里【不代表业务成功】。
+   * HTTP 2xx —— 注意这里【不代表业务成功】，还得再判一次 code。
    *
-   * 后端约定业务错误也返回 HTTP 200，把错误码放在 body 的 code 里
-   * （见后端 Result.java 的说明）。所以这里要再判一次 code。
+   * ★ 后端的规则（见后端 ResultHttpStatus）：
+   *   code 在 400~599（401/403/404/405/500…）→ HTTP 状态码 = code
+   *   业务码（1002 用户名或密码错误、2001 作品不存在…）→ HTTP 200
+   *
+   * 也就是说：协议层的错误落到下面的 error 分支，
+   * 业务错误仍然走这里。所以【两条分支都必须处理 code】——
+   * 只写一条，就会出现「后端明明拒绝了，前端却当成功」。
    */
   (response) => {
     const res = response.data
