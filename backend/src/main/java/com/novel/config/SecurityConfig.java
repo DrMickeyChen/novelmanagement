@@ -3,6 +3,7 @@ package com.novel.config;
 import com.novel.common.security.RestAccessDeniedHandler;
 import com.novel.common.security.RestAuthenticationEntryPoint;
 import com.novel.common.security.filter.JwtAuthenticationFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
@@ -161,6 +162,59 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
                 .authorizeHttpRequests(auth -> auth
+                        /*
+                         * ==================== 异步派发（P4） ====================
+                         *
+                         * ★★★ 这一条是给 SSE 流收尾用的，看着莫名其妙，删了会让
+                         *     【每一个 AI 流都在结束的那一刻断掉】。别删。
+                         *
+                         * 事情的经过（四步，缺一步都不会是这个症状）：
+                         *   ① AI 流推完，SseEmitter 调 complete()
+                         *   ② Spring MVC 对这个请求发起一次【ASYNC 派发】——
+                         *      拿同一个 URI 再走一遍过滤器链，把响应收尾
+                         *   ③ JwtAuthenticationFilter 是 OncePerRequestFilter，
+                         *      它的 shouldNotFilterAsyncDispatch() 默认返回 true，
+                         *      所以这次派发【不跑认证】→ SecurityContext 是空的
+                         *   ④ 而 Spring Security 6 的 AuthorizationFilter 默认
+                         *      filterAsyncDispatch = true（5.x 是 false，这是 6 的
+                         *      行为变更）→ 这次派发被当成【匿名请求】重新鉴权
+                         *      → /api/ai/** 要 AUTHOR → AccessDeniedException
+                         *
+                         * ★ 症状之所以难认，是因为异常发生在响应【已经提交】之后：
+                         *   ExceptionTranslationFilter 写不出 403，只留下两条 ERROR
+                         *     「Unable to handle the Spring Security Exception
+                         *       because the response is already committed」
+                         *     「Cannot render error page ... has already been committed」
+                         *   然后【连接被硬切】。前端看到的是「流断了、没有 [DONE]」——
+                         *   和超时、断网的症状一模一样，而服务端日志里生成明明是成功的。
+                         *
+                         * ★★ 放行 ASYNC 为什么不是开洞：
+                         *   - DispatcherType 是【Servlet 容器】设的，客户端伪造不了
+                         *     （改不了请求头、加不了参数让它变成 ASYNC）
+                         *   - ASYNC 派发只可能由【同一次请求】在自己 REQUEST 派发
+                         *     已经走完完整鉴权之后发起
+                         *   所以放行它 = 放行「一个已经通过鉴权的请求的收尾动作」，
+                         *   不是新开一个匿名入口。真正的匿名请求走的是 REQUEST 派发，
+                         *   照样要过下面所有的规则。
+                         *
+                         * ★★ 必须排在【最前面】：authorizeHttpRequests 是第一个命中的
+                         *   规则生效，而 ASYNC 派发的 URI 和原请求【完全一样】
+                         *   （还是 /api/ai/outline）。这一条若排在 /api/ai/** 那条之后，
+                         *   那条会先命中并再次拒绝，这一条形同虚设 —— 而且症状
+                         *   和没加它一模一样，会让人以为「加了没用」。
+                         *
+                         * ★ 为什么不用 shouldFilterAllDispatcherTypes(false)：
+                         *   那个开关会连 ERROR 派发一起不管，范围更大。这里只放开
+                         *   ASYNC，ERROR 派发仍然按 /error 那条白名单走 ——
+                         *   宁可少放开一点。
+                         *
+                         * ★ 被否决的备选方案：让 JwtAuthenticationFilter 在 ASYNC
+                         *   派发上也跑（shouldNotFilterAsyncDispatch() 返回 false）。
+                         *   那会在每次流收尾时再查一次 Redis 校验 token，而它本来就是
+                         *   同一个已认证的请求 —— 多一次网络往返，换不来任何东西。
+                         */
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
+
                         /* 浏览器的 CORS 预检请求不带 token，必须放行，否则跨域时全部失败 */
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(WHITELIST).permitAll()
@@ -230,6 +284,29 @@ public class SecurityConfig {
                          * 但改不了别人的书（会得到 code 2002）。
                          */
                         .requestMatchers("/api/author/**").hasAnyRole("AUTHOR", "ADMIN")
+
+                        /*
+                         * ==================== AI 接口（P4） ====================
+                         *
+                         * ★★ 这一条【必须单独写】，它盖不住 —— 这是 P4 最容易漏的一处。
+                         *
+                         * 写作助手的接口路径是 /api/ai/**（大纲 §6.3 定的），
+                         * 而【不是】/api/author/ai/**。前缀不一样，
+                         * 上面那条 /api/author/** 规则对它【完全无效】。
+                         *
+                         * 漏了这一条的症状：AI 接口一路落到最后的
+                         * anyRequest().authenticated() —— 听起来还算安全
+                         * （匿名的确调不到），但【普通读者 READER 能调】。
+                         * 而 AI 是要烧配额的（E1 接了真实模型之后就是烧钱），
+                         * 且不出任何错、不打任何日志，直到有人把额度刷完。
+                         *
+                         * ★ 为什么不让 AI 接口挪到 /api/author/ai/** 下面：
+                         * 那会让「一个包 = 一个将来要拆出去的微服务」这条约定破功 ——
+                         * modules/ai 是独立的包（将来的 novel-ai），
+                         * 它的 URL 前缀应该和它的包对应，而不是寄居在 author 下面。
+                         * 多写一行配置，换 URL 结构和模块结构一致，是划算的。
+                         */
+                        .requestMatchers("/api/ai/**").hasAnyRole("AUTHOR", "ADMIN")
 
                         /*
                          * 除白名单外一律要求已登录。

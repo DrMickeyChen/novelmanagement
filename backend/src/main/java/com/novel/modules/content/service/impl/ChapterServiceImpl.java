@@ -246,6 +246,23 @@ public class ChapterServiceImpl implements ChapterService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
+    public void withdraw(Long id) {
+        Chapter chapter = guard.requireOwnedChapter(id);
+        /*
+         * ★ 不显式判断「当前必须是 PENDING」—— 状态机已经限死了
+         * 只有 PENDING → DRAFT 这一条（见 ChapterStatus#canTransitTo），
+         * 重复判断迟早会和状态机不一致。非法状态由 transitStatus 抛 3003。
+         *
+         * ★ 不调 syncNovelStat：撤回前（PENDING）和撤回后（DRAFT）
+         * 都不计入 chapter_count（口径是"已发布章节数"），统计值没变。
+         * 对比 saveContent 里的"已发布自动退回草稿"—— 那条是从 PUBLISHED
+         * 退下来的，统计值真的变了，所以那边必须调。
+         */
+        transitStatus(chapter, ChapterStatus.DRAFT, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
         Chapter chapter = guard.requireOwnedChapter(id);
         boolean wasPublished = chapter.getStatus() == ChapterStatus.PUBLISHED;
@@ -486,8 +503,24 @@ public class ChapterServiceImpl implements ChapterService {
          * syncNovelStat 会自己发一条 UPDATE 去写 novel 的四个冗余字段；
          * 反过来先调它的话，chapter 这个内存对象里还是旧状态，
          * 后面 updateById 会把旧值写回去。
+         *
+         * ★★ 判据是「【发布状态】是否发生了变化」，所以看两个方向：
+         *      target == PUBLISHED  有章节被发布了
+         *      from   == PUBLISHED  有已发布的章节被撤下来了
+         *
+         * ⚠ P4 之前这里写的是 `target == DRAFT`，那是**错的**（只是当时恰好没暴露）：
+         *   它把「以草稿为目标」当成了「从已发布退下来」的同义词。
+         *   当时 DRAFT 只有一个来源（saveContent 的自动退回，from 必是 PUBLISHED），
+         *   两者确实等价。但 P4 加了「撤回提交」（PENDING → DRAFT）之后就不等价了 ——
+         *   撤回来的章节从来没被发布过，统计值压根没变，
+         *   用 target == DRAFT 判断会白算一次 4 个冗余列、
+         *   并给这本书凭空加一次 UPDATE novel 的行锁。
+         *   改成看 from 之后，两种情况各自正确，而且【读起来就是它的本意】。
+         *   （这个 bug 不会报错、不会出错数据，只会让并发时多一次锁等待 ——
+         *    所以它本来永远也不会被发现。）
          */
-        if (target == ChapterStatus.PUBLISHED || target == ChapterStatus.DRAFT) {
+        boolean leftPublished = from == ChapterStatus.PUBLISHED;
+        if (target == ChapterStatus.PUBLISHED || leftPublished) {
             novelService.syncNovelStat(chapter.getNovelId());
         }
 

@@ -100,6 +100,23 @@ public interface ChapterService {
     void submit(Long id);
 
     /**
+     * 撤回提交（{@code PENDING → DRAFT}）—— <b>P4 补的</b>，章节版。
+     *
+     * <p>和 {@code NovelService#withdraw} 是同一件事，理由见那边的注释
+     * （一句话：撤回是把章节从审核队列里拿走，不是绕过审核）。
+     *
+     * <p><b>★ 和作品版的一处区别：这里撤回【不影响】作品的统计值。</b>
+     * {@code chapter_count} / {@code word_count} 的口径都是「<b>已发布</b>」，
+     * 而撤回前（{@code PENDING}）撤回后（{@code DRAFT}）都不计入，
+     * 所以不需要 {@code syncNovelStat}。
+     * <p>这一点和 {@link #saveContent} 里的「已发布自动退回草稿」不同 ——
+     * 那条路径是从 {@code PUBLISHED} 退下来的，统计值真的变了。
+     *
+     * <p>★ 只有 {@code PENDING} 能撤回，其余状态返回 {@code 3003}。
+     */
+    void withdraw(Long id);
+
+    /**
      * 删除章节（逻辑删除）。
      *
      * <p><b>★ 走的是手写的 {@code logicDeleteAndFreeChapterNo}，不是 {@code deleteById}。</b>

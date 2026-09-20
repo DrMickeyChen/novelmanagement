@@ -173,6 +173,25 @@ public class AuthorChapterController {
     }
 
     @Operation(
+            summary = "撤回提交",
+            description = """
+                    **待审核 → 草稿**。章节版的「撤回提交」，理由同作品的
+                    `POST /api/author/novels/{id}/withdraw`（一句话：撤回是把章节
+                    从审核队列里拿走，不是绕过审核）。
+
+                    ★ **这里撤回不影响作品的字数 / 章节数**：那两个字段的口径是
+                    「**已发布**」，而撤回前（待审核）撤回后（草稿）都不计入。
+                    对比之下「已发布改正文自动退回草稿」是从已发布退下来的，
+                    那一步必须重算 —— 两件事看起来像，影响完全不同。
+
+                    ★ 只有待审核能撤回，其余状态返回 `3003`。""")
+    @PostMapping("/api/author/chapters/{id}/withdraw")
+    public Result<Void> withdraw(@PathVariable Long id) {
+        chapterService.withdraw(id);
+        return Result.success("已撤回，可以继续修改了", null);
+    }
+
+    @Operation(
             summary = "删除章节",
             description = """
                     逻辑删除。**已发布的章节删除后会重算作品的字数/章节数**。

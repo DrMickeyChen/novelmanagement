@@ -5,8 +5,10 @@ import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.modules.content.entity.Chapter;
 import com.novel.modules.content.entity.Novel;
+import com.novel.modules.content.entity.OutlineNode;
 import com.novel.modules.content.mapper.ChapterMapper;
 import com.novel.modules.content.mapper.NovelMapper;
+import com.novel.modules.content.mapper.OutlineNodeMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -41,6 +43,7 @@ public class NovelAccessGuard {
 
     private final NovelMapper novelMapper;
     private final ChapterMapper chapterMapper;
+    private final OutlineNodeMapper outlineNodeMapper;
 
     /**
      * 取作品，不存在就抛 {@code NOVEL_NOT_FOUND(2001)}。
@@ -145,5 +148,96 @@ public class NovelAccessGuard {
             throw new BusinessException(ResultCode.CHAPTER_NOT_FOUND);
         }
         return chapter;
+    }
+
+    /* ==================== 大纲树（P4） ==================== */
+
+    /**
+     * 取「我作品下的」大纲节点：节点不存在 → {@code 3006}；存在但不属于我 → {@code 3007}。
+     *
+     * <p><b>形状和 {@link #requireOwnedChapter} 完全一致，理由也一样：</b>
+     * {@code novel_outline} 上没有 {@code author_id}，归属只能经 {@code novel} 判定，
+     * 所以这里多一次主键查询。
+     *
+     * <p>★ 作品查不到时（节点成了孤儿）返回 {@code 3007} 而不是 {@code 3006}，
+     * 并打一条<b>措辞不同</b>的 WARN —— 和 {@code requireOwnedChapter} 同样的保守方向：
+     * 不存在的东西默认不属于你，但真要排查时能从日志里区分出是哪种。
+     */
+    public OutlineNode requireOwnedOutlineNode(Long nodeId) {
+        return checkOwnedByNovel(outlineNodeMapper.selectById(nodeId), nodeId);
+    }
+
+    /**
+     * 同 {@link #requireOwnedOutlineNode}，但<b>对节点行加排他锁</b>。
+     *
+     * <p><b>★ 只给「由大纲节点创建正文」用</b>（{@code OutlineServiceImpl#createChapter}），
+     * 理由见 {@code OutlineNodeMapper#selectByIdForUpdate} 的注释 ——
+     * 那里要「先读 chapter_id 判空、再决定新建还是幂等」，
+     * 读和写之间不能有别人插进来。
+     *
+     * <p><b>★★ 必须在事务里调用</b>，否则 InnoDB 在语句结束就释放锁，
+     * 这个方法等于没加锁，且不会有任何报错。
+     *
+     * <p>★ 别的接口<b>不要</b>图省事用它：加锁会阻塞并发的其他写请求
+     * （比如同一时刻的自动保存），而我们只在真正需要「读-判-写」原子性的地方才付这个代价。
+     */
+    public OutlineNode requireOwnedOutlineNodeForUpdate(Long nodeId) {
+        return checkOwnedByNovel(outlineNodeMapper.selectByIdForUpdate(nodeId), nodeId);
+    }
+
+    /**
+     * 取节点并确认它属于<b>指定的作品</b>：不存在或不属于 → {@code 3007}。
+     *
+     * <p><b>★★ 这个方法补的是 P4 归属校验里唯一的洞，而且这个洞不在 URL 上，在请求体里。</b>
+     * <p>建节点（{@code dto.parentId}）和拖拽（{@code dto.targetParentId}）
+     * 都会从<b>请求体</b>里收到一个节点 id。如果只校验 URL 上那个 id 的归属，
+     * 就能把<b>自己的节点挂到别人的节点下面</b> —— 而这条 UPDATE 语法完全合法，
+     * 数据库不会有任何抱怨。
+     * <p>症状极其隐蔽：{@code GET /outline} 走的是
+     * {@code requireOwned(自己的 novelId)} 查全量，<b>别人的节点根本查不出来</b>,
+     * 于是自己那个节点变成孤儿 —— <b>在树上完全不显示，且没有任何错误</b>。
+     * 作者会以为「保存失败」，再拖一次，循环。
+     *
+     * <p>★ 返回 {@code 3007}（而不是 {@code 3006}）是刻意的：
+     * 这个方法的语义是「确认它在这本书里」，「不在」是不满足，
+     * 无论原因是它压根不存在还是它属于别人 —— 对调用方是同一件事，
+     * 而区分开会给出一份「哪些 nodeId 真实存在」的探针。
+     */
+    public OutlineNode requireNodeInNovel(Long novelId, Long nodeId) {
+        OutlineNode node = outlineNodeMapper.selectById(nodeId);
+        if (node == null || !Objects.equals(node.getNovelId(), novelId)) {
+            throw new BusinessException(ResultCode.OUTLINE_NODE_NOT_YOURS);
+        }
+        return node;
+    }
+
+    /**
+     * 两个公开方法共用的那一段：节点 → 作品 → 作者。
+     *
+     * <p>抽出来是因为「越权必须留痕」这件事只能有一处实现（见类注释），
+     * 加锁版和非加锁版只该在<b>怎么取节点</b>上不同，不该在<b>怎么判归属</b>上分家。
+     *
+     * @param node   已经取到的节点，可能为 {@code null}
+     * @param nodeId 只用于日志
+     */
+    private OutlineNode checkOwnedByNovel(OutlineNode node, Long nodeId) {
+        if (node == null) {
+            throw new BusinessException(ResultCode.OUTLINE_NODE_NOT_FOUND);
+        }
+
+        Novel novel = novelMapper.selectById(node.getNovelId());
+        Long userId = UserContext.requireUserId();
+
+        if (novel == null) {
+            log.warn("[孤儿大纲节点] nodeId={} 的 novelId={} 已不存在，userId={} 试图操作它",
+                    nodeId, node.getNovelId(), userId);
+            throw new BusinessException(ResultCode.OUTLINE_NODE_NOT_YOURS);
+        }
+        if (!Objects.equals(novel.getAuthorId(), userId)) {
+            log.warn("[越权尝试] userId={} 试图操作 outlineNodeId={}（属于 novelId={} authorId={}）",
+                    userId, nodeId, novel.getId(), novel.getAuthorId());
+            throw new BusinessException(ResultCode.OUTLINE_NODE_NOT_YOURS);
+        }
+        return node;
     }
 }

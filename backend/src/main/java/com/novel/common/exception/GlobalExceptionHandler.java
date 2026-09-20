@@ -4,7 +4,9 @@ import com.novel.common.result.Result;
 import com.novel.common.result.ResultCode;
 import com.novel.common.result.ResultHttpStatus;
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.web.servlet.MultipartProperties;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -16,6 +18,7 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.servlet.NoHandlerFoundException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 
@@ -61,7 +64,16 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @RestControllerAdvice
+@RequiredArgsConstructor
 public class GlobalExceptionHandler {
+
+    /**
+     * Spring Boot 自己绑定的 {@code spring.servlet.multipart.*} 配置。
+     *
+     * <p>★ 这里注入它而不是读 {@code e.getMaxUploadSize()}，原因见
+     * {@link #handleMaxUploadSize} 上那段 —— 一句话：那个字段是 {@code -1}。
+     */
+    private final MultipartProperties multipartProperties;
 
     /* ========== 业务异常：最常见的，一天几万次，warn 级别 ========== */
 
@@ -152,6 +164,68 @@ public class GlobalExceptionHandler {
     public ResponseEntity<Result<Void>> handleNotReadable(HttpMessageNotReadableException e) {
         log.warn("请求体解析失败 | {}", e.getMessage());
         return respond(ResultCode.PARAM_ERROR.getCode(), "请求内容格式不正确");
+    }
+
+    /**
+     * <b>上传的文件超过了 {@code multipart.max-file-size} —— P4 封面上传补的。</b>
+     *
+     * <p><b>★★ 不写这个 handler 的后果，正是负向用例 13 要验的那一条：</b>
+     * 这个异常在 Spring 里是<b>在进入 Controller 之前</b>由
+     * {@code StandardServletMultipartResolver} 抛的（Tomcat 一边读流一边就超限了），
+     * 所以 Controller 里的 {@code try-catch}、参数上的 {@code @Valid}
+     * <b>一个都拦不住它</b>。没有这个 handler 时它掉进最底下的
+     * {@code Exception.class} 兜底 → 返回 <b>HTTP 500「服务器开小差了」</b>，
+     * 还带一条完整堆栈的 ERROR 日志。
+     *
+     * <p>而用户做的事只是「传了一张大图」—— 这明显是 400，不是 500。
+     * 归到 500 的代价有两条，和 {@link #handleTypeMismatch} 那条一模一样：
+     * <ul>
+     *   <li>前端拿 500 会当成「后端挂了」，不会提示「图片太大，请压缩后重试」</li>
+     *   <li>监控上把一次正常的用户误操作记成系统故障。
+     *       ★ 而 <b>10MB 恰好是个很容易被撞到的阈值</b>（手机直出的照片就有
+     *       8~15MB），这条假 ERROR 不是理论上的，是每天都会有的</li>
+     * </ul>
+     *
+     * <p>★ 提示语里的上限读的是 {@link MultipartProperties}（也就是
+     * {@code spring.servlet.multipart.max-file-size}），<b>不是</b>
+     * {@code e.getMaxUploadSize()}。
+     *
+     * <p><b>★★ 这里踩过一个坑，值得记下来：</b>第一版写的是
+     * {@code e.getMaxUploadSize() / 1024 / 1024}，跑出来是
+     * <b>「文件太大了，最大允许 0MB」</b>。原因是这个异常从
+     * {@code StandardMultipartHttpServletRequest} 抛出来时，长度参数传的是
+     * <b>{@code -1}（表示「不知道」）</b>—— 真正施加限制的是 Tomcat 的
+     * multipart 解析器，Spring 在这一层拿不到那个数字。
+     * 而 {@code -1 / 1024 / 1024} 在 Java 的整数除法下是 <b>{@code 0}</b>
+     * （向零截断），于是「不知道」被显示成了「最大 0MB」——
+     * <b>一个看起来像正常输出的错数字，比不显示数字糟糕得多</b>。
+     *
+     * <p>★ 换成从配置读之后，「改 yml 数字变了、提示语跟着变」这件事
+     * 也顺带成立了 —— 而这正是原来打算靠 {@code getMaxUploadSize()} 拿到的效果。
+     *
+     * <p>★ 只报「单个文件」的上限，不提 {@code max-request-size}：
+     * 本项目的上传接口都只收<b>一个</b>文件（{@code @RequestParam MultipartFile}），
+     * 所以对真实请求来说「单个文件上限」就是准确的那句话。
+     * 真要有人拼一个多文件请求把 request-size 撞了，提示语会略微不准 ——
+     * 这个取舍是有意的：为了那一种情况写成
+     * 「单文件最大 10MB、单次请求最大 20MB」，会让 99% 的普通用户
+     * 看到一句他不需要的信息。
+     *
+     * <p>★ 它和 {@link #handleTypeMismatch}、{@link #handleNoResourceFound} 是同一类补丁：
+     * <b>「一个正常会被触发的分支，不能因为没人接它而变成 500」</b>。
+     * 这个项目里每加一块新功能都会暴露出一个这样的洞 ——
+     * P3 暴露的是路径参数类型，P4 暴露的就是这个上传超限。
+     * 加完一个新接口后顺手问一句「它的失败路径会掉进哪个 handler」，
+     * 比事后看日志便宜得多。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Result<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e,
+                                                            HttpServletRequest request) {
+        long maxMb = multipartProperties.getMaxFileSize().toMegabytes();
+        String message = "文件太大了，最大允许 " + maxMb + "MB，请压缩后重试";
+        log.warn("上传文件超限 | {} {} | 上限={}MB | {}",
+                request.getMethod(), request.getRequestURI(), maxMb, e.getMessage());
+        return respond(ResultCode.PARAM_ERROR.getCode(), message);
     }
 
     /* ========== 鉴权失败（方法级） ========== */

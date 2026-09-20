@@ -13,14 +13,15 @@ import java.util.Arrays;
  *
  * <pre>
  *   0 草稿 ──提交审核──▶ 1 待审核 ──管理员通过──▶ 2 已上架
- *                          │                      │
- *                          └──管理员驳回──▶ 4 已驳回   管理员下架
- *                                             │         ▼
- *                                             └──▶ 0 草稿   3 已下架
- *                                                        │
- *                                                   重新上架
- *                                                        ▼
- *                                                      2 已上架
+ *      ▲                   │  │                   │
+ *      │                   │  └──管理员驳回──▶ 4 已驳回   管理员下架
+ *      │                   │                     │         ▼
+ *      │              ★作者撤回提交              │
+ *      └───────────────────┘                     └──▶ 0 草稿   3 已下架
+ *                                                              │
+ *                                                         重新上架
+ *                                                              ▼
+ *                                                            2 已上架
  * </pre>
  *
  * <p><b>为什么要用枚举而不是散落的 0/1/2/3/4：</b>
@@ -100,8 +101,22 @@ public enum NovelStatus {
         return switch (this) {
             // 草稿可以提交审核，也可以直接删除（不在这里表达）
             case DRAFT -> target == PENDING;
-            // 待审核：通过 → 上架；驳回 → 已驳回
-            case PENDING -> target == PUBLISHED || target == REJECTED;
+            /*
+             * 待审核的三条出路：
+             *   → PUBLISHED  管理员通过
+             *   → REJECTED   管理员驳回
+             *   → DRAFT      作者自己「撤回提交」（P4 补的）
+             *
+             * ★ 为什么作者撤回是安全的、不会绕过审核：
+             *   撤回只是把书从【审核队列里拿走】，让它回到作者手里继续改。
+             *   审核员打开的那一刻，这条记录还在 PENDING ——
+             *   撤回和「通过」是两条互斥的 UPDATE，
+             *   谁先提交谁生效，后到的那条会读到已经变了的状态而失败。
+             *   真正危险的是【改内容】而不是【改状态】，
+             *   而改内容被 isEditable() 挡着（PENDING 不可编辑），
+             *   撤回之后它才变成可编辑的 —— 顺序是对的。
+             */
+            case PENDING -> target == PUBLISHED || target == REJECTED || target == DRAFT;
             // 已上架：只能下架（要改内容得先下架，或走「退回草稿」）
             case PUBLISHED -> target == OFFLINE;
             /*
@@ -146,10 +161,12 @@ public enum NovelStatus {
      *       （{@code OFFLINE} 是可编辑的，所以下架后就能改）。</li>
      * </ul>
      *
-     * <p><b>代价（已知的、可接受）：</b>作者提交后发现简介有错别字，在审核出结果前
-     * 改不了，只能等管理员驳回后再改。正经的解法是做「撤回提交」，
-     * 但那需要一条 {@code PENDING → DRAFT} 的流转，属于 P4 创作中心的范围，
-     * 这里先不做 —— <b>宁可让作者等一会儿，也不能让审核被绕过。</b>
+     * <p><b>★ P4 补上了当初记在这里的那个缺口：</b>原本作者提交后发现简介有错别字，
+     * 在审核出结果前改不了，只能等管理员驳回 —— 现在有了「撤回提交」
+     * （{@code PENDING → DRAFT}，见 {@link #canTransitTo}），
+     * 撤回之后状态变回 {@code DRAFT}，本方法返回 true，就能改了。
+     * <b>缺口的解法是「先撤回再改」，而不是「让 PENDING 也能改」</b> ——
+     * 后者才是绕过审核，前者只是把书从队列里拿出来，顺序上没有漏洞。
      */
     public boolean isEditable() {
         return this == DRAFT || this == REJECTED || this == OFFLINE;

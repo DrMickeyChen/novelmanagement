@@ -13,8 +13,13 @@ import java.util.Arrays;
  *
  * <pre>
  *   0 草稿 ──提交审核──▶ 1 待审核 ──管理员通过──▶ 2 已发布
- *                          │
- *                          └──管理员驳回──▶ 4 已驳回 ──改完重新提交──▶ 1 待审核
+ *      ▲                   │  │                      │
+ *      │                   │  └──管理员驳回──▶ 4 已驳回   │
+ *      │                   │                     │        │
+ *      │              ★作者撤回提交              └──改完重新提交──▶ 1 待审核
+ *      └───────────────────┘
+ *      ▲
+ *      └────── 已发布的章节要改内容，自动退回草稿（saveContent）
  * </pre>
  *
  * <p>注意章节<b>没有</b>「已下架」状态 —— 章节不能单独下架，
@@ -67,7 +72,13 @@ public enum ChapterStatus {
         return switch (this) {
             // 草稿可以提交审核，也可以删掉（不在这里表达）
             case DRAFT -> target == PENDING;
-            case PENDING -> target == PUBLISHED || target == REJECTED;
+            /*
+             * ★ P4 补的 DRAFT：作者「撤回提交」。理由和
+             *   {@link NovelStatus#canTransitTo} 里那段完全一致 ——
+             *   撤回是把章节从审核队列里拿走，不是绕过审核
+             *   （改正文仍然要求先变成 DRAFT，见 {@link #isEditable}）。
+             */
+            case PENDING -> target == PUBLISHED || target == REJECTED || target == DRAFT;
             // 已发布的章节要改内容，得先退回草稿再走一遍审核
             case PUBLISHED -> target == DRAFT;
             case REJECTED -> target == PENDING;

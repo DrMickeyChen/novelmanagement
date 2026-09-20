@@ -151,6 +151,29 @@ public class AuthorNovelController {
         return Result.success("已提交审核", null);
     }
 
+    @Operation(
+            summary = "撤回提交",
+            description = """
+                    **待审核 → 草稿**。
+
+                    作者提交后发现简介有错别字，在审核出结果前可以自己把书拿回去改，
+                    不用等管理员驳回。
+
+                    ★ **这不绕过审核**：撤回之后状态变回草稿，改完还要重新提交、重新审。
+                    审核期间「不能编辑内容」那条限制（`2003`）**依然生效** ——
+                    截住审核的是「待审核不可编辑」，不是「待审核不可撤回」。
+
+                    ★ 只有待审核能撤回，其余状态返回 `2003`
+                    （已上架的书要改内容，走「下架」——状态机不允许上架直接退草稿）。
+
+                    ★ 撤回会记一条 `REVERT` 流水，和章节那边「已发布改正文自动退回草稿」
+                    用的是同一个动作码 —— 两者在流水上表达的是同一件事。""")
+    @PostMapping("/{id}/withdraw")
+    public Result<Void> withdraw(@PathVariable Long id) {
+        novelService.withdraw(id);
+        return Result.success("已撤回，可以继续修改了", null);
+    }
+
     /*
      * ★ 章节相关的 6 个接口（/api/author/novels/{novelId}/chapters 等）
      *   在 P2 第 6 步加，见 AuthorChapterController。这里先不预埋空方法 ——

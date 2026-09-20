@@ -17,9 +17,11 @@ import com.novel.modules.content.dto.NovelUpdateDTO;
 import com.novel.modules.content.entity.Chapter;
 import com.novel.modules.content.entity.Novel;
 import com.novel.modules.content.entity.NovelCategory;
+import com.novel.modules.content.entity.OutlineNode;
 import com.novel.modules.content.mapper.ChapterMapper;
 import com.novel.modules.content.mapper.NovelCategoryMapper;
 import com.novel.modules.content.mapper.NovelMapper;
+import com.novel.modules.content.mapper.OutlineNodeMapper;
 import com.novel.modules.content.service.AuditLogService;
 import com.novel.modules.content.service.ContentUserLookup;
 import com.novel.modules.content.service.NovelAccessGuard;
@@ -93,6 +95,7 @@ public class NovelServiceImpl implements NovelService {
     private final NovelMapper novelMapper;
     private final NovelCategoryMapper categoryMapper;
     private final ChapterMapper chapterMapper;
+    private final OutlineNodeMapper outlineNodeMapper;
     private final ContentUserLookup userLookup;
     private final AuditLogService auditLogService;
     private final NovelAccessGuard guard;
@@ -493,6 +496,33 @@ public class NovelServiceImpl implements NovelService {
          * （schema.sql 里只有 PRIMARY KEY），逻辑删除的行不占任何业务唯一键。
          * 哪天给 novel 加了 uk_xxx，这里就得跟着改 —— 见 ChapterMapper 的注释。
          */
+        /*
+         * ★★ 顺手把这本书的大纲节点也逻辑删掉。
+         *
+         *   novel_outline 是 P4 加的表，而删除作品这条路径是 P2 写的 ——
+         *   于是它一开始不知道有这张表，留下的节点【永远不会被清理】。
+         *   负向用例跑完清理临时作品时实测到：删完书，库里还有 11 行
+         *   novel_id 指向那本已删作品的大纲节点。
+         *
+         *   ★ 为什么这不会「看不见就算了」：
+         *     孤儿节点本身确实查不出来（取大纲要过 requireOwned(novelId)），
+         *     但它是【只增不减】的 —— 每删一本书留一批，谁也发现不了。
+         *     数据洁癖在这里不是洁癖：它是一条不可能被观测到的泄漏，
+         *     而修复成本是一行。
+         *
+         *   ★ 用 MP 的 delete(wrapper) 而不是手写 SQL：@TableLogic 会自动
+         *     翻译成 UPDATE ... SET deleted = 1，和别处一致。
+         *     （OutlineNodeMapper 是空接口，正是为了走这些生成的方法。）
+         *
+         *   ★ 顺序：先删大纲、后删作品。反过来的话，中途失败会留下
+         *     「作品没了、大纲还在」的脏数据；而先删大纲再删作品，
+         *     最坏是「大纲标了删除、作品还在」—— 那个状态用户看得见，能重试。
+         *     ★ 整个方法在同一个事务里，其实两种顺序都会一起回滚；
+         *       但保持一致的习惯比依赖回滚更可靠。
+         */
+        outlineNodeMapper.delete(new LambdaQueryWrapper<OutlineNode>()
+                .eq(OutlineNode::getNovelId, id));
+
         novelMapper.deleteById(id);
 
         log.info("删除作品 | id={} title={}", id, novel.getTitle());
@@ -504,6 +534,25 @@ public class NovelServiceImpl implements NovelService {
         Novel novel = requireOwnedNovel(id);
         // 状态合不合法由状态机说了算，这里不重复判断（重复判断迟早和状态机不一致）
         transitStatus(novel, NovelStatus.PENDING, null);
+    }
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void withdraw(Long id) {
+        Novel novel = requireOwnedNovel(id);
+        /*
+         * ★ 和 submit 一样，这里【不】显式判断「当前必须是 PENDING」——
+         * 状态机（NovelStatus#canTransitTo）已经限死了只有 PENDING → DRAFT 这一条，
+         * 重复判断迟早会和状态机不一致，而且不一致时以哪边为准没有答案。
+         * 非法状态会由 transitStatus 抛出 2003。
+         *
+         * ★ 撤回的意义：作者提交后发现简介有错别字，原本只能等管理员驳回，
+         * 现在可以自己把书从审核队列里拿回来改。这不绕过审核 ——
+         * 撤回后状态变回 DRAFT，改完还要重新提交、重新审。
+         * 真正会绕过审核的是「让 PENDING 也能编辑」，那个仍然被
+         * NovelStatus#isEditable 挡着。
+         */
+        transitStatus(novel, NovelStatus.DRAFT, null);
     }
 
     /* ================================================================
@@ -706,12 +755,24 @@ public class NovelServiceImpl implements NovelService {
 
         AuditAction action = switch (target) {
             /*
-             * ★ 没有、也不该有任何流转以 DRAFT 为目标（见 NovelStatus#canTransitTo）。
-             * 真走到这里说明状态机被改坏了，抛异常比静默通过安全得多。
-             * 「撤回提交」这条 PENDING → DRAFT 的流转属于 P4，那时把这一支改掉即可。
+             * ★ P4 补的：作者撤回提交（PENDING → DRAFT）。
+             *
+             * 这里是状态机里【唯一】以 DRAFT 为目标的流转，来源也只有
+             * PENDING 一个（见 NovelStatus#canTransitTo）——
+             * 从 PUBLISHED 是退不回草稿的，那要走「下架」（OFFLINE）再改。
+             *
+             * ★ 复用 REVERT 而不是新加一个 AuditAction.WITHDRAW：
+             * REVERT 的语义是「从审核流程里退回来」，章节那边
+             * （已发布改正文自动退回草稿）用的也是它。
+             * 两者在流水上要表达的是同一件事。真需要区分时
+             * audit_remark 里能看出差别，而加一个枚举值会让
+             * 「哪些动作算退回」这件事多出一份需要同步的名单。
+             *
+             * ★ 这里【不调】syncNovelStat：撤回前是 PENDING、撤回后是 DRAFT，
+             * 两个状态都不计入 chapter_count（口径是"已发布章节数"），
+             * 统计值压根没变。只有 PUBLISHED 进出才需要重算。
              */
-            case DRAFT -> throw new IllegalStateException(
-                    "没有任何流转以草稿为目标，状态机实现有误。novelId=" + novel.getId());
+            case DRAFT -> AuditAction.REVERT;
 
             // 提交审核：三个来源（草稿 / 已驳回 / 已下架）都算「提交」
             // ★ 重新提交要清掉上一次的驳回理由 —— 不清的话，作者会看到
