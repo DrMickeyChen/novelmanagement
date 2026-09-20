@@ -61,8 +61,34 @@ public final class RedisKeyConstant {
     /** 作品详情缓存：{@code novel:novel:detail:{novelId}} */
     public static final String NOVEL_DETAIL = PREFIX + "novel:detail:";
 
-    /** 作品浏览量：{@code novel:novel:views:{novelId}} → 用 HINCRBY 累加，定时落库 */
+    /**
+     * 作品浏览量：{@code novel:novel:views:{novelId}} → 用 {@code INCR} 累加，定时落库。
+     *
+     * <p>★ 存的是<b>自增的纯数字字符串</b>，不是对象，所以读写都必须走
+     * {@code StringRedisTemplate}。用 {@code RedisTemplate<String,Object>}
+     * 会让 value 序列化成 {@code {"@class":"java.lang.Integer","value":1}}，
+     * 对它执行 INCR 会直接报 {@code ERR value is not an integer or out of range}。
+     *
+     * <p>★ 这个 key 是「消费型」的：定时任务用 {@code GETDEL} 把它整个取走，
+     * 读走就没了。所以它<b>不需要过期时间</b> —— 没有读者点击的书根本不会
+     * 产生这个 key，而产生了的 key 一定会被下一轮任务收走。
+     */
     public static final String NOVEL_VIEWS = PREFIX + "novel:views:";
+
+    /**
+     * 待落库的浏览量脏集合（Set）：{@code novel:novel:view_dirty} → 成员是 novelId。
+     *
+     * <p>为什么不遍历 {@code novel:novel:views:*} 而要额外记一个集合：
+     * {@code KEYS} / {@code SCAN} 是<b>全库扫描</b>，key 一多就是生产事故；
+     * 而且它没法知道「这个 key 是这一轮新产生的、还是上一轮漏掉的」。
+     * 用一个集合明确记下「谁有增量」，定时任务只处理集合里的成员，
+     * 复杂度从「全库 key 数」降到「这一分钟被读过的书数」。
+     *
+     * <p>★ 它是<b>唯一需要人工关注的 key</b>：正常情况下每轮结束都会空掉。
+     * 如果它长期不空，说明有 key 一直落库失败（见 {@code NovelViewCounter}
+     * 里 {@code finally} 中那句 SREM 的注释）。
+     */
+    public static final String NOVEL_VIEW_DIRTY = PREFIX + "novel:view_dirty";
 
     /** 热门榜（有序集合）：{@code novel:novel:hot_rank} */
     public static final String NOVEL_HOT_RANK = PREFIX + "novel:hot_rank";

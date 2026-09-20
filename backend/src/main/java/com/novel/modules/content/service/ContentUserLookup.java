@@ -1,9 +1,11 @@
 package com.novel.modules.content.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.novel.modules.system.entity.SysUser;
 import com.novel.modules.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.util.Collection;
 import java.util.Collections;
@@ -43,6 +45,16 @@ import java.util.Objects;
 @Component
 @RequiredArgsConstructor
 public class ContentUserLookup {
+
+    /**
+     * 昵称模糊匹配的条数上限。
+     *
+     * <p>★ 100 是「够用」和「别把下游 SQL 撑爆」之间的取舍：搜到一个 100+ 人
+     * 重名的昵称时，结果会被截断，搜索页会少几本书 —— 这是<b>可以接受的降级</b>。
+     * 反过来不设上限，一次搜索可能带出几万个 id 去做 {@code IN}，
+     * 那是一次真正的故障（SQL 文本超长、解析开销大）。
+     */
+    private static final int NICKNAME_MATCH_LIMIT = 100;
 
     private final SysUserMapper sysUserMapper;
 
@@ -95,5 +107,55 @@ public class ContentUserLookup {
             result.put(user.getId(), user.getNickname());
         }
         return result;
+    }
+
+    /**
+     * 反查：昵称模糊匹配 → 用户 id 列表。<b>给「按作者名搜索作品」用。</b>
+     *
+     * <p><b>★★ 这个方法是 {@link #nicknamesOf} 的逆向，而逆向的代价高得多。</b>
+     * 正向是主键查（百万行也是一次 B+ 树下降），反向是
+     * {@code nickname LIKE '%关键词%'} —— {@code sys_user.nickname}
+     * <b>没有索引，而且前导通配符让任何索引都用不上</b>，这是一次全表扫描。
+     * 所以：
+     * <ul>
+     *   <li>条数必须有 {@link #NICKNAME_MATCH_LIMIT} 上限，不能把全表扫出来的 id
+     *       一股脑带回去做 {@code IN} —— 那会让下游的 SQL 变成巨长的 IN 列表；</li>
+     *   <li>这是 P3 用 MySQL 做搜索的已知短板，二期 M4 上 ES 正是要解决它
+     *       （连同 {@code novel.title} 那个 LIKE）。</li>
+     * </ul>
+     *
+     * <p>★ <b>用 {@code LambdaQueryWrapper} 而不是手写 {@code @Select}</b>，
+     * 理由和 {@code NovelMapper} 保持空接口一样：wrapper 让 {@code @TableLogic}
+     * 自动补上 {@code deleted = 0}。手写就得自己记得写 ——
+     * 忘了的话，<b>已注销用户的作品会混进搜索结果</b>，而且不报错。
+     *
+     * <p>★ 用 {@code .select(SysUser::getId)} 只取 id 一列，两个好处：
+     * ① 不把 {@code password}（BCrypt 哈希）捞进内存 —— 泄露哈希等于
+     * 把离线爆破的门槛降到「拖库」以下；② 少读几列，全表扫描时差别明显。
+     *
+     * @param keyword 昵称关键词。调用方必须先判空 —— 空关键词会匹配所有人
+     * @return 命中的用户 id，<b>可能为空列表</b>（调用方要短路，不能拿空集合去 {@code IN}）
+     */
+    public List<Long> userIdsByNickname(String keyword) {
+        if (!StringUtils.hasText(keyword)) {
+            return List.of();
+        }
+
+        /*
+         * ★ 这里的 .last("LIMIT 100") 和「绝不拼 SQL」那条规矩【不冲突】：
+         * 拼进去的是一个编译期常量，不含任何来自请求的字符。
+         *
+         * 对照 NovelServiceImpl 里拒绝写的 .last("LIMIT " + limit) ——
+         * 那里的 limit 来自请求参数，拼进去就是一个注入口。
+         * 两者的区别是「值从哪来」，不是「用不用 .last」。
+         * 写这个注释是因为后来人看到 .last 很容易以为是漏网的拼接，
+         * 顺手「修」成参数化 —— 而 .last 恰恰是参数化不了的（它进的是 SQL 尾巴）。
+         */
+        List<SysUser> users = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
+                .select(SysUser::getId)
+                .like(SysUser::getNickname, keyword.trim())
+                .last("LIMIT " + NICKNAME_MATCH_LIMIT));
+
+        return users.stream().map(SysUser::getId).toList();
     }
 }

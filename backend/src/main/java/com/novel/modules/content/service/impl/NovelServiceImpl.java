@@ -67,6 +67,29 @@ public class NovelServiceImpl implements NovelService {
     /** 分页兜底 */
     private static final long DEFAULT_PAGE_SIZE = 10;
 
+    /** 榜单默认返回条数 */
+    private static final int RANK_DEFAULT_LIMIT = 10;
+
+    /**
+     * 榜单条数上限。
+     *
+     * <p>★ 比 {@code MybatisPlusConfig} 里 {@code setMaxLimit(100)} 那个硬上限更小，
+     * 是<b>有意</b>的：那个 100 是「防止有人一次拖走全表」的兜底，
+     * 这里的 50 是「这个接口打算提供多少」的声明。榜单是首屏组件，
+     * 再多也没人往下看，而每次请求都是一次全表排序 + 分配内存。
+     * 两个数字职责不同，不要合并成一个。
+     */
+    private static final int RANK_MAX_LIMIT = 50;
+
+    /** 榜单类型：已完结。另外两个（hot / new）是默认分支，不做常量 */
+    private static final String RANK_TYPE_FINISHED = "finished";
+
+    /** 榜单类型：最新创建 */
+    private static final String RANK_TYPE_NEW = "new";
+
+    /** 完结标记：是 */
+    private static final int FINISHED_YES = 1;
+
     private final NovelMapper novelMapper;
     private final NovelCategoryMapper categoryMapper;
     private final ChapterMapper chapterMapper;
@@ -101,6 +124,142 @@ public class NovelServiceImpl implements NovelService {
                 .like(StringUtils.hasText(keyword), Novel::getTitle, keyword);
 
         applyReaderSort(wrapper, sort);
+
+        return toVOPage(novelMapper.selectPage(buildPage(page, size), wrapper));
+    }
+
+    @Override
+    public List<NovelVO> rank(String type, Integer limit) {
+        int safeLimit = clampRankLimit(limit);
+
+        LambdaQueryWrapper<Novel> wrapper = new LambdaQueryWrapper<Novel>()
+                // ★ 三个榜都只含已上架的作品。这一条和 readerPage 里那条一样，
+                //   必须在 WHERE 里，不能查出来再过滤 —— 理由见 readerPage 的注释。
+                .eq(Novel::getStatus, NovelStatus.PUBLISHED);
+
+        String key = StringUtils.hasText(type) ? type.trim().toLowerCase(Locale.ROOT) : "";
+
+        switch (key) {
+            case RANK_TYPE_NEW -> wrapper.orderByDesc(Novel::getCreateTime);
+            case RANK_TYPE_FINISHED -> wrapper
+                    .eq(Novel::getIsFinish, FINISHED_YES)
+                    .orderByDesc(Novel::getViewCount);
+            // hot 是默认值，default 顺带兜住所有不认识的值（不报错）
+            default -> wrapper.orderByDesc(Novel::getViewCount);
+        }
+
+        /*
+         * ★ 末尾按 id 兜底，理由和 applyReaderSort 里那段完全一样：
+         * 种子数据里 view_count 大量并列（1280/960/410…），
+         * 「新书」榜的 create_time 更是可能撞在同一秒。
+         * MySQL 对排序值相同的行【返回顺序不保证稳定】，
+         * 同一页翻两次可能给出不同顺序，现象是前端榜单「自己会跳」。
+         *
+         * ★ 刻意复用 applyReaderSort 的结论但【不复用那个方法】：
+         * 它收的是 sort 的取值（latest/new/words），和榜单调的是两套词汇。
+         * 硬凑成一个方法就要在里面判「现在是谁在调我」——
+         * 那是把两个独立的口径绑死在一起，以后改榜单会动到列表页。
+         */
+
+        /*
+         * ★ 用 buildPage(1, safeLimit) + selectPage，【不是】.last("LIMIT " + limit)。
+         * 后者是往 SQL 里拼字符串，limit 一旦来自请求参数就是一个注入口；
+         * 而且它绕过了 PaginationInnerInterceptor，setMaxLimit 那道兜底也一起失效。
+         * 这里的 safeLimit 已经夹过一遍，分页插件还会再兜一次（双保险）。
+         */
+        Page<Novel> page = novelMapper.selectPage(buildPage(1, safeLimit), wrapper);
+        return toVOList(page.getRecords());
+    }
+
+    /**
+     * 把榜单条数夹到 {@code [1, RANK_MAX_LIMIT]}，{@code null} 用默认值。
+     *
+     * <p>★ 三个分支都是「显式给一个安全值」，没有一个分支会走到「按调用方说的办」。
+     * 这类方法最容易写出的毛病是 {@code limit == null} 时忘了兜底，
+     * 结果 {@code buildPage(1, null)} 在拆箱时抛 NPE ——
+     * 而 NPE 发生在 SQL 执行前，日志里只有一句 NullPointerException，
+     * 看不出是哪个参数。所以这里先兜成默认值再比较。
+     */
+    private int clampRankLimit(Integer limit) {
+        if (limit == null || limit < 1) {
+            return RANK_DEFAULT_LIMIT;
+        }
+        return Math.min(limit, RANK_MAX_LIMIT);
+    }
+
+    @Override
+    public PageResult<NovelVO> search(String keyword, long page, long size) {
+        /*
+         * ★★ 空白关键词必须在【进 wrapper 之前】短路，不能靠 .like(condition, ...)
+         * 那个重载的布尔开关：
+         *
+         * ① 开关只关掉 title 那一半，作者那一半还会照跑 —— 而空关键词会匹配
+         *    【所有用户】，userIdsByNickname 一看没文本就返回空列表，
+         *    于是下面那个 .in() 拿到的是空集合，生成 IN () —— 直接是 SQL 语法错误，
+         *    报 500。这正是 ContentUserLookup.nicknamesOf 注释里记着的老坑。
+         * ② 就算作者那半也关掉，剩下 WHERE status = 2 就是「列出全部已上架作品」，
+         *    语义上等于把搜索页变成了第二个列表页 —— 搜索框里什么都没输，
+         *    却返回了一整页书，用户会以为搜索坏了。
+         *
+         * ★ 返回 PageResult.empty() 而不是抛 400：调用方是首页顶部的搜索框，
+         *   用户按了回车但没输内容是很正常的操作，弹一个错误提示很别扭。
+         *   空结果页面上显示「没有找到相关作品」就够了。
+         */
+        if (!StringUtils.hasText(keyword)) {
+            return PageResult.empty();
+        }
+
+        String kw = keyword.trim();
+        /*
+         * 先把作者名换成 id 列表 —— 这是「搜作者名」必须付的代价：
+         * novel 表里只有 author_id，没有作者名。
+         * ★ 拿不到（没人叫这个名字）时是空列表，下面 .or() 的布尔开关会
+         *   把整个作者分支去掉，而不是生成 IN ()。
+         */
+        List<Long> authorIds = userLookup.userIdsByNickname(kw);
+
+        LambdaQueryWrapper<Novel> wrapper = new LambdaQueryWrapper<Novel>()
+                /*
+                 * ★★ 这一行是 C-7 约束 1，和 readerPage / rank 里那条同源。
+                 * 它【必须在括号外面】—— 详见下面 .and() 那段注释，
+                 * 移进括号里就等于没写。
+                 */
+                .eq(Novel::getStatus, NovelStatus.PUBLISHED)
+                /*
+                 * ★★ 整个方法唯一的实现难点：这一对括号。
+                 *
+                 * 平铺写成 .like(Novel::getTitle, kw).or().in(Novel::getAuthorId, authorIds)
+                 * 生成的是：
+                 *     WHERE status = 2 AND title LIKE ? OR author_id IN (...)
+                 * 而 SQL 里 AND 的优先级【高于】OR，它等价于：
+                 *     WHERE (status = 2 AND title LIKE ?) OR (author_id IN (...))
+                 *
+                 * 后果：只要作者名匹配上，那本书是不是已上架【根本不参与判断】——
+                 * 作者还没提交审核的草稿会被搜出来。这是真实的内容泄露，
+                 * 而且不报错、不崩溃、不抛异常，只是结果里多了几行，
+                 * 靠「跑一遍看看」是发现不了的（要正好搜到一本未上架的书）。
+                 *
+                 * .and(w -> ...) 的作用就是显式加这对括号。
+                 *
+                 * ★ .or(condition, consumer) 那个重载的布尔开关是为了作者列表为空时
+                 *   去掉整个作者分支。不关的话生成的是 `title LIKE ? OR `（尾巴悬空），
+                 *   同样（更明显地）是语法错误。
+                 */
+                .and(w -> w.like(Novel::getTitle, kw)
+                        .or(!authorIds.isEmpty(), x -> x.in(Novel::getAuthorId, authorIds)));
+
+        /*
+         * ★ 排序用 view_count 降序 —— 这不是「相关性排序」，是【在没有相关性可言时
+         * 挑一个用户能接受的顺序】。LIKE '%kw%' 只能回答「命中 / 不命中」，
+         * 回答不了「谁更相关」（书名完全等于关键词的和只在简介里提了一句的，
+         * 在这个查询里完全一样）。热度至少让「搜出来的第一本是本有名的书」。
+         *
+         * ★ 二期 M4 上 ES 之后，这里会换成真正的相关性打分（书名命中 > 作者名命中、
+         *   完全匹配 > 前缀匹配），那时这两行注释就该删掉。
+         * ★ 末尾 id 兜底，理由同 rank / applyReaderSort：view_count 并列时
+         *   MySQL 不保证顺序稳定，翻页会看到重复或漏掉的书。
+         */
+        wrapper.orderByDesc(Novel::getViewCount).orderByDesc(Novel::getId);
 
         return toVOPage(novelMapper.selectPage(buildPage(page, size), wrapper));
     }
@@ -148,6 +307,29 @@ public class NovelServiceImpl implements NovelService {
                 .toList());
 
         return vo;
+    }
+
+    @Override
+    public Novel requirePublished(Long id) {
+        /*
+         * ★★ 和上面 readerDetail 的第一段查询【完全一样】，包括那个
+         * 「不区分不存在与未上架」的取舍。
+         *
+         * ★ 刻意重复、不抽成一个私有方法：抽出来就变成一个
+         * 「返回 null 还是抛异常、抛哪个码」的共享方法，而两个调用方在这些
+         * 细节上一致是【巧合】—— readerDetail 要接着拼 VO，这里只要一个校验。
+         * 复制三行换来「改一个不会影响另一个」，在这个位置是划算的
+         * （对照 NovelService 里 readerPage / adminPage 刻意都写全、
+         * 不抽公共方法的理由：抽出来必然要收一个布尔参数，
+         * 而那个参数传错的后果是内容泄露）。
+         */
+        Novel novel = novelMapper.selectOne(new LambdaQueryWrapper<Novel>()
+                .eq(Novel::getId, id)
+                .eq(Novel::getStatus, NovelStatus.PUBLISHED));
+        if (novel == null) {
+            throw new BusinessException(ResultCode.NOVEL_NOT_FOUND);
+        }
+        return novel;
     }
 
     /* ================================================================
@@ -749,10 +931,24 @@ public class NovelServiceImpl implements NovelService {
      * 两次批量查完，再逐条组装。
      */
     private PageResult<NovelVO> toVOPage(IPage<Novel> page) {
-        List<Novel> records = page.getRecords();
+        return new PageResult<>(toVOList(page.getRecords()), page.getTotal(),
+                page.getCurrent(), page.getSize(), page.getPages());
+    }
+
+    /**
+     * 实体列表 → VO 列表，<b>顺带批量补齐分类名和作者昵称</b>。
+     *
+     * <p>★ 两个 {@code xxxNamesOf} 都是<b>按 id 集合批量查</b>（一次 IN 查询），
+     * 不是每条记录查一次 —— 后者就是经典的 N+1：一页 10 条会变成 20 次查询，
+     * 而且因为它「结果完全正确」，在功能测试里永远发现不了。
+     *
+     * <p>★ 抽成独立方法是给 {@link #rank} 用的：榜单不分页、拿不到
+     * {@code IPage}，但也需要同样的补名逻辑。抽的是「记录 → VO」这一段，
+     * 分页包装留在 {@link #toVOPage} 里。
+     */
+    private List<NovelVO> toVOList(List<Novel> records) {
         if (records.isEmpty()) {
-            return new PageResult<>(List.of(), page.getTotal(), page.getCurrent(),
-                    page.getSize(), page.getPages());
+            return List.of();
         }
 
         Map<Long, String> authorNames = userLookup.nicknamesOf(
@@ -760,11 +956,8 @@ public class NovelServiceImpl implements NovelService {
         Map<Long, String> categoryNames = categoryNamesOf(
                 records.stream().map(Novel::getCategoryId).toList());
 
-        List<NovelVO> vos = records.stream()
+        return records.stream()
                 .map(n -> NovelVO.of(n, categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId())))
                 .toList();
-
-        return new PageResult<>(vos, page.getTotal(), page.getCurrent(),
-                page.getSize(), page.getPages());
     }
 }

@@ -83,26 +83,29 @@ public class SecurityConfig {
             "/uploads/**",
 
             /*
-             * ==================== 读者端（P2） ====================
+             * ==================== 读者端（P3 起）不在这里 ====================
              * 看小说不需要注册登录，这是产品的硬要求（大纲 §5.3 约束 1 只约束
              * 「未上架的作品查不到」，从没说「要登录才能查」）。
              *
-             * ★★ 注意这里【不能】图省事写成 "/api/**"：
-             * 那会把 /api/admin/** 一起放行 —— 管理端接口变成匿名可调，
-             * 而且【不报错、不崩溃】，测试时一切正常，上线就是脱库。
-             * 白名单必须一条条列出来，多写一条的成本远低于写错一条。
+             * ★★ 但 P2 那两条 "/api/categories" 和 "/api/novels/**" 已经
+             * 【挪走】了，见下面 securityFilterChain 里按 HTTP 方法限定的那几条。
              *
-             * 路径与接口的对应关系：
-             *   /api/categories                    分类列表
-             *   /api/novels                        作品列表
-             *   /api/novels/{id}                   作品详情 + 目录
-             *   /api/novels/{id}/chapters/{cid}    章节正文（阅读器核心接口）
+             * 原因是这个数组里的路径【不限定 HTTP 方法】：
+             * requestMatchers("/api/novels/**") 放行的是这个前缀下的【所有方法】。
+             * 于是以后任何人往 /api/novels/** 下加一个
+             * POST /api/novels/{id}/delete 之类的写接口，都会【静默匿名放行】——
+             * 不报错、不崩溃、测试全过，只是所有人都能调。这是个真实的口子，
+             * 而且它是在你【加新接口】的那一刻张开的，不是在改这个文件的时候。
              *
-             * ★ 这两个路径【只】覆盖读者端。/api/author/** 和 /api/admin/**
-             * 各自有自己的前缀，不会误伤。
+             * 改成方法限定之后，默认值变安全了：
+             *   新加一个 GET  → 自动公开（读者端接口本来就该公开）
+             *   新加一个写接口 → 自动要求登录（谁都得先想一下）
+             * 不需要再维护一份路径清单，也不会有人「忘了加一条」。
+             *
+             * ★★ 千万不要为了省事把 "/api/novels/**" 加回这个数组 ——
+             * 那会让下面那几条方法限定的规则【彻底失效】（白名单先命中），
+             * 而且没有任何症状，直到有人往这个前缀下加了写接口。
              */
-            "/api/categories",
-            "/api/novels/**"
     };
 
     /**
@@ -161,6 +164,46 @@ public class SecurityConfig {
                         /* 浏览器的 CORS 预检请求不带 token，必须放行，否则跨域时全部失败 */
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers(WHITELIST).permitAll()
+
+                        /*
+                         * ==================== 读者端（P3） ====================
+                         * ★★ 这几条【按 HTTP 方法】限定，而不是把路径放进 WHITELIST。
+                         * 理由见 WHITELIST 上面那段注释：路径级放行不区分方法，
+                         * 会让以后新增的写接口静默匿名。这里 GET 是显式的，
+                         * 于是「读者端能读」和「读者端不能写」同时成立，
+                         * 而且新增接口时不需要回来改这个文件。
+                         *
+                         * 路径与接口的对应关系：
+                         *   GET /api/categories                    分类列表
+                         *   GET /api/novels                        作品列表
+                         *   GET /api/novels/rank                   榜单
+                         *   GET /api/novels/{id}                   作品详情 + 目录
+                         *   GET /api/novels/{id}/chapters/{cid}    章节正文（阅读器核心）
+                         *   GET /api/search                        搜索
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/novels/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/search").permitAll()
+
+                        /*
+                         * ★ 唯一一条匿名 POST：阅读量埋点 POST /api/novels/{id}/view。
+                         *
+                         * 路径模式用的是【单星号】：novels 和 view 之间只隔一个路径段，
+                         * 于是它精确锁死在「作品 id + view」这个形状上，
+                         * 不会顺带放行 /api/novels/1/delete 之类的路径。
+                         * 这里若写成双星号，等于把上面那几条 GET 限定的努力全废掉。
+                         * （★ 本行注释里不能出现字面的 星号加斜杠 —— 那会提前闭合块注释，
+                         *   编译报一堆莫名其妙的「需要 ')'」。上面就踩过一次。）
+                         *
+                         * 它敢匿名开放，是因为三件事同时成立：
+                         *   ① 不写库 —— 只对一个 Redis 计数器 INCR，由定时任务异步汇总；
+                         *   ② 不产生数据 —— 没有 INSERT、没有唯一键、不记录调用者；
+                         *   ③ 不放宽读的口径 —— 对不存在的书、未上架的书、正常的书，
+                         *      响应<b>一个字节都不差</b>（见 ReaderNovelController#recordView
+                         *      里那个 catch），所以它不能被当成「这本书存不存在」的探针。
+                         * 三条里少一条，它就必须挪到需要登录的前缀下。
+                         */
+                        .requestMatchers(HttpMethod.POST, "/api/novels/*/view").permitAll()
 
                         /*
                          * ==================== 角色闸（P2） ====================

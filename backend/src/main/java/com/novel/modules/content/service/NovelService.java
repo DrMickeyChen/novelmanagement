@@ -4,8 +4,11 @@ import com.novel.common.enums.NovelStatus;
 import com.novel.common.result.PageResult;
 import com.novel.modules.content.dto.NovelCreateDTO;
 import com.novel.modules.content.dto.NovelUpdateDTO;
+import com.novel.modules.content.entity.Novel;
 import com.novel.modules.content.vo.NovelDetailVO;
 import com.novel.modules.content.vo.NovelVO;
+
+import java.util.List;
 
 /**
  * 作品服务。读者端 / 作者端 / 管理端三处共用。
@@ -61,6 +64,88 @@ public interface NovelService {
      * 读者端不承担预览职责。
      */
     NovelDetailVO readerDetail(Long id);
+
+    /**
+     * 读者端榜单。一次返回固定条数，<b>不分页</b>（榜单就是「前 N 名」，翻页没有意义）。
+     *
+     * <p><b>三个榜共用一个接口、用 {@code type} 区分</b>，理由：
+     * 它们查的是同一张表、同一组可见性条件，只是排序不同；
+     * 拆成 {@code /novels/hot}、{@code /novels/new}、{@code /novels/finished}
+     * 三条路径会让「加一个榜」变成「加一个接口 + 一个前端 api 函数 + 一条白名单」。
+     *
+     * <p>★ <b>路径用的是 {@code /api/novels/rank}，不是大纲 §6.3 里写的
+     * {@code /api/novels/hot}。</b>三条理由：
+     * ① 三个榜是同一个接口，{@code /hot?type=new} 自相矛盾；
+     * ② 大纲 §7.1 的页面本来就叫 {@code /rank}；
+     * ③ 它彻底避开了 {@code /api/novels/{id}} 的路径变量竞争 —— 虽然 Spring
+     * 的 {@code PathPattern} 比较器里字面量优先于变量（{@code /rank} 会稳定命中），
+     * 但一旦有人把路径拼错成 {@code /api/novels/hott}，请求会掉进 {@code {id}} 分支，
+     * 报的是「Failed to convert 'hott' to Long」这种完全指不到问题所在的错。
+     *
+     * <p>★ 三个榜都<b>只含已上架的作品</b>（同 {@link #readerPage}），
+     * 并且都在末尾按 id 兜底排序，理由同
+     * {@code NovelServiceImpl#applyReaderSort} 的注释。
+     *
+     * @param type  {@code hot}（阅读量降序，默认）/ {@code new}（创建时间降序）/
+     *              {@code finished}（已完结，再按阅读量降序）。
+     *              <b>不认识的值不报错，按 {@code hot} 处理</b> —— 和
+     *              {@link #readerPage} 的 {@code sort} 参数一个约定，
+     *              免得前端加个 Tab 就要后端配合发布
+     * @param limit 返回条数。<b>会被夹到 {@code [1, 50]}</b>，{@code null} 视为 10。
+     *              上限不是 100 而是 50：榜单是首屏组件，再多也没人往下看，
+     *              而每一次都是全表排序，给一个匿名接口留 100 条的额度没有意义
+     */
+    List<NovelVO> rank(String type, Integer limit);
+
+    /**
+     * 全站搜索：<b>书名 OR 作者昵称</b>，命中任一即可。
+     *
+     * <p><b>★ 为什么单独开一个方法 / 一条路径，而不复用 {@link #readerPage} 的
+     * {@code keyword} 参数</b>：语义不同。列表页的 {@code keyword} 是
+     * 「<b>在当前分类里</b>筛书名」，搜索页是「<b>跨全站</b>搜书名或作者名」。
+     * 混成一个方法会让分类页的筛选框在用户输入作者名时返回一堆不在该分类的书 ——
+     * 而且看起来「挺合理」，不报错。
+     *
+     * <p><b>★★ 可见性条件必须用括号包住，这是这个方法唯一的实现难点。</b>
+     * 如果平铺写成 {@code .eq(status, PUBLISHED).like(title, kw).or().in(authorId, ids)}，
+     * 生成的是
+     * <pre>WHERE status = 2 AND title LIKE ? OR author_id IN (...)</pre>
+     * 而 SQL 里 {@code AND} 优先级高于 {@code OR}，它等价于
+     * <pre>WHERE (status = 2 AND title LIKE ?) OR (author_id IN (...))</pre>
+     * —— <b>只要作者命中了，那本书是不是已上架根本不参与判断，
+     * 未上架的草稿会被搜出来。</b>这是真实的内容泄露，而且不报错、不崩溃，
+     * 只是结果里多了几行。实现里用 {@code .and(w -> ...)} 显式加括号。
+     *
+     * @param keyword 关键词。<b>空白关键词直接返回空页，不进 SQL</b> ——
+     *                否则会生成 {@code LIKE '%%'}（等于没过滤），
+     *                而且作者 id 列表为空时还会生成 {@code IN ()} 语法错误
+     */
+    PageResult<NovelVO> search(String keyword, long page, long size);
+
+    /**
+     * 校验作品存在<b>且已上架</b>，返回实体；否则抛 {@code NOVEL_NOT_FOUND(2001)}。
+     *
+     * <p>给「读者端要写一点东西、但写的不是业务数据」的接口用 ——
+     * 目前唯一的调用方是阅读量埋点 {@code POST /api/novels/{id}/view}。
+     *
+     * <p><b>★ 为什么埋点这种「丢了也无所谓」的数据还要校验存在性：</b>
+     * 不是为了数据准确性，是为了<b>不给一个匿名接口提供无限造 key 的口子</b>。
+     * 不校验的话，攻击者用随机 id POST 一百万个请求，就在 Redis 里留下
+     * 一百万个永不过期的 {@code novel:novel:views:*} key —— 内存被吃满，
+     * 而脏集合里的一百万个成员会让定时任务每轮空转。
+     *
+     * <p>★ <b>未上架的作品也不计数</b>：它的正文读者根本读不到
+     * （详情接口和章节正文接口都会返回 2001），能点到这个接口的只有
+     * 直接构造请求的人。计数它等于给未上架的内容留下可观测的痕迹。
+     *
+     * <p><b>★★ 和 {@link #readerDetail} 一样，刻意不区分「不存在」和「未上架」。</b>
+     * 这个接口是免登录的（见 {@code SecurityConfig} 里那条 POST 白名单），
+     * 一旦两种情况的错误码不同，它就变成了一把「哪些 id 是真实存在的书」的枚举探针 ——
+     * 而且比详情接口更隐蔽，因为它返回的是空 body，容易被当成「埋点本来就没返回」。
+     *
+     * @throws com.novel.common.exception.BusinessException 不存在或未上架，均为 {@code 2001}
+     */
+    Novel requirePublished(Long id);
 
     /* ==================== 作者端 ==================== */
 

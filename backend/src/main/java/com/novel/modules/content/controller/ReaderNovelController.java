@@ -1,9 +1,11 @@
 package com.novel.modules.content.controller;
 
+import com.novel.common.exception.BusinessException;
 import com.novel.common.result.PageResult;
 import com.novel.common.result.Result;
 import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelService;
+import com.novel.modules.content.service.NovelViewCounter;
 import com.novel.modules.content.vo.ChapterDetailVO;
 import com.novel.modules.content.vo.NovelDetailVO;
 import com.novel.modules.content.vo.NovelVO;
@@ -11,33 +13,46 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
+
 /**
- * 读者端 —— 作品浏览。<b>匿名可访问</b>（在 {@code SecurityConfig.WHITELIST} 里）。
+ * 读者端 —— 作品浏览。<b>匿名可访问</b>（在 {@code SecurityConfig}
+ * 里按 HTTP 方法放行，见下面的说明）。
  *
  * <p><b>★★ 这个类是整个系统唯一「不登录也能拿数据」的业务接口，
  * 所以它的每一条查询都必须自己带可见性条件（大纲 §5.3 约束 1 和 2）。</b>
  * 它不依赖任何登录态 —— 没有 {@code UserContext} 可以兜底，
  * 一旦条件漏了，泄露是<b>直接对外</b>的，没有任何一层能拦住。
  *
- * <p><b>★ 为什么白名单是 {@code /api/novels/**} 而不是 {@code /api/**}：</b>
- * 后者会把 {@code /api/admin/**} 一起放行，管理端接口就匿名可调了，
- * 而且<b>不报错、不崩溃</b>，只是所有人都能调。见 {@code SecurityConfig} 的注释。
+ * <p><b>★ 为什么放行的是「这个前缀下的 GET」而不是整个 {@code /api/novels/**}：</b>
+ * P2 时这里挂的是路径级白名单，而路径级白名单<b>不区分 HTTP 方法</b> ——
+ * 意味着以后任何人往这个前缀下加一个 {@code DELETE /api/novels/{id}}，
+ * 都会静默匿名放行。P3 改成了 {@code requestMatchers(HttpMethod.GET, ...)}
+ * 加一条精确的 {@code POST /*&#47;view}（见 {@code SecurityConfig}）。
+ * 于是「新加一个 GET 自动公开、新加一个写接口自动要求登录」，
+ * 默认值终于是安全的。<b>不要把这个前缀加回路径级白名单。</b>
  *
- * <p><b>★ 没有写接口。以后也不该有</b> —— 读者端一旦出现
- * {@code POST} / {@code PUT}，它就不再是「纯读」的，白名单这个大口子也就
- * 从「可接受的公开数据」变成了「可写的公开接口」。
- * 读者侧将来要写的数据（评论、书架、阅读历史）属于 P6，
- * 那些接口必须放在需要登录的前缀下（{@code /api/reader/**}），
- * <b>不要往这个已经免登录的路径下加</b>。
+ * <p><b>★★ 读者端不写用户数据。</b>这个前缀下没有改动任何业务表的接口 ——
+ * 唯一的写是阅读量埋点 {@code POST /api/novels/{id}/view}，
+ * 它<b>不落库</b>（只对一个 Redis 计数器 INCR，由定时任务异步汇总）、
+ * <b>不产生用户数据</b>（无 INSERT、无唯一键、不记录调用者）、
+ * <b>不放宽任何读的口径</b>（对不存在的书与未上架的书响应完全一样），
+ * 因此可以匿名开放。三条里少一条，它就必须挪到需要登录的前缀下。
+ *
+ * <p><b>★ 会落用户数据的写接口（评论、书架、阅读进度）仍然必须放在
+ * 需要登录的 {@code /api/reader/**} 下，不要往这个已经免登录的路径下加。</b>
  *
  * @author MickeyChen
  */
+@Slf4j
 @Tag(name = "12. 读者端 · 作品", description = "读者浏览作品。**无需登录**")
 @RestController
 @RequestMapping("/api/novels")
@@ -46,6 +61,7 @@ public class ReaderNovelController {
 
     private final NovelService novelService;
     private final ChapterService chapterService;
+    private final NovelViewCounter novelViewCounter;
 
     @Operation(
             summary = "作品列表",
@@ -72,6 +88,44 @@ public class ReaderNovelController {
             @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "10") long size) {
 
         return Result.success(novelService.readerPage(categoryId, keyword, isFinish, sort, page, size));
+    }
+
+    /*
+     * ★ 这个映射刻意写在 detail 的 /{id} 【之前】。
+     *
+     * 实际上 Spring 的 PathPattern 比较器里字面量优先于路径变量，
+     * 所以 /rank 无论声明在哪都会稳定命中这里，不会掉进 /{id} ——
+     * 也就是说顺序【不是】正确性的必要条件。
+     * 但把它写在前面，读代码的人不用先去确认那条规则；
+     * 而它一旦被误删或改名，第二个发现问题的会是报「Failed to convert
+     * 'rank' to Long」的人 —— 那个错误信息完全指不到真正的原因。
+     */
+    @Operation(
+            summary = "榜单",
+            description = """
+                    三个榜共用一个接口，用 `type` 区分。**都不分页** —— 榜单就是「前 N 名」。
+
+                    | type | 含义 |
+                    |---|---|
+                    | `hot`（默认）| 阅读量降序 |
+                    | `new` | 创建时间降序 |
+                    | `finished` | 已完结的作品，再按阅读量降序 |
+
+                    ★ `type` **传不认识的值不报错**，按 `hot` 处理（和列表接口的 `sort` 一个约定）。
+
+                    ★ `limit` 默认 10，**会被夹到 1~50**。
+
+                    ★ 只含已上架的作品。
+
+                    **无需登录。**""")
+    @GetMapping("/rank")
+    public Result<List<NovelVO>> rank(
+            @Parameter(description = "榜单类型：hot（默认）/ new / finished")
+            @RequestParam(required = false) String type,
+            @Parameter(description = "返回条数，默认 10，上限 50")
+            @RequestParam(required = false) Integer limit) {
+
+        return Result.success(novelService.rank(type, limit));
     }
 
     @Operation(
@@ -114,5 +168,56 @@ public class ReaderNovelController {
     @GetMapping("/{id}/chapters/{cid}")
     public Result<ChapterDetailVO> chapterDetail(@PathVariable Long id, @PathVariable Long cid) {
         return Result.success(chapterService.readerDetail(id, cid));
+    }
+
+    @Operation(
+            summary = "阅读量埋点",
+            description = """
+                    读者打开某本书时调用一次。**这是读者端唯一一个写接口，也是全站唯一一个匿名 POST。**
+
+                    ★ **它永远返回成功**，即使 `id` 不存在或作品未上架 —— 详见下面的说明。
+                    调用方（阅读器）不需要处理任何错误。
+
+                    ★ 阅读量**不是实时**的：这里只对一个 Redis 计数器做 `INCR`，
+                    由定时任务每 30 秒批量落库到 `novel.view_count`。
+                    所以刚点完去看榜单，数字可能还没变。
+
+                    **无需登录。**""")
+    @PostMapping("/{id}/view")
+    public Result<Void> recordView(@PathVariable Long id) {
+        try {
+            novelService.requirePublished(id);
+        } catch (BusinessException e) {
+            /*
+             * ★★ 这个接口【永远返回 200】，未知 id 也一样 —— 这里把
+             * NOVEL_NOT_FOUND 吃掉，而不是让它冒到全局异常处理器变成 code 2001。
+             *
+             * 三条理由：
+             *
+             * ① 它是埋点，调用方没有任何补救动作可做。让它返回错误，
+             *    等于逼每一个调用处为一件不重要的事写错误处理 ——
+             *    而漏写的那一处不会报错，只是阅读量少记了。
+             *
+             * ② ★ 更重要的：返回错误码会让这个接口变成一把枚举探针。
+             *    requirePublished 对「不存在」和「未上架」都抛 2001，
+             *    信息量上和 GET /api/novels/{id} 一样（那个接口是公开的，
+             *    所以不构成新的泄露）—— 但这是个【更便宜】的探针：
+             *    它只做一次主键查询，不拼 VO、不查目录。
+             *    对一个没有限流的匿名接口来说，把「响应完全相同」做到极致
+             *    比「错误码一致」更结实：不管 id 是什么、书是什么状态，
+             *    响应体一个字节都不差。
+             *
+             * ③ 埋点失败本来就不该让读者的页面出错。阅读量丢一点无所谓，
+             *    读者打不开书才是事故。
+             *
+             * ★ requirePublished 只有这一个失败模式，所以这里不需要再判 code。
+             */
+            log.debug("阅读量埋点：作品不存在或未上架，忽略 | novelId={}", id);
+            return Result.success();
+        }
+
+        // 走到这里说明书存在且已上架。record 内部自己吞异常（Redis 挂了也不影响读者）。
+        novelViewCounter.record(id);
+        return Result.success();
     }
 }
