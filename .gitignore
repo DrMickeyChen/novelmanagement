@@ -1,0 +1,83 @@
+# ============================================================
+# 小说管理系统 · Git 忽略规则
+# ============================================================
+
+# ---------- Java / Maven ----------
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# ---------- 前端 Node ----------
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# npm 的缓存目录（本机装依赖时用 --cache 指到这里，绕开默认缓存的权限问题）
+.npm-tmp-cache/
+
+# ---------- IDE ----------
+# IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+# 但保留代码风格配置，这样别人拉下来格式是一致的
+!.idea/codeStyles/
+!.idea/inspectionProfiles/
+# VSCode
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+# Eclipse
+.classpath
+.project
+.settings/
+
+# ---------- 操作系统 ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 日志与临时文件 ----------
+logs/
+*.log
+*.tmp
+*.bak
+
+# ---------- ★ 敏感文件，绝对不能提交 ----------
+# Docker 中间件的密码（MySQL root 密码、Redis 密码都在里面）
+docs/docker/.env
+
+# 生产环境配置（含真实数据库地址和密码）
+backend/src/main/resources/application-prod.yml
+backend/src/main/resources/application-prod.yaml
+
+# AI 的 API Key
+# ★ 数据库 ai_config 表里的 key 是加密存储的，解密用的密钥在环境变量里，
+#   绝不能写进代码或配置文件后提交
+.env
+.env.local
+*.pem
+*.key
+
+# ---------- 上传的文件 ----------
+novel-uploads/
+uploads/
+
+# ---------- 说明 ----------
+# application-dev.yml 【故意不忽略】：里面只有本地虚拟机的开发密码
+# （root123456 / redis123456），是搭环境用的固定值，不含任何真实凭据。
+# 提交它，别人 clone 下来改个 IP 就能直接跑起来。
+# 真实环境请用 application-prod.yml + 环境变量，那个才必须忽略。

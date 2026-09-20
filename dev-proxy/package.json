@@ -1,0 +1,13 @@
+{
+  "name": "dev-proxy",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "开发代理：把三个前端聚到同一个 origin，照搬生产的 Nginx 拓扑",
+  "scripts": {
+    "dev": "vite"
+  },
+  "devDependencies": {
+    "vite": "^8.3.0"
+  }
+}

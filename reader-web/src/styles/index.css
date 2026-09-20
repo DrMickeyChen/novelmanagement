@@ -1,0 +1,29 @@
+/* 全局基础样式。Element Plus 组件自己的样式由按需引入插件负责，不用在这里引 */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family:
+    'Helvetica Neue', Helvetica, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', Arial,
+    sans-serif;
+  font-size: 14px;
+  color: #303133;
+  background-color: #f5f7fa;
+  /* 让字体渲染更平滑，中文界面观感差别挺明显 */
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}

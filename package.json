@@ -1,0 +1,22 @@
+{
+  "name": "novel-management",
+  "private": true,
+  "version": "1.0.0",
+  "description": "小说管理系统 —— 根目录脚本。只管拉起下面五个子项目，自己不包含任何业务代码",
+  "scripts": {
+    "install:all": "npm install && npm --prefix reader-web install && npm --prefix author-web install && npm --prefix admin-web install && npm --prefix dev-proxy install",
+    "dev": "concurrently -n reader,author,admin,proxy -c cyan,magenta,yellow,green \"npm --prefix reader-web run dev\" \"npm --prefix author-web run dev\" \"npm --prefix admin-web run dev\" \"npm --prefix dev-proxy run dev\"",
+    "dev:reader": "npm --prefix reader-web run dev",
+    "dev:author": "npm --prefix author-web run dev",
+    "dev:admin": "npm --prefix admin-web run dev",
+    "dev:proxy": "npm --prefix dev-proxy run dev",
+    "dev:backend": "mvn -f backend/pom.xml spring-boot:run",
+    "build": "npm --prefix reader-web run build && npm --prefix author-web run build && npm --prefix admin-web run build",
+    "build:reader": "npm --prefix reader-web run build",
+    "build:author": "npm --prefix author-web run build",
+    "build:admin": "npm --prefix admin-web run build"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

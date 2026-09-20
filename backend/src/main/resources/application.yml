@@ -1,0 +1,104 @@
+# ============================================================
+# 小说管理系统 · 主配置
+# ============================================================
+# 这里只放【所有环境都一样】的配置。
+# 数据库地址、Redis 密码这类会变的，全部放 application-dev.yml。
+#
+# 启动时用 --spring.profiles.active=dev 或 IDE 里配 active profile 切换。
+# ============================================================
+
+server:
+  port: 8080
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true      # 强制请求和响应都用 UTF-8，否则中文会乱码
+
+spring:
+  application:
+    name: novel-backend
+
+  profiles:
+    active: dev        # ★ 默认用 dev（连你虚拟机上的 MySQL/Redis）
+
+  jackson:
+    # ⚠️ 这里【故意不写】date-format。
+    #
+    # 很多人会写 date-format: yyyy-MM-dd HH:mm:ss，然后发现完全没生效 ——
+    # 时间依然输出成 "2026-09-19T23:56:13.2551421"。
+    # 因为它【只对 java.util.Date 有效】，而项目里用的是 java.time.LocalDateTime，
+    # 走的是 Jackson 的 JavaTimeModule，根本不看这一项。而且不报错、不警告。
+    #
+    # 真正生效的配置在 com.novel.config.JacksonConfig（给 LocalDateTime
+    # 这个类型注册了序列化器）。那边改一处，全项目的时间格式都跟着变。
+    time-zone: GMT+8
+    default-property-inclusion: non_null   # 值为 null 的字段直接不返回，前端少判断
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+
+  servlet:
+    multipart:
+      max-file-size: 10MB      # 单个文件上限（封面图、用户头像）
+      max-request-size: 20MB   # 单次请求上限
+
+  # 【关于 404 处理】不需要在这里配任何东西。
+  #
+  # 网上老教程会说：要加
+  #     throw-exception-if-no-handler-found: true
+  #     web.resources.add-mappings: false
+  # 才能让 404 走统一响应体 —— 那是 Spring Boot 3.2 之前的做法。
+  #
+  # ★ 而且 add-mappings: false 会把【静态资源映射整个关掉】，
+  #   而 Knife4j 的 /doc.html 正是靠静态资源映射提供的，结果文档页直接 404。
+  #
+  # Spring Boot 3.2 起，访问不存在的路径会抛 NoResourceFoundException，
+  # 在 GlobalExceptionHandler 里接住它即可，不用动任何配置。
+
+# ============================================================
+# MyBatis-Plus
+# ============================================================
+mybatis-plus:
+  # XML 映射文件位置。复杂的多表关联查询写 XML，简单 CRUD 直接用 BaseMapper
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+  # 实体类包，写 XML 的 resultType 时可以省略全限定名
+  type-aliases-package: com.novel.modules.**.entity
+
+  configuration:
+    map-underscore-to-camel-case: true          # create_time → createTime
+    cache-enabled: false                        # 关掉二级缓存，避免多实例/集群下数据不一致
+    # ★ 开发期把 SQL 打到控制台，方便对账。上线前要注释掉，否则日志会很大
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+  global-config:
+    banner: false                               # 关掉启动时那行 MyBatis-Plus 广告
+    db-config:
+      id-type: auto                             # 主键自增（对应建表语句的 AUTO_INCREMENT）
+      logic-delete-field: deleted               # ★ 逻辑删除字段
+      logic-delete-value: 1                     # 删除 = 置 1
+      logic-not-delete-value: 0                 # 未删除 = 0
+      # 逻辑删除后，MyBatis-Plus 会自动给所有查询加上 WHERE deleted = 0
+      # 所以你永远不用手写这个条件，也永远不会真的 DELETE 数据
+
+# ============================================================
+# Knife4j 接口文档
+# ============================================================
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    enable-footer: false
+    enable-open-api: false
+  # ★ 生产环境要关掉：springdoc.api-docs.enabled=false
+
+# ============================================================
+# 日志
+# ============================================================
+logging:
+  level:
+    root: info
+    com.novel: debug                    # 自己写的代码开 debug，方便排查
+    org.springframework.web: info
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
