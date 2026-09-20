@@ -36,6 +36,21 @@ const menus = ref([
 function gotoApp(url) {
   window.location.href = url
 }
+
+/**
+ * 退出登录。
+ *
+ * ★ 退完必须离开 —— 理由和 author-web/src/layouts/AppLayout.vue 里
+ *   写的一模一样：路由守卫挡住了「没登录就进不来」，
+ *   但退出不会触发路由跳转，守卫不会重跑，页面就卡在管理端了。
+ *
+ * ★ 也【不能用 redirectToReaderLogin()】—— 它带的 ?redirect= 会让用户
+ *   登录后跳回管理端，不是管理员就再被拦回来，形成死循环。
+ */
+async function handleLogout() {
+  await userStore.logout()
+  gotoApp(READER_WEB_URL)
+}
 </script>
 
 <template>
@@ -75,7 +90,7 @@ function gotoApp(url) {
           <template v-if="userStore.isLogin">
             <el-tag type="success" size="small">{{ userStore.nickname || '已登录' }}</el-tag>
             <el-tag v-if="userStore.role" size="small" effect="plain">{{ userStore.role }}</el-tag>
-            <el-button link @click="userStore.logout()">退出</el-button>
+            <el-button link @click="handleLogout">退出</el-button>
           </template>
           <el-tag v-else type="danger" size="small">未登录</el-tag>
         </div>

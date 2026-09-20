@@ -20,6 +20,21 @@ const userStore = useUserStore()
 function gotoApp(url) {
   window.location.href = url
 }
+
+/**
+ * 退出登录。
+ *
+ * ★ 必须 await：logout() 要先请求后端把 Redis 里这条登录态删掉，
+ *   不 await 的话请求可能还没发出去，页面就已经因为状态变了而重新渲染。
+ *
+ * ★ 退出后【不跳转】—— 阅读端的首页是公开页面，未登录也能看，
+ *   停在原地正好让用户看到导航栏从「昵称 + 退出」变成了「登录」，
+ *   这是最直观的反馈。
+ *   （创作中心和管理端的布局不一样，那两个端退出后必须离开 —— 见那边的注释。）
+ */
+async function handleLogout() {
+  await userStore.logout()
+}
 </script>
 
 <template>
@@ -46,7 +61,7 @@ function gotoApp(url) {
 
         <template v-if="userStore.isLogin">
           <el-tag type="success" size="small">{{ userStore.nickname || '已登录' }}</el-tag>
-          <el-button link @click="userStore.logout()">退出</el-button>
+          <el-button link @click="handleLogout">退出</el-button>
         </template>
         <template v-else>
           <router-link to="/login">登录</router-link>

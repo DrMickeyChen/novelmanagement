@@ -5,16 +5,21 @@
  * 它同时证明三件事：
  *   ① 前端能跑（页面出来了）
  *   ② 代理能通（三个 /api/ping* 请求从 5173 转发到了 8080）
- *   ③ 登录态能共享（点「模拟登录」写入 localStorage，跳到另外两个端就是已登录）
+ *   ③ 登录态能共享（在登录页登录后写入 localStorage，跳到另外两个端就是已登录）
  *
- * P1 之后这个页面会被真正的首页替换掉，检测卡片挪到开发调试页或删掉。
+ * ★ P0 时第三项是靠一个「模拟登录」按钮往 localStorage 里写假 token 来演示的，
+ *   P1 接了真实认证后那个按钮已经删掉 —— 现在要验证第三项，
+ *   请走 /login 用真账号登录（种子管理员 admin / admin123）。
+ *
+ * 这个页面本身是 P0 的验收页，之后会被真正的首页替换掉。
  */
-import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ping, pingDb, pingRedis } from '@/api/ping'
 import { useUserStore } from '@/stores/user'
 import { TOKEN_KEY, USER_KEY, AUTHOR_WEB_URL, ADMIN_WEB_URL } from '@/utils/auth'
 
+const router = useRouter()
 const userStore = useUserStore()
 
 /** 三个检测项的结果。null = 还没测 / 正在测 */
@@ -67,25 +72,18 @@ async function runAllChecks() {
 onMounted(runAllChecks)
 
 /**
- * 模拟登录 —— P0 专用。
+ * token 的展示形式：只截前 16 位。
  *
- * 真正的登录要等 P1 做完认证接口。这里直接往 localStorage 写一个假 token，
- * 目的是【验证三端共享 key 的设计是通的】：
- * 点完这个按钮再跳到 5174 / 5175，那两个端会显示「已登录」。
- *
- * ★ 它证明的是「存储 key 一致 + localStorage 同源共享」，
- *   而不是「认证功能可用」—— 别把它当成登录功能。
+ * ★ P0 时这里存的是 'mock-token-for-p0-verification' 这种短短一截，
+ *   整个塞进页面没问题；P1 换成了真的 JWT（200+ 个字符），
+ *   整条渲染出来会把布局撑爆。反正这个卡片只是用来肉眼确认
+ *   「登录态确实写进去了」，看开头几位就够了，完整值在
+ *   DevTools → Application → Local Storage 里。
  */
-function mockLogin() {
-  userStore.setLoginInfo('mock-token-for-p0-verification', {
-    id: 1,
-    username: 'admin',
-    nickname: '系统管理员',
-    role: 'ADMIN',
-    permissions: ['novel:audit', 'user:manage'],
-  })
-  ElMessage.success('已写入登录态，跳到 5174 / 5175 看看是否免登录')
-}
+const tokenPreview = computed(() => {
+  const t = userStore.token || ''
+  return t.length > 16 ? `${t.slice(0, 16)}…` : t
+})
 
 const stateType = { ok: 'success', fail: 'danger', loading: 'warning', idle: 'info' }
 const stateText = { ok: '正常', fail: '失败', loading: '检测中', idle: '未检测' }
@@ -100,6 +98,11 @@ const stateText = { ok: '正常', fail: '失败', loading: '检测中', idle: '�
  */
 function gotoApp(url) {
   window.location.href = url
+}
+
+/** 去登录页。登录成功后登录页会自己跳回来（它认 ?redirect= 参数） */
+function gotoLogin() {
+  router.push('/login')
 }
 </script>
 
@@ -168,7 +171,7 @@ function gotoApp(url) {
           <el-tag v-else type="info" size="small">未登录</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="token">
-          <code v-if="userStore.token">{{ userStore.token }}</code>
+          <code v-if="userStore.token">{{ tokenPreview }}</code>
           <span v-else class="muted">（空）</span>
         </el-descriptions-item>
         <el-descriptions-item label="角色">
@@ -178,8 +181,8 @@ function gotoApp(url) {
       </el-descriptions>
 
       <div class="actions">
-        <el-button type="primary" @click="mockLogin">模拟登录（写入共享 key）</el-button>
-        <el-button :disabled="!userStore.isLogin" @click="userStore.logout()">清除登录态</el-button>
+        <el-button v-if="!userStore.isLogin" type="primary" @click="gotoLogin">去登录</el-button>
+        <el-button v-else @click="userStore.logout()">退出登录</el-button>
         <el-button link type="primary" @click="gotoApp(AUTHOR_WEB_URL)">
           跳到创作中心 →
         </el-button>

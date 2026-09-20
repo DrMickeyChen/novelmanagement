@@ -60,6 +60,18 @@ novel:
     path: ${user.home}/novel-uploads/
     url-prefix: /uploads/
 
+  # ---------------- JWT ----------------
+  jwt:
+    # 开发环境的默认密钥。这样 clone 下来不配任何环境变量就能直接跑。
+    #
+    # ★ 两点必须知道：
+    #   1. 长度必须 ≥ 32 字节。jjwt 用 HMAC-SHA256 签名，密钥短于 256 bit
+    #      会直接抛 WeakKeyException（HMAC 的密钥越短越容易被暴力破解，
+    #      所以它主动拒绝）。这一串是 54 个字符，绰绰有余。
+    #   2. 这个值【只用于本地开发】，明文写在提交到 git 的文件里。
+    #      生产环境靠环境变量 JWT_SECRET 覆盖它（见 application.yml）。
+    secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
+
 # ---------------- 接口文档显示开关 ----------------
 springdoc:
   api-docs:

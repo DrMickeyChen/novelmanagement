@@ -23,10 +23,27 @@ public final class RedisKeyConstant {
     /* ==================== 认证模块 ==================== */
 
     /**
-     * 登录态：{@code novel:auth:token:{userId}} → 存 JWT 或用户信息
+     * 登录态：{@code novel:auth:token:{userId}:{jti}} → 存 {@code LoginUser} 对象
+     *
      * <p>★ 为什么不只靠 JWT 自己带的过期时间，还要在 Redis 存一份：
      * JWT 一旦签发就无法作废，用户「退出登录」或管理员「封禁账号」时，
      * 只有 Redis 里删掉这条记录才能真正让 token 立刻失效。
+     *
+     * <p>★ 为什么 key 里要有 {@code jti}（JWT 的唯一编号）：
+     * 这是<b>多端并存</b>的关键。同一个账号在手机和电脑上登录会拿到
+     * 两个不同的 jti，于是 Redis 里是两把互不干扰的 key：
+     * <pre>
+     *   novel:auth:token:1:a3f9c2...   ← 手机
+     *   novel:auth:token:1:8c21b7...   ← 电脑
+     * </pre>
+     * 手机点「退出登录」只删得掉手机那把，电脑继续用。
+     * 如果 key 停留在 {@code {userId}} 一层，后登录的会覆盖先登录的 ——
+     * 手机一登录，电脑就被挤下线了。
+     *
+     * <p>顺带一个坑：按前缀匹配时<b>结尾的冒号不能省</b>。
+     * {@code novel:auth:token:1:*} 是精确的；但如果写成
+     * {@code novel:auth:token:1*}，就会连 userId=11、12、100 的一起匹配上，
+     * 「踢掉 1 号用户」变成「踢掉一片用户」。
      */
     public static final String AUTH_TOKEN = PREFIX + "auth:token:";
 

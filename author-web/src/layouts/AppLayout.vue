@@ -19,6 +19,30 @@ function gotoApp(url) {
 function backToReader() {
   gotoApp(READER_WEB_URL)
 }
+
+/**
+ * 退出登录。
+ *
+ * ★ 退完必须【离开这个页面】。
+ *   创作中心的路由守卫要求 AUTHOR 角色，能停在这个页面本身就意味着
+ *   「token 有效 + 角色对」。退出之后这两个条件都不成立了，
+ *   但守卫不会自己重跑（没有发生路由跳转），结果是：
+ *   页面还停在创作中心，顶栏变成了「未登录/未登录」，
+ *   再点任何东西都会 401 被踢走 —— 看起来很莫名其妙。
+ *
+ * ★ 用 location.href 而不是 router.replace('/')：
+ *   这是跨应用跳转，本应用的路由器管不到阅读端（§7.5 第 2 条）。
+ *   而且硬跳转会整页重新加载，不存在「守卫被跳过」的可能。
+ *
+ * ★ 这里【故意不用 redirectToReaderLogin()】——
+ *   那个函数会带上 ?redirect=<当前地址>，于是变成：
+ *   退出 → 登录页 → 登录成功 → 跳回创作中心 → 又不是作者被拦 → 回登录页……
+ *   一个死循环。它只适合「该登录而没登录」的场景，不适合「主动退出」。
+ */
+async function handleLogout() {
+  await userStore.logout()
+  gotoApp(READER_WEB_URL)
+}
 </script>
 
 <template>
@@ -42,7 +66,7 @@ function backToReader() {
         <template v-if="userStore.isLogin">
           <el-tag type="success" size="small">{{ userStore.nickname || '已登录' }}</el-tag>
           <el-tag v-if="userStore.role" size="small" effect="plain">{{ userStore.role }}</el-tag>
-          <el-button link @click="userStore.logout()">退出</el-button>
+          <el-button link @click="handleLogout">退出</el-button>
         </template>
         <el-tag v-else type="danger" size="small">未登录</el-tag>
       </div>

@@ -68,7 +68,7 @@ const stateText = { ok: '正常', fail: '失败', loading: '检测中', idle: '�
       title="当前未登录"
     >
       请先到
-      <el-link type="primary" @click="gotoApp(READER_WEB_URL + '/login')">阅读端登录</el-link>
+      <el-link type="primary" @click="gotoApp(READER_WEB_URL + 'login')">阅读端登录</el-link>
       —— 三个端共用同一份 localStorage，登录后跳回来即可。
     </el-alert>
 

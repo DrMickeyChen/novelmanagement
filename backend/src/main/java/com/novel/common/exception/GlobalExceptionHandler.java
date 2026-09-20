@@ -5,6 +5,7 @@ import com.novel.common.result.ResultCode;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
@@ -81,6 +82,46 @@ public class GlobalExceptionHandler {
     public Result<Void> handleNotReadable(HttpMessageNotReadableException e) {
         log.warn("请求体解析失败 | {}", e.getMessage());
         return Result.error(ResultCode.PARAM_ERROR, "请求内容格式不正确");
+    }
+
+    /* ========== 鉴权失败（方法级） ========== */
+
+    /**
+     * <b>{@code @PreAuthorize} 拒绝时抛的异常 —— 少了这个 handler 会变成 500。</b>
+     *
+     * <p><b>★★ 鉴权失败有两条路，这里只堵了其中一条，另一条在别处：</b>
+     * <pre>
+     *   ① URL 级失败 —— 在 filter chain 里就被拦下，请求根本没进
+     *      DispatcherServlet，所以本类接不到。
+     *      由 {@code RestAuthenticationEntryPoint}（401）
+     *      和 {@code RestAccessDeniedHandler}（403）负责。
+     *
+     *   ② 方法级失败 —— {@code @PreAuthorize} 是在 Controller / Service
+     *      的方法上生效的，那时请求【已经进了】DispatcherServlet，
+     *      异常会走 {@code @RestControllerAdvice}，也就是这里。
+     * </pre>
+     * <b>两条都要覆盖，少一条就是一个洞。</b>
+     *
+     * <p><b>不写这个 handler 会怎样：</b>
+     * {@code AccessDeniedException} 没被任何 handler 接住，于是掉进最底下的
+     * {@code Exception.class} 兜底，返回
+     * {@code {"code":500,"message":"服务器开小差了"}} ——
+     * <ul>
+     *   <li>前端会把它当成「后端挂了」而不是「你没权限」，
+     *       不会给出正确引导（比如提示去申请作者权限）</li>
+     *   <li>日志里是 <b>error 级别带完整堆栈</b>，把一个正常的业务分支
+     *       记成了系统故障。权限被拒在正常使用中是很常见的
+     *       （作者点了管理端入口），日志很快就会被这种假报警淹掉</li>
+     * </ul>
+     *
+     * <p>日志用 warn 不用 error：它说明的是「这个用户不该干这事」，
+     * 不是「系统坏了」。
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public Result<Void> handleAccessDenied(AccessDeniedException e, HttpServletRequest request) {
+        log.warn("鉴权失败（方法级） | {} {} | {}", request.getMethod(), request.getRequestURI(),
+                e.getMessage());
+        return Result.error(ResultCode.FORBIDDEN);
     }
 
     /* ========== 路由 / 方法 ========== */

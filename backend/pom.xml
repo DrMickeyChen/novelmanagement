@@ -134,36 +134,42 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ==================== 认证授权（P1） ==================== -->
+
         <!--
-          ==================== 以下依赖第一期 P1 再加 ====================
-
-          认证授权（P1 阶段）：
-          <dependency>
-              <groupId>org.springframework.boot</groupId>
-              <artifactId>spring-boot-starter-security</artifactId>
-          </dependency>
-          <dependency>
-              <groupId>io.jsonwebtoken</groupId>
-              <artifactId>jjwt-api</artifactId>
-              <version>${jjwt.version}</version>
-          </dependency>
-          <dependency>
-              <groupId>io.jsonwebtoken</groupId>
-              <artifactId>jjwt-impl</artifactId>
-              <version>${jjwt.version}</version>
-              <scope>runtime</scope>
-          </dependency>
-          <dependency>
-              <groupId>io.jsonwebtoken</groupId>
-              <artifactId>jjwt-jackson</artifactId>
-              <version>${jjwt.version}</version>
-              <scope>runtime</scope>
-          </dependency>
-
-          ★ 注意：spring-boot-starter-security 一旦引入就会【自动拦截所有接口】，
-            连 /api/ping 都访问不了 —— 必须同时写好 SecurityConfig 放行规则。
-            所以 P0 阶段先不加，等 P0 验收完、开始做登录功能时再一起加。
+          ★★ spring-boot-starter-security 一旦引入就会【自动拦截所有接口】，
+             连 /api/ping 都访问不了 —— 放行规则写在 com.novel.config.SecurityConfig。
+             这两者必须同时存在，单独加依赖 = 全站 401。
         -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          jjwt 是「三件套」，三个都要：jjwt-api 编译期用（只有接口），
+          jjwt-impl 和 jjwt-jackson 是运行时的实现，scope=runtime 即可。
+
+          ★ 只引 jjwt-api 会编译通过但一运行就抛
+            「Unable to discover any JJWT implementation」，因为接口没有实现类。
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
 
         <!-- ==================== 测试 ==================== -->
         <dependency>

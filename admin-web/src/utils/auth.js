@@ -67,19 +67,44 @@ export const USER_KEY = 'novel_user'
  */
 export const GATEWAY_URL = import.meta.env.VITE_GATEWAY_URL || 'http://localhost:3000'
 
+/*
+ * ============================================================
+ * ★★★ 下面三个地址必须以【斜杠结尾】★★★
+ * ============================================================
+ *
+ * 这不是风格问题，是踩过的坑：
+ *
+ *   http://localhost:3000/reader    ← 没有结尾斜杠 → 404
+ *   http://localhost:3000/reader/   ← 有结尾斜杠   → 正常
+ *
+ * 因为三个应用都是部署在子路径下的（Vite 的 base = '/reader/'），
+ * 服务器把 /reader 当成一个「文件」去找，找不到就 404；
+ * 只有 /reader/ 才会被当成目录、进而返回它的 index.html。
+ * （生产的 Nginx 一般会自动 301 补上这个斜杠，但那是服务器的行为，
+ *   换一个服务器、换一份配置就未必了 —— 与其指望服务器宽容，
+ *   不如自己把地址写对。）
+ *
+ * 所以拼接时也要注意：
+ *   ✅ `${READER_WEB_URL}login`   → http://localhost:3000/reader/login
+ *   ❌ `${READER_WEB_URL}/login`  → http://localhost:3000/reader//login
+ *
+ * ★ 如果要用环境变量覆盖（VITE_READER_WEB_URL 等），
+ *   注意那个值也必须以斜杠结尾，三个应用要写成同一个值。
+ */
+
 /**
- * 阅读端地址。
+ * 阅读端地址（以 / 结尾）。
  *
  * 401 时统一跳这里，而不是各端跳各自的登录页 ——
  * 否则用户会看到三个登录入口，不知道该用哪个（§7.5 第 3 条约定）。
  */
-export const READER_WEB_URL = import.meta.env.VITE_READER_WEB_URL || `${GATEWAY_URL}/reader`
+export const READER_WEB_URL = import.meta.env.VITE_READER_WEB_URL || `${GATEWAY_URL}/reader/`
 
-/** 创作中心地址，用于跨应用跳转 */
-export const AUTHOR_WEB_URL = import.meta.env.VITE_AUTHOR_WEB_URL || `${GATEWAY_URL}/author`
+/** 创作中心地址（以 / 结尾），用于跨应用跳转 */
+export const AUTHOR_WEB_URL = import.meta.env.VITE_AUTHOR_WEB_URL || `${GATEWAY_URL}/author/`
 
-/** 管理端地址，用于跨应用跳转 */
-export const ADMIN_WEB_URL = import.meta.env.VITE_ADMIN_WEB_URL || `${GATEWAY_URL}/admin`
+/** 管理端地址（以 / 结尾），用于跨应用跳转 */
+export const ADMIN_WEB_URL = import.meta.env.VITE_ADMIN_WEB_URL || `${GATEWAY_URL}/admin/`
 
 /* ==================== token ==================== */
 
@@ -140,5 +165,6 @@ export function clearAuth() {
  */
 export function redirectToReaderLogin() {
   const back = encodeURIComponent(window.location.href)
-  window.location.href = `${READER_WEB_URL}/login?redirect=${back}`
+  // ★ READER_WEB_URL 自带结尾斜杠，所以这里是 `login` 而不是 `/login`
+  window.location.href = `${READER_WEB_URL}login?redirect=${back}`
 }
