@@ -62,13 +62,32 @@ logs/
 #   `git status` 里看不到它们，就不会有「顺手 git add -A」那一下。
 .tmp-*/
 
+# ★ 整库备份（清理数据前用 mysqldump 落的那一份）。
+#   里面有**全部用户的行**——包括 password 的 bcrypt 哈希——虽然哈希本身不可逆，
+#   但也没有任何理由把它提交进一个公开的作品集仓库。留着只是为了「清错了能还原」。
+.backup/
+*.sql.dump
+
 # ---------- ★ 敏感文件，绝对不能提交 ----------
 # Docker 中间件的密码（MySQL root 密码、Redis 密码都在里面）
 docs/docker/.env
 
 # 生产环境配置（含真实数据库地址和密码）
+# ★★ M0 之后 resources/ 搬进了子模块，所以下面**两组都要留**：
+#    旧的 backend/src/main/resources/... 是 M0 之前的路径（历史提交里还在用），
+#    新的 backend/novel-backend/src/main/resources/... 才是现在的位置。
+#
+#    ★ 这条不是「顺手加一下」—— M0 当时只核对了 target/ 和 logs/（那两个确实天然覆盖），
+#      漏了这里。少写一行的后果是：以后按 docs/部署.md 建的生产配置
+#      （里面有真实数据库密码）**不会被忽略**，`git add -A` 一下就直接进仓库了，
+#      而且不会有任何报错或提示。忽略规则这种东西，失效是静默的。
 backend/src/main/resources/application-prod.yml
 backend/src/main/resources/application-prod.yaml
+backend/novel-backend/src/main/resources/application-prod.yml
+backend/novel-backend/src/main/resources/application-prod.yaml
+# 网关将来拆 profile 时也会有生产配置（M5），先按同上规则留好
+backend/novel-gateway/src/main/resources/application-prod.yml
+backend/novel-gateway/src/main/resources/application-prod.yaml
 
 # AI 的 API Key
 # ★ 数据库 ai_config 表里的 key 是加密存储的，解密用的密钥在环境变量里，
