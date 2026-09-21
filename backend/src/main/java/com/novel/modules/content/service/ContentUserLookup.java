@@ -1,7 +1,9 @@
 package com.novel.modules.content.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.novel.modules.system.entity.AuthorApply;
 import com.novel.modules.system.entity.SysUser;
+import com.novel.modules.system.mapper.AuthorApplyMapper;
 import com.novel.modules.system.mapper.SysUserMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -15,7 +17,15 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 「按 userId 取昵称」—— <b>content 模块里唯一一处依赖 system 模块的地方。</b>
+ * <b>content 模块望向 system 模块的那【唯一一个窗口】。</b>
+ *
+ * <p>它主要做「按 userId 取昵称」，但不止于此 —— S11 起它也负责
+ * 「按作者申请 id 取一句可读的标题」（见 {@link #authorApplyTitlesOf}）。
+ * <b>★ 类名因此变得不够准确，这是有意接受的</b>：准确的命名应该是
+ * {@code SystemModuleFacade} 之类，但那要改 5 个调用点换不来任何功能，
+ * 而且会让人以为这里是个新概念。真正的规矩写在下面这段和
+ * {@code AuthorApplyAuditRecorder} 的类注释里：<b>跨模块的耦合只能有一个出入口，
+ * 出入口在消费方那一侧。</b>
  *
  * <p><b>★ 为什么单独抽一个类，而不是在 Service 里直接注入 {@code SysUserMapper}：</b>
  *
@@ -57,6 +67,18 @@ public class ContentUserLookup {
     private static final int NICKNAME_MATCH_LIMIT = 100;
 
     private final SysUserMapper sysUserMapper;
+
+    /**
+     * ★ S11 加的第二个依赖，也是唯一一个不是「用户表」的。
+     *
+     * <p>它存在的原因见 {@link #authorApplyTitlesOf} —— 一句话：
+     * content 要补出「作者申请」的可读标题，而那张表在 system 里。
+     * <p><b>★ 为什么加在这里而不是新建一个 {@code AuthorApplyLookup}：</b>
+     * 「跨模块的耦合只能有一个出入口」—— 再加一个类就是同一个方向上
+     * 开了第二个口子，M1 拆 auth 时得找两个地方，而且以后每加一张表
+     * 就会多一个 Lookup 类。宁可让这个类的名字变得不准确。
+     */
+    private final AuthorApplyMapper authorApplyMapper;
 
     /**
      * 取一个用户的昵称。查不到返回 {@code null}（用户可能已被注销）。
@@ -133,6 +155,10 @@ public class ContentUserLookup {
      * ① 不把 {@code password}（BCrypt 哈希）捞进内存 —— 泄露哈希等于
      * 把离线爆破的门槛降到「拖库」以下；② 少读几列，全表扫描时差别明显。
      *
+     * <p>★ 单列投影在这里【安全】：主键永远不为 NULL，MyBatis 就不会把整行丢成
+     * {@code null} 塞进 List。<b>但这是「碰巧安全」，不是「有保证」</b> ——
+     * 选到可空列上会 500，实例见 {@code AdminRoleServiceImpl#permsOfMenus}。
+     *
      * @param keyword 昵称关键词。调用方必须先判空 —— 空关键词会匹配所有人
      * @return 命中的用户 id，<b>可能为空列表</b>（调用方要短路，不能拿空集合去 {@code IN}）
      */
@@ -157,5 +183,88 @@ public class ContentUserLookup {
                 .last("LIMIT " + NICKNAME_MATCH_LIMIT));
 
         return users.stream().map(SysUser::getId).toList();
+    }
+
+    /**
+     * 批量取作者申请的「标题」，返回 {@code applyId → "墨白（张三）"}。
+     * <b>给审核日志补「作者申请 #5」之外的可读信息用。</b>
+     *
+     * <p><b>★★ 为什么不直接用 {@link #nicknameOf}：</b>
+     * {@code audit_log.target_id} 对 {@code AUTHOR_APPLY} 存的是<b>申请表的 id</b>，
+     * 不是申请人的 {@code user_id}。拿它去调 {@code nicknameOf(applyId)}
+     * <b>不会报错</b> —— 它会去 {@code sys_user} 里找 id 等于这个申请号的人，
+     * 而那多半是<b>另一个真实存在的人</b>，于是日志页上显示的是
+     * 「别人的申请」。两份申请都真实存在，从流水上根本看不出记错了。
+     * <p>所以必须走 {@code apply_id → user_id → nickname} 两跳。
+     *
+     * <p><b>★ 标题为什么是「笔名（昵称）」而不是只有昵称：</b>
+     * 昵称可以重复、可以随时改，而审核员在日志页要找的是「哪一份申请」。
+     * 笔名是那份申请自己的内容，昵称说明了是谁 —— 两个都给才够定位。
+     * （同一页里同一个人申请了两次、笔名不同，只有这样才分得开。）
+     *
+     * <p><b>★ 查不到的 id 不会出现在 Map 里</b>：申请被逻辑删除、
+     * 或者申请还在但申请人已注销导致笔名取不到任何佐证 ——
+     * 前者返回 {@code null}，日志页显示成「作者申请 #5（已删除）」，
+     * 和作品 / 章节 / 评论的处理完全一致
+     * （见 {@code AuditLogVO#targetTitle}：<b>为了补出已删除对象的标题
+     * 而绕过逻辑删除是错误的修法</b>）。
+     * <p>★ 申请人注销但申请还在时，<b>标题仍然给得出</b>（只有笔名）——
+     * 申请本身没有消失，不该因为作者走人就显示成「已删除」。
+     *
+     * @param applyIds 申请 id 集合，允许为空
+     *                （<b>空集合直接返回空 Map，不能拿它去查库</b> ——
+     *                那会生成 {@code WHERE id IN ()}，是语法错误）
+     */
+    public Map<Long, String> authorApplyTitlesOf(Collection<Long> applyIds) {
+        if (applyIds == null || applyIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        List<Long> ids = applyIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        List<AuthorApply> applies = authorApplyMapper.selectByIds(ids);
+        if (applies.isEmpty()) {
+            return Collections.emptyMap();
+        }
+
+        /*
+         * ★ 第二次查询：申请人昵称。同样是一次 IN，不是循环 ——
+         *   一页 20 条日志最多 20 个申请人，逐个查就是 20 次。
+         * ★ 用 nicknamesOf（本类自己的方法）而不是再写一遍 selectByIds：
+         *   昵称的取法只能有一处实现，将来它改成调 auth 服务时，
+         *   这条路径自动跟着走。
+         */
+        Map<Long, String> nicknames = nicknamesOf(
+                applies.stream().map(AuthorApply::getUserId).toList());
+
+        Map<Long, String> result = new LinkedHashMap<>();
+        for (AuthorApply apply : applies) {
+            String penName = apply.getPenName();
+            String nickname = nicknames.get(apply.getUserId());
+
+            /*
+             * ★ 申请人已注销时只有笔名 —— 降级，但不跳过：
+             *   申请本身还在，不该因为作者走人就显示成「已删除」。
+             *   （pen_name 列是 NOT NULL，所以这个分支一定给得出东西。）
+             */
+            String title = penName == null ? nickname : penName;
+            if (title == null) {
+                /*
+                 * ★ 两样都没有，只能是不放进去 —— 调用方 get 出 null，
+                 *   按「已删除」处理。这正是我们要的兜底，不是错误。
+                 */
+                continue;
+            }
+            /*
+             * ★ 昵称和笔名相同时不写成「墨白（墨白）」——
+             *   那看起来像数据重复，而不是「笔名恰好等于昵称」。
+             */
+            result.put(apply.getId(), nickname == null || nickname.equals(penName)
+                    ? title
+                    : title + "（" + nickname + "）");
+        }
+        return result;
     }
 }

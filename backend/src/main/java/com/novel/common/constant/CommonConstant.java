@@ -1,5 +1,7 @@
 package com.novel.common.constant;
 
+import java.util.Set;
+
 /**
  * 全项目通用常量。
  *
@@ -36,6 +38,26 @@ public final class CommonConstant {
     public static final String ROLE_READER = "READER";
     public static final String ROLE_AUTHOR = "AUTHOR";
     public static final String ROLE_ADMIN = "ADMIN";
+
+    /**
+     * 内置角色码 —— 由 {@code docs/sql/seed.sql} 灌进去的那三个。
+     *
+     * <p><b>★ 这组角色不允许删除、停用、改标识</b>（S13 的 D-6 防护，
+     * 见 {@code ResultCode.ROLE_BUILTIN} 上的长注释）。
+     *
+     * <p>判断「是不是内置」用的是 <b>角色码</b>而不是 {@code id}：
+     * 自增 id 是数据库的实现细节，换一套环境、重新灌一次种子数据就可能变；
+     * 而 {@code ADMIN} 这三个字是代码里到处在用的业务常量
+     * （{@code SecurityConfig} 的 {@code hasRole("ADMIN")}、
+     * {@code SysUserMapper} 注册时授予 READER），它才是稳定标识。
+     *
+     * <p>放在这个类里而不是 {@code AdminRoleServiceImpl} 的私有常量：
+     * 「哪几个角色是内置的」是项目级的公共事实，登录、注册、鉴权、
+     * 管理端四处都依赖它。分散在各处的话，将来加一个内置角色
+     * 就会漏改其中一两处 —— 而漏掉的后果是那个角色可以被删掉。
+     */
+    public static final Set<String> BUILTIN_ROLE_CODES =
+            Set.of(ROLE_ADMIN, ROLE_AUTHOR, ROLE_READER);
 
     /* ==================== 通用状态 ==================== */
 

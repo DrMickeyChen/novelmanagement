@@ -17,6 +17,16 @@
 --   这个坑真踩过：author01 原来写死 id=2，而测试库里 id=2 早被 reader01 占了，
 --   重跑 seed.sql 之后 author01 根本没建出来，也没有任何报错。
 --   结论：**新增的数据行不要写死 id**，用业务唯一键（username / role_code）关联。
+--
+-- ★★ 同一个「跳过」还有第二半，而且更隐蔽：【改了这个文件里已有行的值，重跑无效】。
+--   本文件只 INSERT、不 UPDATE，所以库里的老行原封不动 ——
+--   结果是「文件里是新值、库里还是旧值」，而脚本一声不响地跑完了。
+--   S14 修 sys_menu.path（'/novel/list' → '/novel'，见下面菜单那一节）就撞上了：
+--   改完文件，已有库里的那 11 行路径一条都没变，得**另外手工跑一条 UPDATE**。
+--   所以规矩是：**改已有行的值 = 改文件 + 手工 UPDATE 那个库**，两件事都要做。
+--   （刻意的：本文件不补一堆 UPDATE 来「自动对齐」。那会把它的语义从
+--     「补种子数据」变成「声明式同步」，而后者要覆盖每一张表、每一列 ——
+--     做不到就是更隐蔽的半同步，不如把边界写清楚。）
 -- ============================================================
 
 USE `novel`;
@@ -68,22 +78,36 @@ WHERE (u.`username` = 'admin' AND r.`role_code` = 'ADMIN')
    OR (u.`username` = 'author01' AND r.`role_code` = 'AUTHOR');
 
 -- ---------- 菜单 / 权限点 ----------
+-- ★★ path 必须和 admin-web/src/router/index.js 里的【真实路由】逐字一致。
+--   今天它还没有消费者（左侧菜单走的是 AdminLayout.vue 里那份写死的表，
+--   按叶子的 perms 过滤），但两件事会让它变成真的：
+--     ① 菜单管理页会把这一列显示出来 —— 值不对就是我们自己把假数据摆到界面上；
+--     ② 二期的动态菜单要拿它当路由键。
+-- ★★ S14 修过一次：原来这 12 个叶子里有 11 个写的是 '/x/list'，
+--   那是照着**同一行**的 perms 抄形状抄出来的（content:novel:list），
+--   把权限点结尾的 ':list' 误当成了路径层级。真实路由是 '/novel' 这种。
+--   最离谱的是第 8 行：'/author/apply' 和真实路由 '/author-apply' 整段不同，
+--   而且它会让人以为这一页属于「作者域」—— 它其实是**读者**在用的
+--   （提交申请的人还不是作者），理由见 SecurityConfig 上的 D-7 那条注释。
+--   9 / 13 两条页面 S14、S15 才做，这里的值按 AdminLayout 里已经写好的目标路径对齐。
+-- ★ 目录行（1 / 6 / 12）的 path 只是【分组标识】，不对应任何路由 ——
+--   它们是 AdminLayout 里 el-sub-menu 的分组标题，没有自己的页面。
 INSERT IGNORE INTO `sys_menu` (`id`, `parent_id`, `name`, `type`, `path`, `perms`, `icon`, `sort`) VALUES
-  (1,  NULL, '内容管理',   1, '/content',      NULL,                      'Document', 1),
-  (2,  1,    '作品管理',   2, '/novel/list',   'content:novel:list',      'Reading',  1),
-  (3,  1,    '审核中心',   2, '/audit',        'content:audit:list',      'Checked',  2),
-  (4,  1,    '评论管理',   2, '/comment/list', 'content:comment:list',    'ChatDotRound', 3),
-  (5,  1,    '分类管理',   2, '/category/list','content:category:list',   'Menu',     4),
-  (6,  NULL, '用户管理',   1, '/system',       NULL,                      'User',     2),
-  (7,  6,    '用户列表',   2, '/user/list',    'system:user:list',        'UserFilled', 1),
-  (8,  6,    '作者申请',   2, '/author/apply', 'system:author:apply',     'EditPen',  2),
-  (9,  6,    '角色管理',   2, '/role/list',    'system:role:list',        'Key',      3),
-  (10, 6,    '菜单管理',   2, '/menu/list',    'system:menu:list',        'Grid',     4),
-  (11, 6,    'AI 配置',    2, '/ai/config',    'system:ai:config',        'MagicStick', 5),
-  (12, NULL, '运营管理',   1, '/ops',          NULL,                      'DataLine', 3),
-  (13, 12,   '公告管理',   2, '/notice/list',  'ops:notice:list',         'Bell',     1),
-  (14, 12,   '审核日志',   2, '/auditlog/list','ops:auditlog:list',       'List',     2),
-  (15, 12,   '违禁审核',   2, '/ai/audit',     'ops:aiaudit:list',        'Warning',  3);
+  (1,  NULL, '内容管理',   1, '/content',      NULL,                    'Document',     1),
+  (2,  1,    '作品管理',   2, '/novel',        'content:novel:list',    'Reading',      1),
+  (3,  1,    '审核中心',   2, '/audit',        'content:audit:list',    'Checked',      2),
+  (4,  1,    '评论管理',   2, '/comment',      'content:comment:list',  'ChatDotRound', 3),
+  (5,  1,    '分类管理',   2, '/category',     'content:category:list', 'Menu',         4),
+  (6,  NULL, '用户管理',   1, '/system',       NULL,                    'User',         2),
+  (7,  6,    '用户列表',   2, '/user',         'system:user:list',      'UserFilled',   1),
+  (8,  6,    '作者申请',   2, '/author-apply', 'system:author:apply',   'EditPen',      2),
+  (9,  6,    '角色管理',   2, '/role',         'system:role:list',      'Key',          3),
+  (10, 6,    '菜单管理',   2, '/menu',         'system:menu:list',      'Grid',         4),
+  (11, 6,    'AI 配置',    2, '/ai',           'system:ai:config',      'MagicStick',   5),
+  (12, NULL, '运营管理',   1, '/ops',          NULL,                    'DataLine',     3),
+  (13, 12,   '公告管理',   2, '/notice',       'ops:notice:list',       'Bell',         1),
+  (14, 12,   '审核日志',   2, '/log',          'ops:auditlog:list',     'List',         2),
+  (15, 12,   '违禁审核',   2, '/ai-audit',     'ops:aiaudit:list',      'Warning',      3);
 
 -- 管理员拥有全部菜单
 INSERT IGNORE INTO `sys_role_menu` (`role_id`, `menu_id`)

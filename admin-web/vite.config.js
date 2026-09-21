@@ -41,6 +41,15 @@ export default defineConfig({
   server: {
     port: 5175,
 
+    /*
+     * ★★ strictPort —— 端口被占时直接失败，不要静默换一个。
+     * 管理端尤其需要它：P5 加 echarts 时要重启 dev server，
+     * 而「旧实例还占着 5175」正是那时候最容易发生的事 ——
+     * 不报错的话，dev-proxy 会把 /admin/ 转给那个旧实例，
+     * 页面上是新代码还是旧代码完全看不出来。
+     */
+    strictPort: true,
+
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

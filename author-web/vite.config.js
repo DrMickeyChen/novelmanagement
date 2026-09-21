@@ -62,6 +62,14 @@ export default defineConfig({
   server: {
     port: 5174,
 
+    /*
+     * ★★ strictPort —— 端口被占时直接失败，不要静默换一个。
+     * 理由和 reader-web 那边写的一样：Vite 换端口不报错，
+     * 于是 dev-proxy 转发到 5174 的可能是一个没退干净的旧实例，
+     * 或者重启后两套 stack 并存、日志是「输的那套」写的。
+     */
+    strictPort: true,
+
     // 和后端 8080 打通。★ 后端不需要配任何跨域，这里转发是同源请求
     proxy: {
       '/api': {

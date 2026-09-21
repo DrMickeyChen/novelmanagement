@@ -13,6 +13,7 @@ import com.novel.modules.content.mapper.AuditLogMapper;
 import com.novel.modules.content.mapper.ChapterMapper;
 import com.novel.modules.content.mapper.NovelMapper;
 import com.novel.modules.content.service.AuditLogService;
+import com.novel.modules.content.service.CommentTextLookup;
 import com.novel.modules.content.service.ContentUserLookup;
 import com.novel.modules.content.vo.AuditLogVO;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,23 @@ public class AuditLogServiceImpl implements AuditLogService {
     private final NovelMapper novelMapper;
     private final ChapterMapper chapterMapper;
     private final ContentUserLookup userLookup;
+
+    /**
+     * ★★ <b>注意它的类型是一个接口，而不是某个 Mapper。</b>
+     *
+     * <p>评论表在 {@code modules/interaction} 里，直接注入
+     * {@code NovelCommentMapper} 会造出一条 {@code content → interaction} 的依赖；
+     * 而 M3 要摘的正是 interaction，摘出去之后 content 反过来调它
+     * —— 那就是 D-1 里警告过的双向依赖，拆不动。
+     * <p>所以接口定义在 content 侧（本模块的 {@code service} 包），
+     * 实现在 interaction 侧（{@code CommentTextLookupImpl}），
+     * 依赖方向是 interaction → content，单向。
+     * <b>本类里找不到任何对 interaction 的 import</b>，这就是这个接口的全部意义。
+     *
+     * <p>★ 完整理由（含「为什么 P1 的 ContentUserLookup 是反过来的做法」）
+     * 写在 {@link CommentTextLookup} 的类注释里。
+     */
+    private final CommentTextLookup commentTextLookup;
 
     @Override
     public void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark) {
@@ -134,6 +152,35 @@ public class AuditLogServiceImpl implements AuditLogService {
                 .map(AuditLog::getTargetId)
                 .distinct()
                 .toList();
+        /*
+         * ★ 第三个分组：评论（P5 的 S9 补的）。同样单独收集、单独查 ——
+         *   理由和上面那两段一样：novel_comment 的 id 和 novel / chapter 的 id
+         *   完全独立，混着查会给评论 5 补上作品 5 的标题。
+         *
+         * ★ 这里【不判空集合】—— 判空在 commentTextLookup.textsOf 里面。
+         *   两层都判不会出错，但会让「谁负责这件事」变得模糊；
+         *   这个方法是「消费方」，约定是「接口自己处理空集合」（见接口注释）。
+         *   （上面那两个 Map 的 if 判空是因为 selectByIds 是 MP 的方法、
+         *   我们没有地方可以把判空塞进去 —— 两者情况不同，不是风格不一致。）
+         */
+        List<Long> commentIds = logs.stream()
+                .filter(l -> l.getTargetType() == AuditTargetType.COMMENT)
+                .map(AuditLog::getTargetId)
+                .distinct()
+                .toList();
+        /*
+         * ★ 第四个分组：作者申请（P5 的 S11 补的）。同样是单独收集、单独查。
+         *
+         * ★★ 注意它的 target_id 是【申请表的 id】，不是申请人的 user_id ——
+         *   所以补标题走的是 ContentUserLookup#authorApplyTitlesOf
+         *   （内部做 apply_id → user_id → nickname 两跳），
+         *   而不是现成的 nicknameOf。混用不会报错，只会显示成别人的申请。
+         */
+        List<Long> applyIds = logs.stream()
+                .filter(l -> l.getTargetType() == AuditTargetType.AUTHOR_APPLY)
+                .map(AuditLog::getTargetId)
+                .distinct()
+                .toList();
 
         Map<Long, String> novelTitles = new LinkedHashMap<>();
         if (!novelIds.isEmpty()) {
@@ -149,6 +196,26 @@ public class AuditLogServiceImpl implements AuditLogService {
             }
         }
 
+        /*
+         * ★ 评论没有「标题」这一列，正文开头十几个字就是它的名字 ——
+         *   截断在实现里做（{@code MAX_TEXT_LENGTH = 30}），这里拿到的是成品。
+         *
+         * ★ 查不到的 id 不会出现在 Map 里，于是下面 get 出 null，
+         *   VO 里 targetTitle 为空，前端显示成「评论 #5（已删除）」——
+         *   和作品 / 章节完全一致，这是【有意接受】的结果：
+         *   为了补出已删除对象的标题而绕过逻辑删除是错误的修法。
+         */
+        Map<Long, String> commentTexts = commentTextLookup.textsOf(commentIds);
+
+        /*
+         * ★ 作者申请的「标题」是「笔名（昵称）」，不是正文截断 ——
+         *   申请的两个内容字段里，intro 可能很长（500 字）、也可能为空，
+         *   而 pen_name 是必填的短字段，天生适合当标题。
+         *   所以这里【没有】第二个 CommentTextLookup 那样的接口，
+         *   直接走 ContentUserLookup —— 它本来就是这个模块望向 system 的窗口。
+         */
+        Map<Long, String> applyTitles = userLookup.authorApplyTitlesOf(applyIds);
+
         Map<Long, String> operatorNames = userLookup.nicknamesOf(
                 logs.stream().map(AuditLog::getOperatorId).toList());
 
@@ -162,12 +229,22 @@ public class AuditLogServiceImpl implements AuditLogService {
                 case NOVEL -> novelTitles.get(l.getTargetId());
                 case CHAPTER -> chapterTitles.get(l.getTargetId());
                 /*
-                 * ★ 评论和作者申请是 P5/P6 的，P2 一条都不会产生。
-                 *   这里刻意返回 null 而不是查库 —— 那两张表对应的 Service
-                 *   还不存在，现在写查询只会写出一段没被验证过的代码。
-                 *   P5 落地时在这里补上分支即可（switch 表达式会强制你回来补）。
+                 * ★ P5（S9）补上的分支 —— 这个 switch 表达式从 P2 起就
+                 * 等着这一行：写成 switch 表达式（而不是语句 + default）
+                 * 就是为了「新增一个枚举值必须回来补」，编译器会拦住你。
+                 * 在补上之前，评论的审核流水在日志页显示的是「评论 #5」，
+                 * 管理员看不出审的是哪一条。
                  */
-                case COMMENT, AUTHOR_APPLY -> null;
+                case COMMENT -> commentTexts.get(l.getTargetId());
+                /*
+                 * ★★ P5（S11）补上的最后一条分支。至此 AuditTargetType 的
+                 *   四个取值全都有了实现 —— 这个 switch 表达式一共拦了两次
+                 *   （S9 的 COMMENT、这里的 AUTHOR_APPLY），它就是这么设计的。
+                 *
+                 * ★ 走到 null 只有一种情况：申请被逻辑删除。
+                 *   （申请人注销不会 —— 那时 applyTitles 里仍然有纯笔名。）
+                 */
+                case AUTHOR_APPLY -> applyTitles.get(l.getTargetId());
             };
             return AuditLogVO.of(l, title, operatorNames.get(l.getOperatorId()));
         }).toList();

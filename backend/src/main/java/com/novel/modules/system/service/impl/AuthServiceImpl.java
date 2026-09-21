@@ -10,7 +10,9 @@ import com.novel.common.security.UserContext;
 import com.novel.modules.system.dto.LoginDTO;
 import com.novel.modules.system.dto.RegisterDTO;
 import com.novel.modules.system.entity.SysUser;
+import com.novel.modules.system.mapper.SysRoleMapper;
 import com.novel.modules.system.mapper.SysUserMapper;
+import com.novel.modules.system.mapper.SysUserRoleMapper;
 import com.novel.modules.system.service.AuthService;
 import com.novel.modules.system.vo.LoginVO;
 import com.novel.modules.system.vo.UserVO;
@@ -36,6 +38,13 @@ import java.util.UUID;
 public class AuthServiceImpl implements AuthService {
 
     private final SysUserMapper userMapper;
+    /*
+     * ★ 角色相关的两个 Mapper 是 P5 从 SysUserMapper 里拆出来的
+     *   （那边原来的注释就写了「等做角色管理时再拆出去」）。
+     *   拆完这里多注入两个依赖，SQL 一行没变。
+     */
+    private final SysRoleMapper roleMapper;
+    private final SysUserRoleMapper userRoleMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final TokenStore tokenStore;
@@ -92,8 +101,8 @@ public class AuthServiceImpl implements AuthService {
         }
 
         // 角色和权限从库里现查，不放进 JWT —— 这样改了角色立刻生效
-        List<String> roles = userMapper.selectRoleCodesByUserId(user.getId());
-        List<String> permissions = userMapper.selectPermsByUserId(user.getId());
+        List<String> roles = userRoleMapper.selectRoleCodesByUserId(user.getId());
+        List<String> permissions = userRoleMapper.selectPermsByUserId(user.getId());
 
         /*
          * ★ jti：每个 token 一个唯一编号。
@@ -187,7 +196,7 @@ public class AuthServiceImpl implements AuthService {
          * 想成为作者要走单独的「申请 → 管理员审核」流程（P2 做），
          * 不能靠注册接口自己声明。
          */
-        Long readerRoleId = userMapper.selectRoleIdByCode(CommonConstant.ROLE_READER);
+        Long readerRoleId = roleMapper.selectRoleIdByCode(CommonConstant.ROLE_READER);
         if (readerRoleId == null) {
             /*
              * 说明 sys_role 表里没有 READER 这一行 —— 通常是换了新库
@@ -197,7 +206,7 @@ public class AuthServiceImpl implements AuthService {
             log.error("注册失败：数据库里找不到 READER 角色，请确认已执行 docs/sql/seed.sql");
             throw new BusinessException(ResultCode.SYSTEM_ERROR, "系统初始化数据缺失，请联系管理员");
         }
-        userMapper.insertUserRole(user.getId(), readerRoleId);
+        userRoleMapper.insertUserRole(user.getId(), readerRoleId);
 
         log.info("注册成功 | userId={} username={} 已授予={}", user.getId(), user.getUsername(),
                 CommonConstant.ROLE_READER);

@@ -11,9 +11,10 @@
  *     它们还在 Knife4j（/doc.html）和 P0 的回归用例里。
  *
  * ------------------------------------------------------------
- * ★ 三块数据是【三个独立请求】，互不阻塞
+ * ★ 四块数据是【四个独立请求】，互不阻塞
  * ------------------------------------------------------------
- * 分类、热门榜、最近更新来自三个不同的接口。这里刻意用「各自 loading、
+ * 分类、热门榜、最近更新来自三个不同的接口，最上面那条公告横幅
+ * （P5 加的，它自己发请求）是第四个。这里刻意用「各自 loading、
  * 各自渲染」，而不是 Promise.all 等齐了再一起显示：
  * 榜单接口慢的时候，分类入口应该照常能点 —— 它们之间没有任何依赖关系。
  * 合成一个 loading 会让整个首页的可用时间等于最慢那个接口的耗时。
@@ -23,6 +24,7 @@ import { getCategoryList } from '@/api/category'
 import { getNovelList, getRankList } from '@/api/novel'
 import { usePagedList } from '@/composables/usePagedList'
 import NovelCard from '@/components/NovelCard.vue'
+import NoticeBanner from '@/components/NoticeBanner.vue'
 
 /** 分类入口。★ 只有十来个，不分页 */
 const categories = ref([])
@@ -102,6 +104,14 @@ async function loadHot() {
 
 <template>
   <div class="home">
+    <!--
+      ============ ⓪ 公告横幅（P5） ============
+      ★ 它**自己发请求**（组件内 onMounted），不占本页的 loading 状态 ——
+        公告拉不到不该让首页别的区块跟着转圈。
+      ★ 没有公告时它整个不渲染，对版面零影响（见组件文件头）。
+    -->
+    <NoticeBanner />
+
     <!-- ============ ① 分类入口 ============ -->
     <el-card shadow="never" class="section">
       <template #header>

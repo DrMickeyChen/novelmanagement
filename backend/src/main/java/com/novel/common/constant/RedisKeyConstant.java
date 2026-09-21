@@ -106,14 +106,43 @@ public final class RedisKeyConstant {
 
     /* ==================== 互动模块 ==================== */
 
-    /** 评论防刷：{@code novel:comment:limit:{userId}} */
+    /**
+     * 评论防刷：{@code novel:comment:limit:{userId}}。
+     *
+     * <p>值存「上一次发表的时间戳」，10 秒后自动过期（{@code CommonConstant.COMMENT_INTERVAL_SECONDS}）。
+     * <p><b>★ 写入只能用 {@code SET key value NX EX 10} 一条命令</b>，
+     * 不能写成「先 GET 判断、再 SET」或者「先 SETNX 再 EXPIRE」——
+     * 前者连点两下会同时通过，后者一旦在两条命令之间断了，
+     * 这个 key 就永远不会过期，那个用户从此发不出评论且没有任何日志。
+     * 见 {@code CommentServiceImpl#requireNotTooFast}。
+     */
     public static final String COMMENT_LIMIT = PREFIX + "comment:limit:";
 
-    /** 用户点赞的作品集合（Set）：{@code novel:like:user:{userId}} */
+    /**
+     * <b>评论</b>点赞的用户集合（Set）：{@code novel:like:user:{commentId}}，
+     * 成员是 {@code userId}。
+     *
+     * <p>存在的唯一理由是<b>防重复点赞</b>：全库 22 张表里<b>没有
+     * {@code comment_like} 表</b>（已核实），所以「谁点过」这件事没有地方落库，
+     * 只能靠 Redis 的 {@code SADD} —— 它返回 1 表示第一次点，0 表示点过了。
+     * 单条命令，原子。
+     *
+     * <p><b>★★ 注意这里和 P1 定这个常量时的写法【不一样】，是有意改的：</b>
+     * 原来的注释写的是「用户点赞的<b>作品</b>集合，{@code novel:like:user:{userId}}」
+     * —— 后缀是 userId、成员是 novelId。但项目里从来没有「作品点赞」这个功能
+     * （{@code novel} 上只有 {@code collect_count} 收藏数，那是 P6 书架的事），
+     * 而 P5 的点赞是<b>评论</b>点赞，方向正好相反：后缀是 commentId、成员是 userId。
+     * 键字符串没变（从没被写入过，改了也没有历史数据要迁），
+     * 但<b>谁的 id 在名字里必须写清楚</b> —— 反了的话，
+     * 「A 点赞了 B 的评论」会被记成「B 点赞了 A 的评论」，而且完全看不出来。
+     *
+     * <p><b>★ 点赞总数【不在这里】，在 {@code novel_comment.like_count} 列上。</b>
+     * P5 一开始留过一个 {@code LIKE_COUNT = novel:like:count:{novelId}}，
+     * 已删除：评论列表每行都要显示点赞数，走 Redis 就是每行一次往返（N+1），
+     * 而这一列本来就存在、且 {@code like_count = like_count + 1} 由数据库保证原子。
+     * 把一个「库里有列」的数字再在 Redis 里存一份，只会多一个会对不上的地方。
+     */
     public static final String LIKE_USER = PREFIX + "like:user:";
-
-    /** 作品的点赞总数：{@code novel:like:count:{novelId}} */
-    public static final String LIKE_COUNT = PREFIX + "like:count:";
 
     /* ==================== AI 模块 ==================== */
 

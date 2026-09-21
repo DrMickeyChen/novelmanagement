@@ -260,6 +260,29 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/novels/*/view").permitAll()
 
                         /*
+                         * ==================== 公告（P5 · S15） ====================
+                         * ★ 读者端首页的公告横幅。**只有这一条** ——
+                         *   管理端的 /api/admin/notices 什么都不用加，见下面角色闸那段。
+                         *
+                         * ★★ 三个坑，一个都不能少：
+                         *   ① 【必须带 HttpMethod.GET】。白名单条目默认是
+                         *      「方法无关」的，只写路径就等于把将来任何
+                         *      POST /api/notices（发公告）一起匿名放行了 ——
+                         *      这一条 P2 已经有白名单条目踩过，见上面 WHITELIST 的注释。
+                         *   ② 【路径是精确的，不带通配符】。写成 /api/notices 加双星号
+                         *      会顺带放行将来新增的 GET /api/notices/{id}，
+                         *      而那需要单独判断一次（单条公告将来可能带草稿）。
+                         *   ③ 【必须排在这一行】—— 在 .anyRequest().authenticated() 之前。
+                         *      顺序错了规则不生效，而且没有任何报错。
+                         *
+                         * ★ 它敢匿名开放，是因为只读、且只读 status = 1 的公告：
+                         *   过滤写在 SQL 的 WHERE 里（NoticeServiceImpl#listPublished），
+                         *   不是查出来再 if —— 所以「未发布的公告泄露给所有人」
+                         *   这条唯一的风险路径不存在。
+                         */
+                        .requestMatchers(HttpMethod.GET, "/api/notices").permitAll()
+
+                        /*
                          * ==================== 角色闸（P2） ====================
                          * ★ 顺序【必须】在白名单之后、anyRequest() 之前：
                          *   放在白名单之前会把读者端也挡掉；
