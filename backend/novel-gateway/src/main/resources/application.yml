@@ -1,0 +1,180 @@
+# ============================================================
+# 小说管理系统 · 网关配置
+# ============================================================
+# 第二期 M0：网关只做「按路径转发到服务」，没有任何业务判断。
+# JWT 鉴权是 M1，限流是 M5。
+#
+# ★ 路由为什么写在【本地】而不是 Nacos Config：
+#    M0 要证明的是「路由能通」。引入 Nacos Config 会多出一层
+#    「配置没拉到时静默用兜底值」的失败模式 —— 而那种失败看起来
+#    和「路由配错了」一模一样，会把 M0 的排错时间翻倍。
+#    配置真的多到需要集中管理时再接，不是现在。
+#
+# ★ 网关只有这一个 profile，不拆 dev/prod：
+#    它这一层没有任何真实密码（nacos/nacos 是中间件自带的固定演示值，
+#    和 application-dev.yml 里的 root123456 同一性质）。
+#    等 M5 做生产部署时再拆。
+# ============================================================
+
+server:
+  # ★★ 8080 是【唯一入口】，从单体手里接过来的。
+  #    单体退到 8090，不再对外（见 novel-backend 的 application.yml）。
+  #
+  #    ★ dev-proxy/vite.config.js 和三个前端的 request.js 都写着 8080
+  #      —— 它们【一行都不用改】，因为 8080 上确实还有东西在接。
+  #      这正是把网关放在 8080 而不是另开一个端口的原因。
+  port: 8080
+
+spring:
+  application:
+    name: novel-gateway
+
+  cloud:
+
+    nacos:
+      discovery:
+        # ★ 虚拟机上的 Docker，不是 127.0.0.1 ——
+        #   后端跑在 Windows 上，Nacos 跑在虚拟机里，是两个机器。
+        #   同 application-dev.yml 里 MySQL/Redis 的理由。
+        server-addr: 192.168.127.137:8848
+
+        # ★ 容器里的 Nacos 开了鉴权（NACOS_AUTH_ENABLE=true）。
+        #
+        # ★★ username/password 必须写在 discovery 下面：
+        #     Nacos 客户端【注册】和【拉配置】是两条独立的鉴权路径。
+        #     只配 spring.cloud.nacos.username（那一层管的是 config）
+        #     的话，症状是「配置能拉、服务注册不上」，报 403 或者
+        #     客户端直接假死 —— 报错信息完全指不到配置项。
+        #     这里两套都写，多两行买一个确定性。
+        username: nacos
+        password: nacos
+
+        # ★★ Windows 上【必须】显式指定注册上去的 IP。
+        #
+        #    Nacos 客户端默认取「第一块非 loopback 网卡」的地址。
+        #    装了 VMware / VirtualBox / Hyper-V / WSL 之后，那个「第一块」
+        #    很可能是 192.168.56.1 这类虚拟网卡的地址 —— 单体根本不在那儿。
+        #
+        #    ★ 机理一句话：注册上去的 IP 就是网关接下来要连的 IP。
+        #
+        #    ★★ 症状要说准，否则排错方向会跑偏（实测踩出来的）：
+        #       实例在 Nacos 里「有」但连不上 → 网关拿到实例再去连 → 连不上
+        #                                      500 + Connection refused / timed out
+        #       实例在 Nacos 里「没有」        → 网关根本没得连
+        #                                      503 + No servers available for service
+        #       多网卡属于第一种（500），不是 503。503 的语义是「一个实例都没有」。
+        #
+        #    ★ 更隐蔽的是：网关和后端在【同一台机器】时，虚拟网卡 IP 往往能连通
+        #      （Tomcat 绑 0.0.0.0:8090，本机到 192.168.56.1:8090 照样通）——
+        #      于是这个坑在「单机跑全部服务」的开发期可能根本不发作，
+        #      等服务分散到不同机器才炸。所以这一行是【买确定性】，不是修已知故障。
+        #
+        #    ★ novel-backend 那边也要加同样的一行，两个服务都要。
+        ip: 127.0.0.1
+
+    gateway:
+      routes:
+        # ------------------------------------------------------------
+        # 后端接口
+        # ------------------------------------------------------------
+        # ★ uri 用 lb:// 而不是 http://localhost:8090：
+        #    写死地址的话，M1 把 auth 摘出去、M2 把 content 摘出去之后，
+        #    每摘一个服务都要回来改一次网关配置。
+        #    用服务名，网关去 Nacos 问「novel-backend 现在在哪」——
+        #    服务怎么拆、拆几个实例，这里都不用动。
+        #
+        # ★ M0 阶段 novel-backend 只有一个实例（就是那个单体），
+        #   所以转发目标最终仍是 :8090 —— 但路径是经过服务发现的。
+        - id: novel-backend-api
+          uri: lb://novel-backend
+          predicates:
+            - Path=/api/**
+
+        # ------------------------------------------------------------
+        # 上传的静态文件（作品封面、用户头像）
+        # ------------------------------------------------------------
+        # ★ 这条必须单独有：/uploads/** 不在 /api/** 里，
+        #   但它同样由 novel-backend 提供（WebMvcConfig 把它们映射到磁盘目录）。
+        #   漏了这条的症状是「接口全好，只有图片 404」——
+        #   而 404 又是「图片不存在」的常见表现，很容易往错的方向查。
+        - id: novel-backend-uploads
+          uri: lb://novel-backend
+          predicates:
+            - Path=/uploads/**
+
+        # ------------------------------------------------------------
+        # ★ 为什么【没有】/doc.html 的路由 —— 这是有意的
+        # ------------------------------------------------------------
+        # 接口文档直连 http://localhost:8090/doc.html，不走网关。
+        #
+        # /doc.html 不是一个独立的页面：它加载后会再去拉
+        # /webjars/**（前端资源）和 /v3/api-docs/**（接口清单）。
+        # 要透传就得给这一整套加路由，还要处理 X-Forwarded-* 头
+        # 和 springdoc 的 server 地址推断 —— 是一件独立的、
+        # 会把 M0 拖长的活，而且和 M0 的验收标准（路由通 + Nacos 可见）无关。
+        #
+        # 记在「按需」里。这是开发期唯一一个不走 :3000 的入口。
+
+# ============================================================
+# 健康检查 / 路由自检
+# ============================================================
+management:
+
+  endpoint:
+    health:
+      show-details: always
+
+    # ★★ 这两行【都要】，少一行 /actuator/gateway/routes 就是 404。
+    #
+    #    它们管的是两件不同的事，缺哪一个的症状一模一样（都是 404）：
+    #
+    #      endpoint.gateway.enabled    端点本身要不要【被创建】
+    #      endpoints.web.exposure...   创建出来之后要不要【从 HTTP 暴露出去】
+    #
+    #    ★ Spring Cloud Gateway 的 actuator 端点默认是 enabled: false
+    #      （和 health / info 那些不一样，它们是默认开的）。
+    #      这是实测踩出来的：只写了下面 exposure 那一行，
+    #      /actuator 的列表里只有 health / info / self —— gateway
+    #      端点压根没被创建，所以 404 的原因在【上面】这一行，
+    #      不在 expose 上。
+    gateway:
+      enabled: true
+
+  endpoints:
+    web:
+      exposure:
+        include: health,info,gateway
+
+# ============================================================
+# 日志
+# ============================================================
+logging:
+
+  # ★ 和单体一样落一份文件，理由也一样：网关是用 Start-Process 隐藏窗口起的，
+  #   控制台看不到；而排障时最需要翻的恰恰是它的历史输出 ——
+  #   比如「No servers available for service: novel-backend」（503 的真因）、
+  #   「Unable to find instance for novel-backend」。这些只在日志里有。
+  #
+  # ★ 路径是相对的，落点 = 进程的工作目录。启动时 -WorkingDirectory 用 backend/，
+  #   所以是 backend/logs/novel-gateway.log，和单体的 novel-backend.log 并排。
+  #   改成 backend/novel-gateway/ 的话日志会静默换地方。
+  #
+  # ★ 单体把这一段放在 application-dev.yml（生产走 stdout 交给采集器）。
+  #   网关 M0 只有一个 profile，暂时放这里；M5 做生产部署时再拆。
+  file:
+    name: logs/novel-gateway.log
+
+  level:
+    # ★ 这几行是 M0 排障的主角：路由匹配、负载均衡选实例、转发失败都打在这里。
+    #   网关自身的日志量很小（它一个业务查询都没有），开 debug 不心疼。
+    com.novel.gateway: debug
+    org.springframework.cloud.gateway: info
+    org.springframework.cloud.loadbalancer: debug
+
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7

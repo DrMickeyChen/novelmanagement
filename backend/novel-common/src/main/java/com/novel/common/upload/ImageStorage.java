@@ -3,7 +3,6 @@ package com.novel.common.upload;
 import com.novel.common.exception.BusinessException;
 import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
-import com.novel.config.UploadProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

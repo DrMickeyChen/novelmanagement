@@ -1,0 +1,191 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-common</artifactId>
+    <name>novel-common</name>
+    <description>小说管理系统 · 各服务共用的基础类（Result / 异常 / 枚举 / JWT / 上传）</description>
+
+    <!--
+      ============================================================
+      novel-common 是个【库】，不是一个应用
+      ============================================================
+      ★ 没有 <build><plugins> 里的 spring-boot-maven-plugin：
+        库不能打成可执行 fat jar，否则下游编译时找不到类
+        （原因见父 pom 里 pluginManagement 那段注释）。
+
+      ★ 只装【所有服务都会用到】的东西：统一的返回体、业务码、
+        异常基类、状态枚举、JWT 工具、文件上传的校验。
+
+      ★ 不放 Entity、不放 Mapper、不放 Service：
+        那些属于具体的服务。第二期的边界是「一个服务一个库」，
+        共用库里一旦混进业务表，拆服务时就得连表一起搬，
+        那还不如不拆。
+    -->
+
+    <dependencies>
+
+        <!--
+          ==================== 基础 ====================
+          spring-boot-starter（不是 starter-web）：
+          提供 spring-core / spring-context / spring-boot-autoconfigure，
+          @Component 和 @ConfigurationProperties 靠它。
+
+          ★ 它【不含】web —— 这是有意的。见下面 starter-web 那条。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+
+        <!--
+          ============================================================
+          ★★★ 下面这一组 Spring starter 全部是 <optional>true</optional> ★★★
+          ============================================================
+
+          optional 的作用是：【本模块编译时看得到，但【一个字节都不传给下游】】。
+
+          ============================================================
+          为什么非这样不可
+          ============================================================
+          Spring Cloud Gateway 跑在 WebFlux 上。它的 classpath 上只要
+          出现 spring-boot-starter-web（= spring-webmvc + tomcat-embed-core），
+          启动就【直接失败】：
+
+              Spring MVC found on classpath,
+              which is incompatible with Spring Cloud Gateway.
+
+          novel-common 里 GlobalExceptionHandler 用了 @RestControllerAdvice、
+          ImageStorage 用了 MultipartFile、JwtAuthenticationFilter 用了
+          jakarta.servlet —— 为了编译，这些依赖必须在本模块的 classpath 上。
+
+          如果它们是【普通 scope】，那 M1 的网关一旦依赖 novel-common
+          （网关要用 JwtUtil 做鉴权），webmvc 就会【顺着 novel-common
+          悄悄爬进网关】，然后报一个和 novel-common 看起来毫无关系的错。
+
+          ============================================================
+          为什么这个交换划算
+          ============================================================
+          代价是：下游服务必须自己声明自己要的 starter（novel-backend
+          本来就声明了；网关只需要 webflux，它自己声明）。
+
+          写漏了会怎样？——【编译不过】。而编译不过当场就报错，
+          报错信息直指缺哪个类。
+
+          写错 scope 会怎样？——【启动时才炸】，而且报错信息和
+          根因隔了三层。
+
+          一个当场报错、一个三层之外炸，永远选前者。
+
+          ============================================================
+          这其实就是「服务边界单向」那条铁律在 POM 层面的样子：
+          每个服务自己声明自己需要什么，不靠共用库替它做主。
+          ============================================================
+        -->
+
+        <!-- @RestControllerAdvice / MultipartFile / HttpStatus / OncePerRequestFilter
+             + jakarta.servlet（tomcat 带）+ jackson（ObjectMapper / @JsonValue）
+             + spring-boot-autoconfigure 的 MultipartProperties（UploadProperties 在用） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- SecurityContextHolder / UserDetails / AuthenticationEntryPoint /
+             AccessDeniedHandler / UsernamePasswordAuthenticationToken -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- TokenStore 的 RedisTemplate / Cursor / ScanOptions
+             （登出时按 userId 扫掉该用户的全部 jti，靠 SCAN 不能用 KEYS） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- PageResult 用的 IPage；枚举上的 @EnumValue -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Result / DTO 上的 @Schema（接口文档的字段说明） -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          ==================== JWT ====================
+          ★ 这一组【不标 optional】—— 它们是真正要传到运行时的。
+
+          jjwt 是「三件套」：
+            jjwt-api     编译期用（只有接口和方法签名，JwtUtil 的返回类型）
+            jjwt-impl    运行时的实现
+            jjwt-jackson 运行时把 Claims 和 JSON 互转
+
+          ★ 只引 jjwt-api 会编译通过但一运行就抛
+            「Unable to discover any JJWT implementation」。
+
+          ★ impl / jackson 声明成 runtime 而不是 test：
+            这样任何依赖 novel-common 的服务【自动拿到一份能跑的 JWT】，
+            不用每个服务都记得补一遍那两个 runtime 依赖 ——
+            「补漏了」的症状是运行时才抛的，正是上面那个坑。
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+            <version>${jjwt.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-impl</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-jackson</artifactId>
+            <version>${jjwt.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== 工具 ==================== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          ==================== 测试 ====================
+          JwtUtilTest 就在本模块的 src/test 下（它测的 JwtUtil 也在这儿，
+          测试跟着被测的类走，不留在 novel-backend 里隔一层）。
+
+          它是个纯单元测试：new JwtUtil(...) 直接构造，不起 Spring 容器，
+          所以只需要 junit-jupiter（starter-test 带）+ jjwt-impl（上面已引）。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+</project>

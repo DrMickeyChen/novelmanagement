@@ -1,5 +1,9 @@
 package com.novel.config;
 
+// ★ UploadProperties 在 M0 搬去了 com.novel.common.upload（和其它被共用的东西放一起），
+//   而这个类留在单体 —— 于是它从「同包」变成了「跨包」，得显式 import。
+//   这是 M0 全仓唯一一处新增的 import（另一处是 ImageStorage 里删掉的那行）。
+import com.novel.common.upload.UploadProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Configuration;

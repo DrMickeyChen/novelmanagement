@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-gateway</artifactId>
+    <name>novel-gateway</name>
+    <description>小说管理系统 · 网关（8080 唯一入口，按路径转发到各服务）</description>
+
+    <!--
+      ============================================================
+      M0 的网关只做一件事：转发
+      ============================================================
+      ★ M0【不做】JWT 鉴权 —— 那是 M1。现在网关是一个纯粹的
+        「按路径找服务」的路由器，一个字节的业务判断都没有。
+
+      ★ M0【不依赖 novel-common】。原因有两层：
+          ① 用不上：M0 的网关不解析 JWT、不返回统一的 Result
+          ② 危险：novel-common 为了编译需要 spring-webmvc，
+             而网关一旦沾上 spring-webmvc 就启动不了（见下）
+        M1 网关要开始用 JwtUtil 时再引 —— 那时靠的是
+        novel-common 里那组 optional 依赖，webmvc 传不过来。
+    -->
+
+    <dependencies>
+
+        <!--
+          ==================== 网关本体 ====================
+          ★★ 它会带进来 spring-boot-starter-webflux。
+
+          这就是为什么这个 pom 里【绝对不能】出现 spring-boot-starter-web：
+              Spring Cloud Gateway 跑在 WebFlux（Netty，非阻塞）上，
+              而 spring-boot-starter-web 是 Spring MVC（Tomcat，一请求一线程）。
+              两者同时出现在 classpath 上时，Spring Boot 会自动选 MVC，
+              然后 Gateway 的自动配置直接报错退出：
+
+                  Spring MVC found on classpath,
+                  which is incompatible with Spring Cloud Gateway.
+
+          验证这件事不能靠自觉，跑这条命令（必须零输出）：
+              mvn -f backend/novel-gateway/pom.xml dependency:tree \
+                | grep -E "spring-boot-starter-web|spring-webmvc|tomcat-embed-core"
+
+          启动日志也要看一眼：应该是
+              Netty started on port 8080
+          而【不是】
+              Tomcat started on port 8080
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-gateway</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 注册中心 ====================
+          让网关能注册进 Nacos，并且能【发现】novel-backend 的实例。
+
+          ★ 路由写的是 lb://novel-backend —— lb = load balance，
+            这个 scheme 靠的就是服务发现。没有这个依赖，
+            lb:// 解析不出任何地址。
+        -->
+        <!-- ★ artifactId 里必须带 starter：
+               是 spring-cloud-starter-alibaba-nacos-discovery，
+               【不是】spring-cloud-alibaba-nacos-discovery。
+               少一个单词，Maven 报的是「version is missing」而不是
+               「artifact 不存在」—— 因为 BOM 里根本没有那一条，
+               于是它当成「用户自己写的依赖、忘了写版本」。
+               查错方向会完全跑偏。 -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 负载均衡器（lb:// 的实现在这） ====================
+          ★★ 这个依赖【不能省】，而且症状很有迷惑性。
+
+              Spring Cloud 从 2020 版起把 Ribbon 移除了，lb:// 改由
+              spring-cloud-loadbalancer 实现。而 gateway 的 starter
+              【不会】自动带上它（历史上是可选的）。
+
+              不引的话启动是好的、路由也注册了，但请求打进来会报：
+                  Unable to find instance for novel-backend
+              或者
+                  No LoadBalancerClientFilter
+              ——「找不到实例」听起来像 Nacos 没注册上，会让人去查
+              Nacos 控制台，而那边一切正常。真正缺的是这一行。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 健康检查 / 路由自检 ====================
+          只为一条验收命令：
+              GET /actuator/gateway/routes     列出当前生效的全部路由
+
+          ★ 光加依赖不够，还要在 application.yml 里显式 expose 它
+            （默认只暴露 health）。见那边 management 那一段。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <finalName>novel-gateway</finalName>
+        <plugins>
+            <!-- ★ 在父 pom 的 pluginManagement 里有配置，这里声明一次来激活它 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -1,4 +1,9 @@
-package com.novel.config;
+// ★ M0：从 com.novel.config 搬到 com.novel.common.upload。
+//   这是 M0 全仓【唯一一个真的换了包】的类 —— 其余 192 个文件都是
+//   纯物理搬家（目录动了、package 行一个字没动）。
+//   搬它的理由：它和 ImageStorage 是一对（一个管「存哪」、一个管「怎么存」），
+//   而 ImageStorage 被读者端和创作端共用，所以 UploadProperties 也得跟着过来。
+package com.novel.common.upload;
 
 import jakarta.annotation.PostConstruct;
 import lombok.Getter;

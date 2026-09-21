@@ -13,23 +13,43 @@
     </parent>
 
     <groupId>com.novel</groupId>
-    <artifactId>novel-backend</artifactId>
+    <artifactId>novel-parent</artifactId>
     <version>1.0.0</version>
-    <name>novel-backend</name>
-    <description>小说管理系统 · 后端（第一期：单体）</description>
+    <packaging>pom</packaging>
+    <name>novel-parent</name>
+    <description>小说管理系统 · 后端（第二期：多模块父 POM）</description>
 
     <!--
       ============================================================
-      第一期：单模块
+      第二期 M0：单模块 → 多模块
       ============================================================
-      按 项目大纲.md §九 的三期计划，第一期 backend/ 就是这一个模块，
-      所有业务跑在一个进程里。第二期才拆成 gateway / auth / content /
-      interaction / search 五个服务 —— 到那时这个 pom 会变成父 pom，
-      下面的模块是子 pom，业务代码基本不用动。
+      第一期这个 pom 就是 novel-backend 本身（单体）。第二期要拆服务，
+      第一个动作就是把「一个模块」变成「一个父 + 若干子」。
 
-      所以现在不要提前建多模块，那只会让第一期的开发变慢。
-      ============================================================
+      ★★ artifactId 为什么从 novel-backend 改成 novel-parent：
+          子模块【必须】叫 novel-backend —— spring.application.name、
+          网关的 lb://novel-backend、打包出来的 jar 名、以及几期文档
+          全都指着这个名字。父子同名在 Maven 里虽然合法，但
+          dependency:tree 和构建日志里会出现两个 novel-backend，
+          永远分不清谁是谁。父模块让出这个名字，代价是零。
+
+      ★ M0 拆出来的三个模块（业务代码一行没拆，只是物理分层）：
+          novel-common    库   —— 被所有服务共用的 Result / 异常 / JWT / 上传
+          novel-backend   应用 —— 第一期那个单体，原样搬过来
+          novel-gateway   应用 —— 新加的网关，8080，路由到单体
+
+      ★ 为什么不让网关直接依赖 novel-common：
+          gateway 是 WebFlux 的，classpath 上只要出现 spring-webmvc 就
+          启动失败。novel-common 为了编译需要 webmvc，所以它的 Spring
+          依赖全部标了 optional（见 novel-common/pom.xml 里那段长注释）。
+          M0 的网关根本不用 common 的类，索性不依赖，少一个变量。
     -->
+
+    <modules>
+        <module>novel-common</module>
+        <module>novel-backend</module>
+        <module>novel-gateway</module>
+    </modules>
 
     <properties>
         <!--
@@ -37,6 +57,9 @@
           Spring Boot 3.2.x 官方支持上限就是 Java 21。不写 maven.compiler.release
           的话，编译器会按 JDK 24 出字节码，运行时可能出现各种
           「类文件版本不对」「反射被拒绝」的怪问题，而且报错信息完全指不到这里。
+
+          ★ 这些属性放在父 pom 里，三个子模块自动继承 —— 尤其
+            lombok.version 那条，少一个模块继承就会在那个模块上编译失败。
         -->
         <java.version>21</java.version>
         <maven.compiler.release>21</maven.compiler.release>
@@ -58,145 +81,143 @@
 
         <!-- JWT：第一期 P1 认证阶段才会用到，先把版本号定下来 -->
         <jjwt.version>0.12.6</jjwt.version>
+
+        <!--
+          ============================================================
+          第二期 M0 新增：Spring Cloud 的两个版本号
+          ============================================================
+          ★★ 这三行是一个【整体】，不能单独升其中一个：
+
+              Spring Boot 3.2.x  ←→  Spring Cloud 2023.0.x
+                                 ←→  Spring Cloud Alibaba 2023.0.3.2
+
+          Spring Cloud 的版本号从 2020 年起就不再是数字了，改成了
+          「年份.第几次发布」的伦敦地铁站名。2023.0.x 这一条线的
+          官方支持矩阵写的就是 Spring Boot 3.2.x —— 升到 2023.0.4
+          或者 2024.0.x 都要连着升 Spring Boot，不是改一个数字的事。
+        -->
+        <spring-cloud.version>2023.0.3</spring-cloud.version>
+        <spring-cloud-alibaba.version>2023.0.3.2</spring-cloud-alibaba.version>
     </properties>
 
-    <dependencies>
+    <!--
+      ============================================================
+      dependencyManagement：只管版本，不引入依赖
+      ============================================================
+      子模块里写 <dependency> 时【不写 <version>】，版本由这里决定。
+      import 进来的 BOM 也是同样的作用，只是把一整批版本号打包带进来。
+    -->
+    <dependencyManagement>
+        <dependencies>
 
-        <!-- ==================== Web ==================== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
+            <!--
+              ★★ 顺序不能反：dependencyManagement 的 import 是【先到先得】。
+                  同一条依赖被两个 BOM 都管着时，写在前面的那个赢。
 
-        <!-- 参数校验：@NotNull / @Size / @Email 这些注解靠它 -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-validation</artifactId>
-        </dependency>
+                  所以 Spring Cloud 的 BOM 必须在前面 —— 它负责把
+                  spring-cloud-gateway / spring-cloud-commons /
+                  spring-cloud-loadbalancer 这些锁在 2023.0.3。
+                  SCA 的 BOM 放在后面，只补它独有的（nacos-client 等），
+                  并且它内部也会 import 一份 Spring Cloud BOM，不会冲突。
 
-        <!-- ==================== 持久层 ==================== -->
-        <!--
-          ★ Spring Boot 3 要用 mybatis-plus-spring-boot3-starter
-            用老的 mybatis-plus-boot-starter 会启动报
-            「NoClassDefFoundError: javax/servlet/...」—— 因为它还是 javax 时代的包
-        -->
-        <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
+                  反过来的话，SCA 里那份传递进来的 Spring Cloud 版本
+                  会先占位，实际生效的版本和你以为写着的 2023.0.3 不是一回事
+                  （而且不会报错，只会行为诡异）。
+            -->
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
 
-        <!--
-          ★ 从 3.5.9 开始，MyBatis-Plus 把 jsqlparser 拆成了独立依赖。
-            分页插件 PaginationInnerInterceptor 内部要用它解析 SQL 来拼 LIMIT，
-            不引这个包，第一次调分页接口就会报：
-                java.lang.NoClassDefFoundError: net/sf/jsqlparser/statement/select/Select
-            报错信息里完全看不出和分页插件有关，很容易卡住。
-            用 mybatis-plus-jsqlparser（对应 jsqlparser 5.x）即可，
-            另一个 mybatis-plus-jsqlparser-4.9 是给还依赖 jsqlparser 4.9 的老项目用的。
-        -->
-        <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-jsqlparser</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
+            <dependency>
+                <groupId>com.alibaba.cloud</groupId>
+                <artifactId>spring-cloud-alibaba-dependencies</artifactId>
+                <version>${spring-cloud-alibaba.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
 
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <scope>runtime</scope>
-        </dependency>
+            <!--
+              ============================================================
+              下面这几个不在任何 BOM 里，得自己管
+              ============================================================
+              ★ 这些版本号本来写死在原来的单模块 pom 的每个 <dependency> 里。
+                拆成多模块后【必须】上提到这里 —— 否则 novel-common 和
+                novel-backend 各写一份，迟早出现「common 用 3.5.9、
+                backend 用 3.5.8」这种两个版本同时进 classpath 的情况
+                （而且是静默的，只在某些类的行为上体现出来）。
+            -->
 
-        <!-- ==================== 缓存 / 会话 ==================== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-redis</artifactId>
-        </dependency>
+            <!-- ★ 版本号来自上面的 <properties>，改版本只改一个地方 -->
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.baomidou</groupId>
+                <artifactId>mybatis-plus-jsqlparser</artifactId>
+                <version>${mybatis-plus.version}</version>
+            </dependency>
 
-        <!-- Lettuce 连接池：不加它 Redis 每次操作都新建连接，压测时很难看 -->
-        <dependency>
-            <groupId>org.apache.commons</groupId>
-            <artifactId>commons-pool2</artifactId>
-        </dependency>
+            <dependency>
+                <groupId>com.github.xiaoymin</groupId>
+                <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+                <version>${knife4j.version}</version>
+            </dependency>
 
-        <!-- ==================== 接口文档 ==================== -->
-        <!-- 启动后访问 http://localhost:8080/doc.html -->
-        <dependency>
-            <groupId>com.github.xiaoymin</groupId>
-            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
-            <version>${knife4j.version}</version>
-        </dependency>
+            <!--
+              jjwt 三件套：api 编译期用，impl / jackson 运行时用。
+              ★ 三个版本必须完全一致 —— api 和 impl 版本错开会在
+                解析 token 时抛 NoSuchMethodError 之类，报错完全指不到版本。
+            -->
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-api</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-impl</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.jsonwebtoken</groupId>
+                <artifactId>jjwt-jackson</artifactId>
+                <version>${jjwt.version}</version>
+            </dependency>
 
-        <!-- ==================== 工具 ==================== -->
-        <dependency>
-            <groupId>org.projectlombok</groupId>
-            <artifactId>lombok</artifactId>
-            <optional>true</optional>
-        </dependency>
+            <!--
+              自己的模块也用 dependencyManagement 管起来。
+              这样 novel-backend / novel-gateway 引用 novel-common 时
+              只写 groupId + artifactId，版本跟着父 pom 走，
+              不会出现「common 升了版本但 backend 还写着旧的」。
+            -->
+            <dependency>
+                <groupId>com.novel</groupId>
+                <artifactId>novel-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
 
-        <!-- ==================== 认证授权（P1） ==================== -->
+        </dependencies>
+    </dependencyManagement>
 
-        <!--
-          ★★ spring-boot-starter-security 一旦引入就会【自动拦截所有接口】，
-             连 /api/ping 都访问不了 —— 放行规则写在 com.novel.config.SecurityConfig。
-             这两者必须同时存在，单独加依赖 = 全站 401。
-        -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-security</artifactId>
-        </dependency>
-
-        <!--
-          jjwt 是「三件套」，三个都要：jjwt-api 编译期用（只有接口），
-          jjwt-impl 和 jjwt-jackson 是运行时的实现，scope=runtime 即可。
-
-          ★ 只引 jjwt-api 会编译通过但一运行就抛
-            「Unable to discover any JJWT implementation」，因为接口没有实现类。
-        -->
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-api</artifactId>
-            <version>${jjwt.version}</version>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-impl</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-        <dependency>
-            <groupId>io.jsonwebtoken</groupId>
-            <artifactId>jjwt-jackson</artifactId>
-            <version>${jjwt.version}</version>
-            <scope>runtime</scope>
-        </dependency>
-
-        <!-- ==================== 测试 ==================== -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-
-    </dependencies>
-
+    <!--
+      ============================================================
+      build
+      ============================================================
+    -->
     <build>
-        <finalName>novel-backend</finalName>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-                <configuration>
-                    <excludes>
-                        <!-- Lombok 只在编译期用，不打进最终的 jar -->
-                        <exclude>
-                            <groupId>org.projectlombok</groupId>
-                            <artifactId>lombok</artifactId>
-                        </exclude>
-                    </excludes>
-                </configuration>
-            </plugin>
 
+        <!--
+          ★ <plugins> 里的东西【三个模块都继承】，这是有意的：
+              编译器插件带着 lombok 的 annotationProcessorPaths，
+              novel-common 缺了它会在 JDK 24 上编译失败。
+        -->
+        <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -215,6 +236,44 @@
                 </configuration>
             </plugin>
         </plugins>
+
+        <!--
+          ★★ spring-boot-maven-plugin 只放在 <pluginManagement>，【不放在 <plugins>】。
+
+              区别是：pluginManagement 只提供配置，子模块【声明了才生效】；
+              放在 plugins 里则是无条件对所有模块生效。
+
+              为什么不能无条件生效：
+                  repackage 会把模块打成「可执行 fat jar」—— jar 里内嵌
+                  一个 BOOT-INF/lib 和自定义的启动类，并且把原来的 jar
+                  改名成 .original。
+
+                  novel-common 是个【库】，它要被 novel-backend 当依赖读。
+                  打成 fat jar 之后，下游拿到的 class 文件被塞进了
+                  BOOT-INF/classes/ 这个非标准位置，编译期直接找不到类
+                  —— 报「找不到符号」，而源码明明就在那儿。
+
+                  所以：novel-backend 和 novel-gateway 各自在
+                  <build><plugins> 里声明一次来激活它，novel-common 不声明。
+        -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <configuration>
+                        <excludes>
+                            <!-- Lombok 只在编译期用，不打进最终的 jar -->
+                            <exclude>
+                                <groupId>org.projectlombok</groupId>
+                                <artifactId>lombok</artifactId>
+                            </exclude>
+                        </excludes>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
     </build>
 
 </project>

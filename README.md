@@ -22,17 +22,18 @@
 
 ```
 novelManagement/
-├── backend/                 # Spring Boot 单体（第二期才按 modules/ 拆服务）
-│   ├── pom.xml
-│   └── src/main/
-│       ├── java/com/novel/
-│       │   ├── common/      # Result / 异常 / 安全 / 上传 等公共设施
-│       │   ├── config/      # SecurityConfig / WebMvcConfig / RedisConfig ...
-│       │   └── modules/     # system（用户角色权限）/ content（作品章节）/ interaction（评论书架历史）
-│       └── resources/
-│           ├── application.yml        # 所有环境共用的配置
-│           ├── application-dev.yml    # ★ 开发环境，唯一需要你改的文件（见下）
-│           └── mapper/                # 复杂查询的 XML
+├── backend/                 # Maven 多模块（M0 起）。业务代码仍全在 novel-backend 里，还没拆服务
+│   ├── pom.xml              # 聚合 POM（novel-parent）★ 打包打的是它，不是子模块
+│   ├── novel-common/        # 公共设施：Result / 异常 / 安全 / 上传（库，不是可执行 jar）
+│   ├── novel-backend/       # ★ 单体，第二期逐个摘模块就是从这里摘
+│   │   └── src/main/
+│   │       ├── java/com/novel/
+│   │       │   ├── config/      # SecurityConfig / WebMvcConfig / RedisConfig ...
+│   │       │   └── modules/     # system（用户角色权限）/ content（作品章节）/ interaction（评论书架历史）
+│   │       └── resources/
+│   │           ├── application.yml        # 所有环境共用的配置
+│   │           └── application-dev.yml    # ★ 开发环境，唯一需要你改的文件（见下）
+│   └── novel-gateway/       # Spring Cloud Gateway，:8080 的唯一入口，路由到 novel-backend
 │
 ├── reader-web/              # 阅读端   → 挂 /reader/   dev :5173
 ├── author-web/              # 创作中心 → 挂 /author/   dev :5174
@@ -40,7 +41,8 @@ novelManagement/
 ├── dev-proxy/               # 开发代理 → dev :3000，把三个前端收进同一个 origin
 │
 ├── docs/
-│   ├── P1-认证权限.md ~ P6-书架评论.md   # ★ 每一期的完整设计论证（含踩过的坑）
+│   ├── P1-认证权限.md ~ P6-书架评论.md   # ★ 第一期的完整设计论证（含踩过的坑）
+│   ├── M0-骨架搭建.md                    # ★ 第二期 M0：多模块 + 网关 + Nacos 注册
 │   ├── 部署.md                          # 生产部署（Nginx / jar / 环境变量）
 │   ├── 环境配置.md                       # 虚拟机与 Docker 中间件搭建
 │   ├── mq-notes.md                      # 消息队列笔记（第二期配套）
@@ -98,36 +100,43 @@ mysql -uroot -p < seed.sql
 > 重复执行只会打印一堆 `Duplicate entry` 警告，不影响结果。`seed.sql` 结尾自带断言，会打印
 > `novels_should_be_12 / chapters_should_be_47 / contents_should_be_47` 和 `finished_should_be_2` —— 对得上就说明数据是好的。
 
-### 3. 改配置 + 打包 + 起后端
+### 3. 改配置 + 打包 + 起网关和后端
 
-先把 `backend/src/main/resources/application-dev.yml` 里**两处 `192.168.127.137`** 改成你的虚拟机 IP
-（`spring.datasource.url` 和 `spring.data.redis.host`），然后：
+先把 `backend/novel-backend/src/main/resources/application-dev.yml` 里**三处 `192.168.127.137`** 改成你的虚拟机 IP
+（`spring.datasource.url`、`spring.data.redis.host`、`spring.cloud.nacos.discovery.server-addr`），然后：
 
 ```bash
 # ---------- 在【仓库根目录】打包 ----------
 mvn -f backend/pom.xml package
 
 # ★ 必须在后端【停掉】的时候打包 —— jar 正在运行时 repackage 会失败并留下一个瘦 jar。
+# ★ 打的是聚合 POM backend/pom.xml（一次编出 novel-common + novel-backend + novel-gateway）。
+#   不要进子目录单独 package：那样 novel-common 会用仓库里的旧 jar，「改了没生效」且不报错。
 # ★ 如果 Maven 的本地仓库不在默认的 ~/.m2 下（本项目的机器就是），要显式指定：
 #     mvn -Dmaven.repo.local=D:/你的仓库路径 -f backend/pom.xml package
 #   不确定的话先跑一次不带这个参数的，报「找不到依赖」就说明得加上。
 
-# ---------- 进 backend/ 启动 ----------
+# ---------- 进 backend/ 启动【两个】进程（★ 顺序：先网关后后端，无所谓；两个都要起）----------
 cd backend
-java -jar target/novel-backend.jar
+java -jar novel-gateway/target/novel-gateway.jar      # :8080 唯一入口
+java -jar novel-backend/target/novel-backend.jar      # :8090，不直接对外
 ```
 
-> ★ 为什么非得 `cd` 进去：`application-dev.yml` 里日志文件写的是**相对路径** `logs/novel-backend.log`，
-> 相对的是**进程的工作目录**。在仓库根目录跑 `java -jar backend/target/...` 也不会报错，
+> ★ 为什么非得 `cd` 进 `backend/`：两个服务里日志文件写的都是**相对路径**
+> `logs/novel-backend.log` / `logs/novel-gateway.log`，相对的是**进程的工作目录**。
+> 在仓库根目录跑 `java -jar backend/novel-backend/target/...` 也不会报错，
 > 只是日志会落到根目录的 `./logs/` 下 —— 于是「照文档去 backend/logs/ 找日志」的人会扑空。
+> ★★ **注意 `cd` 的是 `backend/` 而不是 `backend/novel-backend/`** —— 后者同样不报错，只是日志
+> 静默换到 `backend/novel-backend/logs/`，所有文档同时变成假话。
 > 生产环境用绝对路径就没这个讲究（见部署文档）。
 >
 > ★ 改了 `application-*.yml` **必须重新打包才生效** —— 配置是打进 jar 里的。
 >
-> ★ 后端起不来先看日志：`backend/logs/novel-backend.log`
+> ★ 起不来先看日志：`backend/logs/novel-backend.log` / `backend/logs/novel-gateway.log`
 > （★ **SQL 不在这个文件里** —— MyBatis 的 SQL 走 stdout，要抓 SQL 得在启动时额外重定向 stdout）。
 
-后端起来后：`http://localhost:8080/api/ping` 返回 200、`http://localhost:8080/doc.html` 是接口文档。
+后端起来后，**走网关**：`http://localhost:8080/api/ping` 返回 200。
+接口文档是**唯一不走网关**的开发入口，直连 `http://localhost:8090/doc.html`。
 
 ### 4. 起前端
 
@@ -169,7 +178,8 @@ npm run dev             # concurrently 同时起 reader / author / admin / proxy
 | 5173 | 阅读端 | 302 → `/reader/` |
 | 5174 | 创作中心 | 302 → `/author/` |
 | 5175 | 管理端 | 302 → `/admin/` |
-| 8080 | 后端 | `/api/ping` → 200；`/doc.html` → 接口文档 |
+| 8080 | **网关**（第二期 M0 起的唯一入口） | `/api/ping` → 200 |
+| 8090 | 后端单体（不直接对外） | `/doc.html` → 接口文档 ★ 唯一不走网关的入口 |
 
 ★ 四个端口都设了 `strictPort: true` —— 端口被占时**直接启动失败**，不会静默换到 3001。
 少了这个，打开 `:3000` 看到的会是**上一个还活着的进程**转发出来的旧内容，页面能开、接口能通，
@@ -231,9 +241,10 @@ curl -X POST http://localhost:8080/api/auth/register \
 | P3 | 读者端：首页/分类/搜索/排行榜/详情/阅读器 | [docs/P3-读者端.md](docs/P3-读者端.md) |
 | P4 | 创作中心：作品管理、大纲、正文编辑、AI 写作助手、封面上传 | [docs/P4-创作中心.md](docs/P4-创作中心.md) |
 | P5 | 管理后台：审核工作流、菜单权限、公告、数据大盘 | [docs/P5-管理后台.md](docs/P5-管理后台.md) |
-| **P6** | **书架、阅读历史、书评与章评、点赞、移动端适配、README/部署文档** | [docs/P6-书架评论.md](docs/P6-书架评论.md) |
+| P6 | 书架、阅读历史、书评与章评、点赞、移动端适配、README/部署文档 | [docs/P6-书架评论.md](docs/P6-书架评论.md) |
+| **M0** | **骨架搭建：父 POM 改多模块、抽出 `novel-common`、gateway 起来并配好路由、服务注册进 Nacos** | [docs/M0-骨架搭建.md](docs/M0-骨架搭建.md) |
 
-**第二期**（M0~M5）按服务拆分：网关 / 认证 / 内容 / 交互，引入 Nacos + RocketMQ + ES。
+**第二期**（M1~M5）继续按服务拆分：认证 / 内容 / 交互 / 搜索，引入 RocketMQ + ES，最后做治理。
 **第三期**（E1~E3）AI 能力、限流熔断、移动端 App。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和
@@ -262,8 +273,10 @@ npm run dev:reader     # 只起一个
 npm run build          # 三端打包（产物在各子项目 dist/）
 npm run install:all    # 装全部依赖
 
-# 后端打包（★ 打包前后端必须是停的）
+# 后端打包（★ 打聚合 POM，打包前后端必须是停的）
 mvn -Dmaven.repo.local=<你的本地仓库> -f backend/pom.xml package
+mvn -f backend/novel-backend/pom.xml spring-boot:run   # 开发期直接 run 单体（= npm run dev:backend）
+mvn -f backend/novel-gateway/pom.xml spring-boot:run   # 开发期直接 run 网关（= npm run dev:gateway）
 ```
 
 ★ 用 `concurrently` 起的进程，**按 Ctrl+C 不一定能杀干净子进程**；端口还被占着的话，按端口找 PID 再杀：

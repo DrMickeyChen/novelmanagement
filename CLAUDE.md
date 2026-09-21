@@ -4,16 +4,22 @@
 > 只写「不看就会做错」的东西；能从代码里读出来的（目录结构、类名、某个方法怎么实现）不要写。
 > **加内容之前先问自己：删掉这段，下次会不会做错？** 不会就别加。
 >
-> 每期的完整设计论证在 `docs/Pn-*.md`（P1 认证权限 / P2 内容主干 / P3 读者端 / P4 创作中心 / P5 管理后台）。
+> 每期的完整设计论证：第一期在 `docs/Pn-*.md`（P1 认证权限 / P2 内容主干 / P3 读者端 / P4 创作中心 / P5 管理后台），
+> 第二期在 `docs/Mn-*.md`（M0 骨架搭建）。
 
 ## 项目
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
-阶段：P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → **P5 管理后台（已完成）** → P6 书架评论+打磨 → 第二期 M0~M5 拆服务 → 第三期 E1 AI。
-**★ M3（拆交互服务）被 P6 阻塞**：书架的读写模式定了才知道怎么拆。
+第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
+第二期 **M0 骨架搭建（已完成）** → M1 摘 auth+网关接管 JWT → M2 摘 content+Feign → M3 摘 interaction+MQ 阅读量 → M4 摘 search+ES → M5 治理。第三期 E1 AI。
+**★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
 
 三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
 开发入口一律用 **`http://localhost:3000/...`** —— localStorage 按 origin 隔离，直连 5175 读不到另外两端的登录态。
+
+★ **M0 起后端分成两个进程**：**网关 `:8080`（唯一入口）** → `lb://novel-backend` → **单体 `:8090`**（不再对外）。
+所以 `localhost:8080` 现在是网关、不是后端；排错要绕过网关时直连 `:8090`。
+★ **开发期唯一不走 `:3000` 的入口是接口文档**：`http://localhost:8090/doc.html`（网关【故意】不透传 knife4j，理由见 `docs/M0-骨架搭建.md`）。
 
 ## ★★ 铁律
 
@@ -66,11 +72,17 @@
 D:/MickeyChen/usefultool/apachemaven/download/apache-maven-3.9.9/bin/mvn.cmd \
   -Dmaven.repo.local=D:/MickeyChen/usefultool/apachemaven/download/apache-maven-3.9.9/mvn_repo \
   -f backend/pom.xml package
+# ★ 必须打整个 reactor（backend/pom.xml 是聚合 POM），不要在子目录单独 package ——
+#   那样 novel-common 会用仓库里的旧 jar，「改了没生效」且不报错。
 # ★ 必须在后端停掉的时候打包（jar 正在运行时 repackage 会失败并留下瘦 jar）
 # 启动（用 Bash 工具，不要用 PowerShell 跑 mvn）
 Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
-  -ArgumentList '-jar','target/novel-backend.jar' -WorkingDirectory '<backend 绝对路径>' `
+  -ArgumentList '-jar','novel-backend/target/novel-backend.jar' -WorkingDirectory '<backend 绝对路径>' `
   -RedirectStandardError '<backend>\logs\jvm-error.log' -WindowStyle Hidden
+# ★★ -WorkingDirectory 必须是 backend/【不是 backend/novel-backend/】：
+#    logging.file.name 是相对路径，跟着工作目录走 —— 改了就静默换目录，
+#    所有「日志在 backend/logs/」的文档同时变假话，且没有任何报错。
+# 网关同理：novel-gateway/target/novel-gateway.jar（日志落在 backend/logs/novel-gateway.log）
 # SQL 日志在 stdout —— 要 grep SQL 得额外加 -RedirectStandardOutput
 
 # 前端：根目录 npm run dev（concurrently 起四端）；npm 装包要 --cache $env:TEMP\novel-npm-cache
