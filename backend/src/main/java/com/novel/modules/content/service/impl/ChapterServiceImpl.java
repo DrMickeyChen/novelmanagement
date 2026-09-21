@@ -22,6 +22,7 @@ import com.novel.modules.content.service.AuditLogService;
 import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelAccessGuard;
 import com.novel.modules.content.service.NovelService;
+import com.novel.modules.content.vo.ChapterBriefVO;
 import com.novel.modules.content.vo.ChapterDetailVO;
 import com.novel.modules.content.vo.ChapterVO;
 import lombok.RequiredArgsConstructor;
@@ -32,9 +33,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 /**
@@ -640,5 +643,32 @@ public class ChapterServiceImpl implements ChapterService {
         return chapters.stream()
                 .map(c -> ChapterVO.of(c, titles.get(c.getNovelId())))
                 .toList();
+    }
+
+    /* ==================== 供 interaction 模块调用 ==================== */
+
+    /**
+     * 批量取章节摘要。★ <b>只返回已发布的</b> —— 完整论证见
+     * {@link ChapterService#briefsOf}。
+     */
+    @Override
+    public Map<Long, ChapterBriefVO> briefsOf(Collection<Long> chapterIds) {
+        List<Long> ids = chapterIds == null ? List.of()
+                : chapterIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            // ★ 空集合不能拿去查库：会生成 WHERE id IN () 语法错误
+            return Map.of();
+        }
+
+        // 条件写进 WHERE，理由同 NovelServiceImpl#briefsOf（可见性规则只有一处实现）
+        List<Chapter> chapters = chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
+                .in(Chapter::getId, ids)
+                .eq(Chapter::getStatus, ChapterStatus.PUBLISHED));
+
+        Map<Long, ChapterBriefVO> briefs = new LinkedHashMap<>();
+        for (Chapter c : chapters) {
+            briefs.put(c.getId(), ChapterBriefVO.of(c));
+        }
+        return briefs;
     }
 }

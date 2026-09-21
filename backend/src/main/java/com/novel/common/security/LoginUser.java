@@ -54,6 +54,26 @@ public class LoginUser implements Serializable {
     private String nickname;
 
     /**
+     * 头像 URL，展示用（P6 加）。
+     *
+     * <p><b>★ 这个值只在【登录那一刻】写入，所以它是会过期的：</b>用户在个人中心
+     * 换完头像后，库里和前端 {@code localStorage} 都更新了，但这份 Redis 里的
+     * 登录态还是旧值 —— 谁读它谁拿到旧头像（{@code /api/auth/me} 就是）。
+     * 想修的话要给 {@code TokenStore} 加一个「只刷昵称/头像、<b>不动 TTL</b>」的方法
+     * （直接 {@code save} 会把会话寿命重新拉满 7 天，等于把「改昵称」变成延长登录的手段）。
+     * ★ P6 没做，因为 {@code api/auth.js} 里的 {@code getMe()} 三端都零调用点，
+     * 这个陈旧值浮不到界面上；界面上的头像走的是下面这条不会过期的路。
+     *
+     * <p>★ 界面上要立刻生效，靠的是接口返回的新 {@link com.novel.modules.system.vo.UserVO}：
+     * 前端拿它调 {@code stores/user.js} 已有的 {@code setLoginInfo} 覆盖 localStorage。
+     *
+     * <p>★ 加字段对 Redis 里的<b>老缓存是安全的</b>（Jackson 读到缺字段的 JSON 得到
+     * {@code null}）；但<b>不要删字段或改名字</b> —— 老缓存的 JSON 里有它、新类里没有，
+     * 反序列化会抛 {@code UnrecognizedPropertyException}，症状是「所有人突然被登出」。
+     */
+    private String avatar;
+
+    /**
      * JWT 的唯一编号（{@code jti} 声明）。
      *
      * <p><b>★ 多端并存靠的就是它。</b>

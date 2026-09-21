@@ -47,7 +47,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getChapterPage, getChapterDetail, auditChapter } from '@/api/chapter'
-import { getNovelDetail, auditNovel } from '@/api/novel'
+import { getNovelDetail, getNovelCatalog, auditNovel } from '@/api/novel'
 import { usePagedList } from '@/composables/usePagedList'
 import { formatWordCount, formatDateTime } from '@/utils/format'
 import { chapterStatusType, novelStatusType } from '@/utils/status'
@@ -64,15 +64,24 @@ const novelId = computed(() => Number(route.params.novelId))
 /* ==================== 作品信息（页头 + 审作品按钮） ==================== */
 
 const novel = ref(null)
+/** 目录。★ P6 起详情不再带它了，是**另一个请求**（见 api/novel.js） */
+const novelChapters = ref([])
 
 async function loadNovel() {
   try {
-    novel.value = await getNovelDetail(novelId.value)
+    // ★ 详情和目录并发。两者都失败的话，报错由拦截器提示，这里只管状态
+    const [d, chapters] = await Promise.all([
+      getNovelDetail(novelId.value),
+      getNovelCatalog(novelId.value),
+    ])
+    novel.value = d
+    novelChapters.value = chapters ?? []
   } catch {
     // 拦截器已提示（2001 不存在）。
     // ★ 不重新抛：这个请求只是为了让页头有书名 + 决定「审核作品」按钮可不可点。
     //   章节列表那个请求拿到的错误更准确，够了。
     novel.value = null
+    novelChapters.value = []
   }
 }
 
@@ -369,7 +378,7 @@ async function batchReject() {
             {{ novel.statusDesc }}
           </el-tag>
           <span v-if="novel" class="novel-meta">
-            共 {{ novel.chapters?.length || 0 }} 章 · {{ formatWordCount(novel.wordCount) }}
+            共 {{ novelChapters.length }} 章 · {{ formatWordCount(novel.wordCount) }}
           </span>
         </div>
 
@@ -520,7 +529,7 @@ async function batchReject() {
       :loading="novelAuditLoading"
       @submit="submitNovel"
     >
-      <NovelPreview :novel="novel" />
+      <NovelPreview :novel="novel" :chapters="novelChapters" />
     </AuditDialog>
   </div>
 </template>

@@ -46,17 +46,59 @@ export function getRankList(params) {
 }
 
 /**
- * 作品详情（含**完整目录**）。
+ * 作品详情（**不含目录**）。
  *
  * @param {number|string} id
- * @returns {Promise<object>} 含 chapters 数组，只列已发布的章节
+ * @returns {Promise<object>} 作品元信息 + `firstChapterId`，**没有 `chapters`**
  *
- * ★ 目录是一次性全量返回的，P3 不分页（种子书只有 3~8 章）。
- *   章数上来之后要改成分页目录，这是记在 P3 文档里的遗留项。
+ * ★★ **P6 起目录不再跟着详情回来**，要用目录请调下面两个之一：
+ *   - `getNovelChapters` —— 详情页的目录卡片（分页、每行带状态和字数）
+ *   - `getNovelCatalog`  —— 阅读器的上一章/下一章和目录抽屉（全量、只有三个字段）
+ *   这是对 P3「一次性全量返回」的反转，理由见 `docs/P6-书架评论.md`：
+ *   详情页是**匿名高频**入口，几百章的书每打开一次就拖回整本目录。
+ *
+ * ★ `firstChapterId` 是「开始阅读」的目标，**一章都没发布时它不存在**
+ *   （全局 json 配了 non_null，为 null 的字段整个消失）→ 前端写
+ *   `detail.firstChapterId ?? null`，为 null 时把按钮置灰。
+ *   ★ 不要改回「取 chapters[0]」—— 目录已经不在这个响应里了。
+ *
  * ★ 作品不存在和未上架返回的是同一个 2001，前端不要去区分。
  */
 export function getNovelDetail(id) {
   return request.get(`/novels/${id}`)
+}
+
+/**
+ * 作品目录（分页）—— 详情页的目录卡片用这个。
+ *
+ * @param {number|string} novelId
+ * @param {object} [params]
+ * @param {number} [params.page=1]
+ * @param {number} [params.size=20] 上限 100
+ * @returns {Promise<{records: object[], total: number}>}
+ *
+ * ★ 只含**已发布**章节，草稿/待审/被驳回的章不会出现（服务端过滤）。
+ * ★ **`total` 就是「共 N 章」的那个 N**，不要另外找接口要章节总数。
+ * ★ 作品不存在 / 未上架同样是 2001（和详情接口一字不差）。
+ */
+export function getNovelChapters(novelId, params) {
+  return request.get(`/novels/${novelId}/chapters`, { params })
+}
+
+/**
+ * 作品目录（**全量精简**）—— 阅读器专用。
+ *
+ * @param {number|string} novelId
+ * @returns {Promise<Array<{id: number, novelId: number, chapterNo: number, title: string}>>}
+ *
+ * ★★ **它和 getNovelChapters 不是重复的，别合并**：阅读器要回答的是
+ *   「我在第几章、上一章/下一章各是谁」—— 这需要**整条有序列表**，
+ *   分页给不了（下一页的第一条不一定紧邻当前章）。
+ *   详情页要的才是「翻页浏览」，那才用分页。
+ * ★ 只有三个字段（没有 status / wordCount / 正文），几百章也就几十 KB。
+ */
+export function getNovelCatalog(novelId) {
+  return request.get(`/novels/${novelId}/catalog`)
 }
 
 /**

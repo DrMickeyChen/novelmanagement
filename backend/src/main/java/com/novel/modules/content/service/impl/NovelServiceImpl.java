@@ -26,7 +26,9 @@ import com.novel.modules.content.service.AuditLogService;
 import com.novel.modules.content.service.ContentUserLookup;
 import com.novel.modules.content.service.NovelAccessGuard;
 import com.novel.modules.content.service.NovelService;
+import com.novel.modules.content.vo.ChapterBriefVO;
 import com.novel.modules.content.vo.ChapterVO;
+import com.novel.modules.content.vo.NovelBriefVO;
 import com.novel.modules.content.vo.NovelDetailVO;
 import com.novel.modules.content.vo.NovelVO;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -295,21 +298,103 @@ public class NovelServiceImpl implements NovelService {
          * 一行赋值换掉一类泄露，不亏。
          */
         vo.setAuditRemark(null);
+        vo.setFirstChapterId(firstChapterIdOf(id));
+
+        return vo;
+    }
+
+    @Override
+    public PageResult<ChapterVO> chapterPage(Long novelId, long page, long size) {
+        Novel novel = requirePublished(novelId);
 
         /*
-         * 目录：★ 只含【已发布】章节，这是 C-7 约束 2 的一部分。
-         * 这里必须显式写 status = PUBLISHED —— 漏了的话草稿章、待审章、
+         * ★ 只含【已发布】章节，这是 C-7 约束 2 的一部分。
+         * 必须显式写 status = PUBLISHED —— 漏了的话草稿章、待审章、
          * 被驳回的章都会出现在读者端的目录里，等于「未审核内容对外可见」。
+         *
+         * ★ 不用再补 id 兜底排序：chapter 表上有 uk_novel_chapter_no
+         * （novel_id, chapter_no），chapterNo 在书内唯一，这个排序已经是全序。
          */
-        vo.setChapters(chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
-                        .eq(Chapter::getNovelId, id)
+        IPage<Chapter> result = chapterMapper.selectPage(buildPage(page, size),
+                new LambdaQueryWrapper<Chapter>()
+                        .eq(Chapter::getNovelId, novelId)
                         .eq(Chapter::getStatus, ChapterStatus.PUBLISHED)
+                        .orderByAsc(Chapter::getChapterNo));
+
+        return PageResult.of(result, c -> ChapterVO.of(c, novel.getTitle()));
+    }
+
+    @Override
+    public List<ChapterBriefVO> catalog(Long novelId) {
+        requirePublished(novelId);
+        return chaptersOf(novelId).stream().map(ChapterBriefVO::of).toList();
+    }
+
+    @Override
+    public List<ChapterVO> adminCatalog(Long novelId) {
+        Novel novel = requireNovel(novelId);
+
+        /*
+         * ★ 管理端目录【含全部状态】，和作者端一致、和读者端相反 ——
+         * 审核员必须能看到草稿章和待审章，只给他看已发布的，他根本不知道该审什么。
+         *
+         * ★ 用 requireNovel（不带归属校验）而不是 requireOwnedNovel：
+         * 管理员审的就是别人的书，加归属校验等于审核功能不存在。
+         *
+         * ★ 不分页：这一屏回答的是「这本书整体审得怎么样了」——
+         * 章节全是草稿的书，上架了也等于没上架，翻页看反而看不出全貌。
+         * 行为与 P6 之前 NovelDetailVO.chapters 逐字一致（那份也含全部状态、不分页）。
+         */
+        return chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
+                        .eq(Chapter::getNovelId, novelId)
                         .orderByAsc(Chapter::getChapterNo))
                 .stream()
                 .map(c -> ChapterVO.of(c, novel.getTitle()))
-                .toList());
+                .toList();
+    }
 
-        return vo;
+    /**
+     * 这本书<b>已发布</b>章节的有序列表，按 {@code chapterNo} 正序。
+     *
+     * <p><b>★★ 「已发布 + 按 chapterNo 正序」这个谓词在本类里有三处</b>：
+     * 这里、{@link #chapterPage}、{@link #firstChapterIdOf}。
+     * 三处一旦分叉，症状是<b>「目录里少了几章」</b>或
+     * <b>「点开始阅读跳到的不是第一章」</b>—— 都不会报错，而其中两个接口还是匿名的。
+     *
+     * <p>★ 后两处<b>不能</b>复用本方法：它们要的是「一条」和「一页」，
+     * 而本方法会把整本目录读进内存 —— 那正是 P6 拆目录要避免的开销。
+     * 所以重复的是谓词，不是查询。
+     */
+    private List<Chapter> chaptersOf(Long novelId) {
+        return chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
+                .eq(Chapter::getNovelId, novelId)
+                .eq(Chapter::getStatus, ChapterStatus.PUBLISHED)
+                .orderByAsc(Chapter::getChapterNo));
+    }
+
+    /**
+     * 第一章的 id（按 {@code chapterNo} 最小的那个已发布章节），没有则 {@code null}。
+     *
+     * <p><b>★ 干什么用：</b>详情页的「开始阅读」按钮。<b>P6 之前它取的是
+     * 目录数组的第一个元素</b> —— 目录改成分页之后，第一页不一定拿到第一章
+     * （书的章节顺序和分页没必然关系，改一下 size 就可能变），
+     * 所以这个「第一章是谁」必须由后端直接回答。
+     *
+     * <p>★ <b>用 {@code buildPage(1, 1)} 而不是 {@code .last("LIMIT 1")}</b> ——
+     * 同 {@link #rank} 里那段说明：{@code last()} 是拼接原生 SQL 的口子，
+     * 开了这个头，下一个人就会往里拼变量。
+     *
+     * <p>★ 和 {@code novel.lastChapterId}（最新已发布章节）不是一回事，
+     * 别拿那个来顶替：一个是最新、一个是最早，症状是「开始阅读」直接跳到结尾。
+     */
+    private Long firstChapterIdOf(Long novelId) {
+        IPage<Chapter> first = chapterMapper.selectPage(buildPage(1, 1),
+                new LambdaQueryWrapper<Chapter>()
+                        .eq(Chapter::getNovelId, novelId)
+                        .eq(Chapter::getStatus, ChapterStatus.PUBLISHED)
+                        .orderByAsc(Chapter::getChapterNo));
+        List<Chapter> records = first.getRecords();
+        return records.isEmpty() ? null : records.get(0).getId();
     }
 
     @Override
@@ -402,18 +487,12 @@ public class NovelServiceImpl implements NovelService {
                 userLookup.nicknameOf(novel.getAuthorId()));
 
         /*
-         * 作者端的目录【含全部状态】—— 作者要能看到自己的草稿章、待审章、被驳回的章。
-         * 这和读者端是相反的口径，所以两个方法各自写一遍，不抽公共方法：
-         * 抽出来的话，那个公共方法必然要收一个「要不要过滤状态」的参数，
-         * 而传错的后果是内容泄露。见 NovelService 的类注释。
+         * ★ P6：目录不再跟着详情返回（NovelDetailVO 去掉了 chapters）。
+         *   作者端的章节目录在 /api/author/novels/{id}/chapters 那个列表接口里，
+         *   含全部状态 —— 作者要能看到自己的草稿章、待审章、被驳回的章。
+         *   作者端的「开始阅读」也用不上 firstChapterId（那是读者端的按钮），
+         *   所以这里不填。
          */
-        vo.setChapters(chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
-                        .eq(Chapter::getNovelId, id)
-                        .orderByAsc(Chapter::getChapterNo))
-                .stream()
-                .map(c -> ChapterVO.of(c, novel.getTitle()))
-                .toList());
-
         return vo;
     }
 
@@ -598,18 +677,11 @@ public class NovelServiceImpl implements NovelService {
                 userLookup.nicknameOf(novel.getAuthorId()));
 
         /*
-         * ★ 管理端目录【含全部状态】，和作者端一致、和读者端相反。
-         * 审核员必须能看到草稿章和待审章 ——
-         * 只给他看已发布的，他根本不知道该审什么。
          * ★ auditRemark 在这里【保留】：审核历史是审核员做判断的依据。
+         * ★ P6：目录不再跟着详情返回，和作者端一样。
+         *   管理端的章节目录在 /api/admin/novels/{id}/chapters，含全部状态
+         *   （审核员必须看到草稿章和待审章，只给已发布的他就不知道该审什么）。
          */
-        vo.setChapters(chapterMapper.selectList(new LambdaQueryWrapper<Chapter>()
-                        .eq(Chapter::getNovelId, id)
-                        .orderByAsc(Chapter::getChapterNo))
-                .stream()
-                .map(c -> ChapterVO.of(c, novel.getTitle()))
-                .toList());
-
         return vo;
     }
 
@@ -935,8 +1007,15 @@ public class NovelServiceImpl implements NovelService {
      * <b>MP 的分页插件在 {@code size < 0} 时【不做分页】，会把整张表返回</b>——
      * 前端传个 {@code size=-1} 就能一次拖走全部作品。
      * 这不是假设，MP 的这个行为是设计如此（负数表示「不分页」）。
+     *
+     * <p><b>★ 为什么是泛型（本项目其它 Service 的 {@code buildPage} 都是具体类型）：</b>
+     * 本类从 P6 起也分页查 {@code chapter}（目录接口 {@link #chapterPage}），
+     * 而章节不是 {@code Novel} 实体 —— 写死 {@code Page<Novel>} 就编译不过。
+     * <b>另开一个 {@code buildChapterPage} 是错的</b>：兜底规则和上面这段论证
+     * 会在同一个类里出现两份，改一份漏一份的症状是「某个接口能拖走整张表」。
+     * 泛型不改任何行为，{@code Page} 的两个参数本来就与实体无关。
      */
-    private Page<Novel> buildPage(long page, long size) {
+    private <T> Page<T> buildPage(long page, long size) {
         long safePage = page < 1 ? 1 : page;
         long safeSize = size < 1 ? DEFAULT_PAGE_SIZE : size;
         return new Page<>(safePage, safeSize);
@@ -1020,5 +1099,81 @@ public class NovelServiceImpl implements NovelService {
         return records.stream()
                 .map(n -> NovelVO.of(n, categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId())))
                 .toList();
+    }
+
+    /* ==================== 供 interaction 模块调用 ==================== */
+
+    /**
+     * 批量取作品摘要。★ <b>只返回已上架的</b> —— 完整论证见
+     * {@link NovelService#briefsOf}。
+     */
+    @Override
+    public Map<Long, NovelBriefVO> briefsOf(Collection<Long> novelIds) {
+        List<Long> ids = novelIds == null ? List.of()
+                : novelIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            // ★ 空集合不能拿去查库：会生成 WHERE id IN () 语法错误
+            return Map.of();
+        }
+
+        /*
+         * ★ 这里用 selectList + LambdaQueryWrapper，不是 selectByIds。
+         * selectByIds 只按主键取，加不上 status 条件 —— 那就得查回来再在内存里
+         * 过滤掉未上架的，而「查出来再过滤」正是可见性规则出现第二处实现的开端。
+         * 条件写进 WHERE 才是唯一一处。
+         */
+        List<Novel> novels = novelMapper.selectList(new LambdaQueryWrapper<Novel>()
+                .in(Novel::getId, ids)
+                .eq(Novel::getStatus, NovelStatus.PUBLISHED));
+        if (novels.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, String> authorNames = userLookup.nicknamesOf(
+                novels.stream().map(Novel::getAuthorId).toList());
+        Map<Long, String> categoryNames = categoryNamesOf(
+                novels.stream().map(Novel::getCategoryId).toList());
+
+        Map<Long, NovelBriefVO> briefs = new LinkedHashMap<>();
+        for (Novel n : novels) {
+            briefs.put(n.getId(), NovelBriefVO.of(n, categoryNames.get(n.getCategoryId()),
+                    authorNames.get(n.getAuthorId())));
+        }
+        return briefs;
+    }
+
+    /**
+     * 写回收藏数。★ 绝对值覆盖 —— 完整论证见
+     * {@link NovelService#refreshCollectCount}。
+     */
+    @Override
+    public void refreshCollectCount(Long novelId, long count) {
+        /*
+         * ★ 用 LambdaUpdateWrapper.set() 而不是「把值塞进实体再 updateById」：
+         * updateById 只更新非 null 字段，而这里要写的值恰好可能是 0
+         * （所有读者都移出了书架）—— MP 对实体上的 0 是照写的，但
+         * 一旦有人把 setter 改成 Integer 并传了 null，收藏数就永远停在旧值。
+         * set() 是「明确写这一列」，没有「值看起来像空所以跳过」的歧义。
+         * 同 syncNovelStat 里 setLastChapterId 那段。
+         *
+         * ★ 不填 update_time：collect_count 是冗余统计列，
+         * 「有人收藏了」不是「作品更新了」。作品的更新时间由
+         * chapter 侧走 syncNovelStat，别在这里插一脚。
+         */
+        novelMapper.update(null, new LambdaUpdateWrapper<Novel>()
+                .eq(Novel::getId, novelId)
+                // collect_count 是 INT；夹一下而不是直接强转，避免溢出后变成负数
+                .set(Novel::getCollectCount, (int) Math.min(count, Integer.MAX_VALUE)));
+    }
+
+    /**
+     * 写回评分。★ 绝对值覆盖 —— 完整论证见
+     * {@link NovelService#refreshScore}。
+     */
+    @Override
+    public void refreshScore(Long novelId, BigDecimal score) {
+        novelMapper.update(null, new LambdaUpdateWrapper<Novel>()
+                .eq(Novel::getId, novelId)
+                .set(Novel::getScore, score));
     }
 }

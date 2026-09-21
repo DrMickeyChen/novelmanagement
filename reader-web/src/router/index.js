@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import BasicLayout from '@/layouts/BasicLayout.vue'
+import { useUserStore } from '@/stores/user'
 
 /**
  * 阅读端路由。
@@ -73,6 +74,58 @@ const routes = [
         component: () => import('@/views/novel/index.vue'),
         meta: { title: '作品详情' },
       },
+      {
+        /*
+         * ★★ 下面两条是 P6 加的，带 `meta.requiresAuth`。
+         *
+         * 它是「我的数据」类页面的标记：书架每一行都带 user_id，
+         * 历史同理，未登录时这两个页面**没有内容可渲染**，
+         * 而不是「内容为空」。
+         *
+         * ★ 拦截在文件末尾的 `beforeEach` 里，判据就是这个 `requiresAuth`
+         *   （P6 S14 接通的 —— 在那之前这个 meta 是惰性的，没有任何代码读它）。
+         */
+        path: 'shelf',
+        name: 'shelf',
+        component: () => import('@/views/shelf/index.vue'),
+        meta: { title: '我的书架', requiresAuth: true },
+      },
+      {
+        path: 'history',
+        name: 'history',
+        component: () => import('@/views/history/index.vue'),
+        meta: { title: '阅读历史', requiresAuth: true },
+      },
+      {
+        /*
+         * ★ 路径是 `/profile` 不是 `/user/profile`。
+         *   和上面两条（`/shelf`、`/history`）保持同一层级 ——
+         *   它们都是「我的」，没有一个是别人的，多包一层 `/user/`
+         *   只是在暗示将来会有 `/user/:id` 这种「看别人的主页」，
+         *   而本项目没有这个东西（也刻意不做：见方案「不做」清单）。
+         *
+         * ★ 入口在导航栏右上角的昵称上（点头像/昵称进个人中心），
+         *   不另开一个「个人中心」文字链接 —— 未登录的用户没有个人中心，
+         *   给他一个点进去必跳登录的链接没有意义。
+         *   （书架/历史不一样：那两个对游客是「值得先登录再回来的地方」。）
+         */
+        path: 'profile',
+        name: 'profile',
+        component: () => import('@/views/profile/index.vue'),
+        meta: { title: '个人中心', requiresAuth: true },
+      },
+      {
+        /*
+         * ★ 路径是 `/apply-author` 而不是 `/profile/apply`：
+         *   它不是一个「我的资料」的子页面，而是一个**动作页** ——
+         *   进来是为了交一份申请，交完之后这个地址就只剩下「查看进度」。
+         *   ★ 它和 `/profile` 一样需要登录（看的是自己的申请）。
+         */
+        path: 'apply-author',
+        name: 'applyAuthor',
+        component: () => import('@/views/applyAuthor/index.vue'),
+        meta: { title: '申请成为作者', requiresAuth: true },
+      },
     ],
   },
   {
@@ -143,17 +196,56 @@ const router = createRouter({
  *
  * 阅读端【不做强制登录】—— 首页、分类、搜索、详情、阅读都是公开的
  * （这几个页面在未登录状态下必须完全可用，游客是读者端的主体）。
- * 只有书架、历史、个人中心需要登录，那些是 P6 的页面，
- * 到那时在各自的路由上单独加 meta.requiresAuth。
+ * 只有书架、历史、个人中心需要登录，它们在自己的路由上带
+ * `meta.requiresAuth`。
  *
- * ★ 这里只做一件事：设置浏览器标签页标题。
- *   放在守卫里而不是各页面 onMounted，是因为它必须在【路由切换的那一刻】
- *   就更新 —— 放在页面里的话，页面组件是异步加载的，
+ * 这里做两件事：设置标签页标题 + 拦 `meta.requiresAuth` 的页面。
+ *
+ * ★ 设标题放在守卫里而不是各页面 onMounted，是因为它必须在
+ *   【路由切换的那一刻】就更新 —— 放在页面里的话，页面组件是异步加载的，
  *   标题会晚一拍才变，快速点几下导航能看到标题在跳。
  */
 router.beforeEach((to) => {
   const baseTitle = import.meta.env.VITE_APP_TITLE || '小说阅读'
   document.title = to.meta.title ? `${to.meta.title} - ${baseTitle}` : baseTitle
+
+  /*
+   * ★★ 「我的数据」类页面的登录拦截（P6 S14 接通）。
+   *
+   * 拦的是「未登录直接敲 URL / 点收藏夹进来」这条路径，
+   * 以及「从导航栏点进来」—— 两条其实是同一条：守卫在**路由切换的那一刻**
+   * 就跑了，页面组件根本还没被创建，所以页面里的任何兜底都来不及生效。
+   *
+   * ★ 不拦的代价（P6 之前就是这样）：页面挂载 → 接口 401 →
+   *   `request.js` 统一处理（提示 + 送登录页）。功能上「能用」，
+   *   但**丢了 `redirect`** —— 用户登录完落在首页，得自己再把那一页找回来，
+   *   而多半就不会再找了。
+   *
+   * ★★ 跳转【必须带上回来的路】。写成 `query: { redirect: to.fullPath }`
+   *   交给 vue-router 去编码，**不要自己拼字符串** —— fullPath 里的
+   *   `?` `&` `=` 会和 `/login?redirect=` 自己的 query 串在一起把地址截断，
+   *   而且不报错（同 `LoginPrompt.vue` 里那段理由）。
+   *   登录页只接受本应用内的相对路径，开放重定向防护照常生效。
+   *
+   * ★ 用 `route.path` 而不是 `fullPath`？——【不行】，见上一条：
+   *   从「筛选过的分类页」进来的话，query 丢了，回来看到的是另一页内容。
+   *
+   * ★ 判据用 `userStore.isLogin` 而不是直接读 localStorage：
+   *   导航栏（`BasicLayout`）和评论区（`CommentSection`）用的都是它。
+   *   守卫和界面共用【同一个】判据，就不会出现「守卫放行了、
+   *   界面却还显示未登录」这种自相矛盾的状态。
+   *   ★ `useUserStore()` 必须在守卫【函数体内】调用 —— 模块顶层调用时
+   *     Pinia 还没 `app.use()`，会直接抛错。见 `main.js` 的安装顺序。
+   *
+   * ★ 这里【不】像 admin-web 那样再查一次 `getUser()`：
+   *   书架/历史/个人中心的接口只认 token（userId 从 JWT 里取），
+   *   昵称和头像纯粹是展示。用户信息丢了顶多是导航栏少显示个名字，
+   *   为此把人挡在书架外面是过度拦截。
+   */
+  if (to.meta.requiresAuth && !useUserStore().isLogin) {
+    return { path: '/login', query: { redirect: to.fullPath } }
+  }
+
   return true
 })
 

@@ -34,7 +34,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { getNovelPage, getNovelDetail, auditNovel } from '@/api/novel'
+import { getNovelPage, getNovelDetail, getNovelCatalog, auditNovel } from '@/api/novel'
 import { getChapterPage, getChapterDetail, auditChapter } from '@/api/chapter'
 import { usePagedList } from '@/composables/usePagedList'
 import { formatWordCount, formatDateTime } from '@/utils/format'
@@ -84,12 +84,20 @@ const auditTarget = ref(null)
  *   `NovelVO` 里没有 `intro`/`tags`/`auditRemark`，
  *   而这三样是审核员判断的全部依据 —— 但列表一页 10 行，
  *   为了它们预先调 10 次详情就是典型的 N+1。
- *   点开哪本调哪本，一次一个请求。
+ *   点开哪本调哪本。
+ *
+ * ★ 点开之后是**两个**请求（详情 + 目录），不是三个：目录 P6 起
+ *   不再跟着详情回来，但它是「点开某一本」才需要的东西，
+ *   所以仍然是「点开哪本调哪本」，N+1 没有回来。
+ *   ★ 两个请求**并发**：串行会白白多一个 RTT。
  */
 async function openNovelAudit(row) {
   try {
-    const detail = await getNovelDetail(row.id)
-    auditTarget.value = { kind: 'novel', id: row.id, name: row.title, detail }
+    const [detail, chapters] = await Promise.all([
+      getNovelDetail(row.id),
+      getNovelCatalog(row.id),
+    ])
+    auditTarget.value = { kind: 'novel', id: row.id, name: row.title, detail, chapters }
     auditVisible.value = true
   } catch {
     // 拦截器已提示（2001 不存在）
@@ -316,7 +324,11 @@ function gotoNovelChapters(row) {
       @submit="submitAudit"
     >
       <!-- ============ 预览区（两个组件，见各自的文件头） ============ -->
-      <NovelPreview v-if="auditTarget?.kind === 'novel'" :novel="auditTarget.detail" />
+      <NovelPreview
+        v-if="auditTarget?.kind === 'novel'"
+        :novel="auditTarget.detail"
+        :chapters="auditTarget.chapters"
+      />
       <ChapterPreview
         v-else-if="auditTarget?.kind === 'chapter'"
         :chapter="auditTarget.detail"

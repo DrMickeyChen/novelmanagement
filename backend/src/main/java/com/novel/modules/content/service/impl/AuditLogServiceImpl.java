@@ -13,6 +13,7 @@ import com.novel.modules.content.mapper.AuditLogMapper;
 import com.novel.modules.content.mapper.ChapterMapper;
 import com.novel.modules.content.mapper.NovelMapper;
 import com.novel.modules.content.service.AuditLogService;
+import com.novel.modules.content.service.CommentBrief;
 import com.novel.modules.content.service.CommentTextLookup;
 import com.novel.modules.content.service.ContentUserLookup;
 import com.novel.modules.content.vo.AuditLogVO;
@@ -21,8 +22,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 审核流水实现。全项目最简单的一个 Service —— 只有一条 INSERT。
@@ -157,7 +160,7 @@ public class AuditLogServiceImpl implements AuditLogService {
          *   理由和上面那两段一样：novel_comment 的 id 和 novel / chapter 的 id
          *   完全独立，混着查会给评论 5 补上作品 5 的标题。
          *
-         * ★ 这里【不判空集合】—— 判空在 commentTextLookup.textsOf 里面。
+         * ★ 这里【不判空集合】—— 判空在 commentTextLookup.briefsOf 里面。
          *   两层都判不会出错，但会让「谁负责这件事」变得模糊；
          *   这个方法是「消费方」，约定是「接口自己处理空集合」（见接口注释）。
          *   （上面那两个 Map 的 if 判空是因为 selectByIds 是 MP 的方法、
@@ -182,30 +185,68 @@ public class AuditLogServiceImpl implements AuditLogService {
                 .distinct()
                 .toList();
 
-        Map<Long, String> novelTitles = new LinkedHashMap<>();
-        if (!novelIds.isEmpty()) {
-            for (Novel novel : novelMapper.selectByIds(novelIds)) {
-                novelTitles.put(novel.getId(), novel.getTitle());
-            }
-        }
-
-        Map<Long, String> chapterTitles = new LinkedHashMap<>();
-        if (!chapterIds.isEmpty()) {
-            for (Chapter chapter : chapterMapper.selectByIds(chapterIds)) {
-                chapterTitles.put(chapter.getId(), chapter.getTitle());
-            }
-        }
-
         /*
          * ★ 评论没有「标题」这一列，正文开头十几个字就是它的名字 ——
-         *   截断在实现里做（{@code MAX_TEXT_LENGTH = 30}），这里拿到的是成品。
+         *   截断在 interaction 那边做（{@code MAX_TEXT_LENGTH = 30}），这里拿到的是成品。
+         *   ★ P6 起返回值还带「它挂在什么对象上」，但【位置串在本类拼】——
+         *   详见 CommentBrief 的注释：让 interaction 拼位置会绕出一个 Bean 环，
+         *   而且位置本来就是这一页的版式，本类别的三种 targetType 也都在这儿拼。
          *
          * ★ 查不到的 id 不会出现在 Map 里，于是下面 get 出 null，
          *   VO 里 targetTitle 为空，前端显示成「评论 #5（已删除）」——
          *   和作品 / 章节完全一致，这是【有意接受】的结果：
          *   为了补出已删除对象的标题而绕过逻辑删除是错误的修法。
          */
-        Map<Long, String> commentTexts = commentTextLookup.textsOf(commentIds);
+        Map<Long, CommentBrief> commentBriefs = commentTextLookup.briefsOf(commentIds);
+
+        /*
+         * ★ 章评的 target_id 是 chapterId，得先有章节才知道它挂在哪本书上，
+         *   所以章节必须【比作品先查】。两次查询的 id 集合都是合并出来的：
+         *   章节 = 章节行的 ∪ 章评的；作品 = 作品行的 ∪ 书评自己的 ∪ 章评所属章节的。
+         *   合并是为了「一页日志里每种对象只查一次」，不是为了少写几行 ——
+         *   拆开查会让评论的位置多两次往返，而它们本来就在同一页里。
+         */
+        Set<Long> allChapterIds = new LinkedHashSet<>(chapterIds);
+        for (CommentBrief brief : commentBriefs.values()) {
+            if (brief.chapterId() != null) {
+                allChapterIds.add(brief.chapterId());
+            }
+        }
+
+        Map<Long, Chapter> chapters = new LinkedHashMap<>();
+        if (!allChapterIds.isEmpty()) {
+            for (Chapter chapter : chapterMapper.selectByIds(allChapterIds)) {
+                chapters.put(chapter.getId(), chapter);
+            }
+        }
+
+        Set<Long> allNovelIds = new LinkedHashSet<>(novelIds);
+        for (CommentBrief brief : commentBriefs.values()) {
+            if (brief.novelId() != null) {
+                allNovelIds.add(brief.novelId());
+            }
+            Chapter chapter = brief.chapterId() == null ? null : chapters.get(brief.chapterId());
+            if (chapter != null) {
+                allNovelIds.add(chapter.getNovelId());
+            }
+        }
+
+        Map<Long, Novel> novels = new LinkedHashMap<>();
+        if (!allNovelIds.isEmpty()) {
+            for (Novel novel : novelMapper.selectByIds(allNovelIds)) {
+                novels.put(novel.getId(), novel);
+            }
+        }
+
+        /*
+         * ★ 这里留的是实体不是标题串：章评的位置要用 {@code chapterNo} 而不是章节标题，
+         *   所以 {@code chapters} 得活着。两个 Map 只是给 switch 用的便捷视图。
+         */
+        Map<Long, String> novelTitles = new LinkedHashMap<>();
+        novels.forEach((id, novel) -> novelTitles.put(id, novel.getTitle()));
+
+        Map<Long, String> chapterTitles = new LinkedHashMap<>();
+        chapters.forEach((id, chapter) -> chapterTitles.put(id, chapter.getTitle()));
 
         /*
          * ★ 作者申请的「标题」是「笔名（昵称）」，不是正文截断 ——
@@ -235,7 +276,7 @@ public class AuditLogServiceImpl implements AuditLogService {
                  * 在补上之前，评论的审核流水在日志页显示的是「评论 #5」，
                  * 管理员看不出审的是哪一条。
                  */
-                case COMMENT -> commentTexts.get(l.getTargetId());
+                case COMMENT -> commentTitle(commentBriefs.get(l.getTargetId()), chapters, novels);
                 /*
                  * ★★ P5（S11）补上的最后一条分支。至此 AuditTargetType 的
                  *   四个取值全都有了实现 —— 这个 switch 表达式一共拦了两次
@@ -248,6 +289,45 @@ public class AuditLogServiceImpl implements AuditLogService {
             };
             return AuditLogVO.of(l, title, operatorNames.get(l.getOperatorId()));
         }).toList();
+    }
+
+    /**
+     * 拼评论在审核日志里的一行：{@code 《书名》第N章 · 正文}（书评没有「第N章」）。
+     *
+     * <p>★ <b>位置拼不出来就只给正文</b>，而不是给一个「《》第 章」这种半个位置 ——
+     * 那比没有位置更难读。拼不出来只有一种情况：书 / 章节已被逻辑删除
+     * （{@code selectByIds} 把逻辑删的行滤掉了），或者 id 根本对不上。
+     *
+     * <p>★ <b>和上面作品 / 章节那两行有一处刻意的不一样：这里不筛上架 / 发布状态。</b>
+     * 审核日志是管理端的页面，管理员本来就看得见全部；而「这本书已经下架了」
+     * 恰恰是查流水时最该看到的信息，把它藏起来只会让人以为数据丢了。
+     * （P6 中途这里曾走过只返回已上架作品的 {@code NovelService#briefsOf}，
+     * 结果是书一被下架、它名下所有评论的位置集体消失 —— 那样是错的。）
+     */
+    private String commentTitle(CommentBrief brief, Map<Long, Chapter> chapters,
+                                Map<Long, Novel> novels) {
+        if (brief == null) {
+            return null;
+        }
+
+        String location = null;
+        if (brief.chapterId() != null) {
+            Chapter chapter = chapters.get(brief.chapterId());
+            Novel novel = chapter == null ? null : novels.get(chapter.getNovelId());
+            if (novel != null) {
+                location = "《" + novel.getTitle() + "》第" + chapter.getChapterNo() + "章";
+            }
+        } else if (brief.novelId() != null) {
+            Novel novel = novels.get(brief.novelId());
+            if (novel != null) {
+                location = "《" + novel.getTitle() + "》";
+            }
+        }
+
+        if (location == null) {
+            return brief.text();
+        }
+        return brief.text() == null ? location : location + " · " + brief.text();
     }
 
     /** 分页兜底。★ 下限必须自己兜：MP 对 {@code size < 1} 是【不分页】，会返回整张流水表 */

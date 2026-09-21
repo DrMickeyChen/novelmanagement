@@ -6,6 +6,7 @@ import com.novel.common.result.Result;
 import com.novel.modules.content.dto.AuditDTO;
 import com.novel.modules.content.dto.NovelStatusDTO;
 import com.novel.modules.content.service.NovelService;
+import com.novel.modules.content.vo.ChapterVO;
 import com.novel.modules.content.vo.NovelDetailVO;
 import com.novel.modules.content.vo.NovelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 /**
  * 管理端 —— 作品审核。
@@ -79,7 +82,13 @@ public class AdminNovelController {
     @Operation(
             summary = "作品详情（审核用）",
             description = """
-                    含**简介**和**全部状态的章节目录** —— 审核员要看完这些才能判断。
+                    含**简介** —— 审核员要看完才能判断。
+
+                    ★ **P6 起不再返回 `chapters`**（同读者端，目录拆成了独立接口）。
+                    管理端的目录在 `GET /api/admin/novels/{id}/catalog`，
+                    含**全部状态**且**不分页** —— 这里的「不返回目录」和读者端
+                    性质不同：读者端是为了不给匿名高频入口拖整本目录，
+                    管理端只是**接口分工**，两个请求挨着发，少一个字段少一处维护。
 
                     ★ 和作者端的区别：这里**不做归属校验**（管理员审的就是别人的书），
                     也**保留 `auditRemark`**（审核员要看历史驳回理由，
@@ -89,6 +98,27 @@ public class AdminNovelController {
     @GetMapping("/{id}")
     public Result<NovelDetailVO> detail(@PathVariable Long id) {
         return Result.success(novelService.adminDetail(id));
+    }
+
+    @Operation(
+            summary = "作品目录全量（含全部状态）",
+            description = """
+                    **审核用**：含草稿、待审、已驳回、已发布**全部状态**的章节，
+                    按 `chapterNo` 正序。
+
+                    ★ **为什么审核员要看到草稿章：** 判断「这本书能不能过」
+                    几乎完全取决于它的章节审得怎么样了 —— 一本章节全是草稿的书，
+                    作品审核通过后读者进来只有一个空目录，**上架了等于没上架**。
+                    只返回已发布章节的话，这个判断做不出来。
+
+                    ★ **不分页**，和 P6 之前跟着详情一起返回的那份目录行为一致。
+                    管理端详情是低频的登录后操作，和读者端那个匿名高频入口不是一回事 ——
+                    P6 拆目录要解决的是后者。
+
+                    作品不存在返回 `2001`。""")
+    @GetMapping("/{id}/catalog")
+    public Result<List<ChapterVO>> catalog(@PathVariable Long id) {
+        return Result.success(novelService.adminCatalog(id));
     }
 
     @Operation(

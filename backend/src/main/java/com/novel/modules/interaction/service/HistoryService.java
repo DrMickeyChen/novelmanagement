@@ -1,6 +1,8 @@
 package com.novel.modules.interaction.service;
 
+import com.novel.common.result.PageResult;
 import com.novel.modules.interaction.dto.HistoryReportDTO;
+import com.novel.modules.interaction.vo.ReadHistoryItemVO;
 import com.novel.modules.interaction.vo.ReadHistoryVO;
 
 /**
@@ -81,4 +83,23 @@ public interface HistoryService {
      * @return 进度，或 {@code null}（该用户在这本书上没有记录）
      */
     ReadHistoryVO get(Long novelId);
+
+    /**
+     * 我的阅读历史，按最后阅读时间倒序。
+     *
+     * <p><b>★★ 和 {@link #get} 是两条接口、两个 VO，刻意不合并。</b>
+     * 这个判断是老板写在 {@code ReadHistoryVO} 类注释里的：
+     * 阅读器每次上报进度都会调 {@code get()}，如果为了列表页给它加上
+     * 书名 / 封面 / 章名，那三个字段就是<b>每本书一次查询</b>的开销，
+     * 而阅读器一个都用不上。列表页一次才查一页，成本结构完全不同。
+     * <p>所以这里是 {@code ReadHistoryItemVO}（带书名/封面/章名），
+     * 而 {@code ReadHistoryVO} <b>一个字节都不动</b>。
+     *
+     * <p><b>★ 不做「删除历史」</b>：{@code read_history} 表没有 {@code deleted} 列，
+     * 要做就只能物理删，而「误删历史」不可恢复；大纲也没有要求。
+     *
+     * <p>★ 每行带 {@code available}（作品是否还读得到）和进度。
+     * 「这本书下架了」不能把这一行从历史里抹掉 —— 读者会以为记录丢了。
+     */
+    PageResult<ReadHistoryItemVO> myPage(long page, long size);
 }

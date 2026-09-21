@@ -1,5 +1,6 @@
 package com.novel.modules.interaction.service.impl;
 
+import com.novel.modules.content.service.CommentBrief;
 import com.novel.modules.content.service.CommentTextLookup;
 import com.novel.modules.interaction.entity.NovelComment;
 import com.novel.modules.interaction.mapper.NovelCommentMapper;
@@ -8,6 +9,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -29,8 +31,15 @@ import java.util.Map;
  * 然后发现那个接口在 {@code content} 包里，白跑一趟。
  *
  * <p><b>★ 它为什么不去实现 {@code CommentService}、不放在 {@code service/} 下：</b>
- * 见上面那条。这个类只做「id → 正文」一件小事，
- * 和 {@link CommentServiceImpl} 那六个业务方法没有任何关系。
+ * 见上面那条。这个类只做「commentId → 审核日志要的素材」一件小事，
+ * 和 {@link CommentServiceImpl} 那十个业务方法没有任何关系。
+ *
+ * <p><b>★ P6 起这个类【变小了】——它不再自己拼位置串。</b>
+ * 拼「《书名》第N章 · 正文」要查 novel / chapter，而那两个查询一注入进来
+ * 就绕出一个 Bean 环（{@code AuditLogServiceImpl} →
+ * 本类 → {@code NovelServiceImpl} → {@code AuditLogService}）。
+ * 环的根因是位置拼接站错了边，改法见 {@link CommentBrief} 的注释：
+ * <b>本类只回答表内的事实（正文 + 挂在什么对象上），版式留给消费方。</b>
  *
  * <p><b>★ 截断长度 {@value #MAX_TEXT_LENGTH} 字</b>：审核日志页的一行大约能放
  * 二十来个汉字，取 30 留一点余量给省略号，同时保证一条 500 字的评论
@@ -42,13 +51,13 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CommentTextLookupImpl implements CommentTextLookup {
 
-    /** 返回给审核日志的正文最大字数。见类注释 */
+    /** 正文部分的最大字数。见类注释 */
     private static final int MAX_TEXT_LENGTH = 30;
 
     private final NovelCommentMapper commentMapper;
 
     @Override
-    public Map<Long, String> textsOf(Collection<Long> commentIds) {
+    public Map<Long, CommentBrief> briefsOf(Collection<Long> commentIds) {
         /*
          * ★ 空集合短路。不短路的话 selectByIds(空集合) 会生成
          *   WHERE id IN ()，那是 SQL 语法错误 —— 注意它【不是】返回空列表，
@@ -68,11 +77,32 @@ public class CommentTextLookupImpl implements CommentTextLookup {
          *   ★ 返回完整实体（所有列）是有一点浪费，但一页日志最多几十个 id，
          *   走主键索引，早就不用在意这点列宽了。
          */
-        Map<Long, String> result = new LinkedHashMap<>();
-        for (NovelComment comment : commentMapper.selectByIds(commentIds)) {
-            result.put(comment.getId(), truncate(comment.getContent()));
+        List<NovelComment> comments = commentMapper.selectByIds(commentIds);
+
+        Map<Long, CommentBrief> result = new LinkedHashMap<>();
+        for (NovelComment comment : comments) {
+            /*
+             * ★ 只判一次「是不是章评」，然后二选一填一个可空 id ——
+             *   而不是把 targetType 原样交给消费方去 switch：
+             *   那等于让 content 反过来理解 novel_comment 的表内取值。
+             */
+            boolean chapterComment = isChapterComment(comment);
+            result.put(comment.getId(), new CommentBrief(
+                    truncate(comment.getContent()),
+                    chapterComment ? null : comment.getTargetId(),
+                    chapterComment ? comment.getTargetId() : null));
         }
         return result;
+    }
+
+    /**
+     * ★ 用 {@code Integer.valueOf(...).equals(...)} 而不是 {@code ==}：
+     * {@code targetType} 是包装类型，直接和 {@code int} 常量比会拆箱，
+     * 而这一列虽然 {@code NOT NULL}，实体字段仍可能因为某个查询的
+     * {@code select()} 投影而没有它（{@code docs/P5} 实施记录 ⑥ 的同类坑）。
+     */
+    private boolean isChapterComment(NovelComment comment) {
+        return Integer.valueOf(NovelComment.TARGET_TYPE_CHAPTER).equals(comment.getTargetType());
     }
 
     /**

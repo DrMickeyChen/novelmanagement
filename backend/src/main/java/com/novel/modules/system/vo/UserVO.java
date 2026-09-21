@@ -39,6 +39,20 @@ public class UserVO {
     private String nickname;
 
     /**
+     * 头像 URL，形如 {@code /uploads/avatar/2026/09/21/ab12.jpg}；没传过是 {@code null}。
+     *
+     * <p><b>★★ 前端必须写 {@code userInfo?.avatar || 默认头像}，不能写
+     * {@code avatar === null} 来判断。</b>这份数据会被整个存进
+     * {@code localStorage[novel_user]}（见 {@code stores/user.js}），
+     * 而那份 JSON 是<b>上一次登录时</b>写下的 —— P6 之后新增的这个 key
+     * 在老用户手里<b>压根不存在</b>，取出来是 {@code undefined} 而不是 {@code null}，
+     * 写 {@code === null} 的分支永远不成立，页面上就是一个不出图的空 {@code <img>}。
+     * （同 {@code CommentVO#nickname} 那条「写 {@code ?? '已注销'}，不要写 {@code === null}」。）
+     */
+    @Schema(description = "头像 URL，未设置为 null", example = "/uploads/avatar/2026/09/21/ab12.jpg")
+    private String avatar;
+
+    /**
      * 用户的全部角色码，如 {@code ["ADMIN"]}、{@code ["AUTHOR","READER"]}。
      *
      * <p><b>★ 这个才是唯一的事实来源</b>（数据库里就是多对多）。
@@ -81,6 +95,7 @@ public class UserVO {
         vo.setId(loginUser.getUserId());
         vo.setUsername(loginUser.getUsername());
         vo.setNickname(loginUser.getNickname());
+        vo.setAvatar(loginUser.getAvatar());
         vo.setRoles(loginUser.getRoles() == null ? Collections.emptyList() : loginUser.getRoles());
         vo.setPermissions(loginUser.getPermissions() == null
                 ? Collections.emptyList() : loginUser.getPermissions());
@@ -99,6 +114,7 @@ public class UserVO {
         vo.setId(user.getId());
         vo.setUsername(user.getUsername());
         vo.setNickname(user.getNickname());
+        vo.setAvatar(user.getAvatar());
         vo.setRoles(roles == null ? Collections.emptyList() : roles);
         vo.setPermissions(permissions == null ? Collections.emptyList() : permissions);
         vo.setRole(primaryOf(vo.getRoles()));

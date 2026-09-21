@@ -30,6 +30,17 @@
  *     即使 silent 也是白跑一趟）。
  *
  * ============================================================
+ * ★ P6 加的章评：**它是个抽屉，绝不能放进 `<main>` 里**
+ * ============================================================
+ * 「本章说」按钮在工具条上，点开是页底的一个抽屉（`el-drawer`）。
+ * ★ 为什么不把评论区直接接在正文下面 —— 那会同时打破上面那两条：
+ *   ① 评论列表进了滚动容器，`scrollHeight` 立刻变大，
+ *      「刚打开这一章」就显示读了 30%，滚到正文末尾也到不了 100%；
+ *   ② `.chapter-nav`（下一章）会被挤到屏幕外面，读完一章找不到出口。
+ *   抽屉是 `position: fixed`，**不改变 `<main>` 的任何尺寸**，两条一起消失。
+ *   ★ 完整论证写在模板里那一段，那里离代码更近。
+
+ * ============================================================
  * ★ 安全 / 渲染上的两条硬约束
  * ============================================================
  * ① 正文用 `{{ content }}`，【严禁 v-html】。正文是作者提交的自由文本，
@@ -41,11 +52,12 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { getChapterContent, getNovelDetail } from '@/api/novel'
+import { getChapterContent, getNovelCatalog, getNovelDetail } from '@/api/novel'
 import { getProgress, reportProgress } from '@/api/reader'
 import { useReaderStore } from '@/stores/reader'
 import { useUserStore } from '@/stores/user'
 import { loadProgress, saveProgress } from '@/utils/readerStorage'
+import CommentSection from '@/components/CommentSection.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -58,12 +70,67 @@ const REPORT_DEBOUNCE_MS = 1000
 const novelId = computed(() => route.params.novelId)
 const chapterId = computed(() => route.params.chapterId)
 
+/**
+ * ★★ 阅读器「最后在哪一章」的快照。**只增不减**，路由离开时不动它。
+ *
+ * ------------------------------------------------------------
+ * ★ 为什么不能直接用上面那两个 computed 来上报进度
+ * ------------------------------------------------------------
+ * 它们读的是 `route.params`，而 **`route` 是「现在」的路由，
+ * 不是「我离开时」的路由**。组件卸载发生在路由**已经切走之后**：
+ * 从 `/read/1059/101271` 点「返回」去 `/novel/1059`，等
+ * `onBeforeUnmount` 跑的时候，`route.params` 里是 `{ id: '1059' }` ——
+ * **novelId 和 chapterId 双双是 `undefined`**。
+ *
+ * 于是 `Number(undefined)` → `NaN` → `JSON.stringify` 把它写成 `null`
+ * → 后端 `HistoryReportDTO` 的 `@NotNull` 直接 400。而 `reportProgress`
+ * 带着 `silent: true`，**一点提示都不会有，静默丢掉**。
+ *
+ * ★ 症状：**离开阅读器时那一次上报永远是丢的**，服务端于是停在你
+ *   【上一次换章】的位置，而不是你真正读到的最后一章 ——
+ *   换章时那次上报是在路由还合法的时候发的，所以它是好的，
+ *   两件事叠在一起正好是「切到下一章再返回，历史还显示上一章」。
+ *
+ * ★ 这个 bug **P3 就存在**。它一直没被发现，是因为在 S11 之前
+ *   没有任何界面显示服务端的 `chapter_id`：详情页的「继续阅读」
+ *   读的是**本地**记录，而本地的每一次写入都发生在路由还合法的时候。
+ *   书架页 / 历史页是第一个把它显示出来的地方。
+ *
+ * ★ 顺带修掉的第二个毛病：以前 `saveProgress(novelId.value, ...)` 在
+ *   离开时会拿 `undefined` 当 key，往 localStorage 里写一个
+ *   `novel_reader_progress_undefined` 垃圾键。
+ *
+ * ★ `immediate: true` 是为了首次进入就建立快照；之后只有两个参数
+ *   都在的时候才更新 —— 路由离开时它们变成 `undefined`，快照保持不动。
+ */
+const position = ref({ novelId: null, chapterId: null })
+
+watch(
+  [novelId, chapterId],
+  ([nid, cid]) => {
+    if (nid != null && cid != null) {
+      position.value = { novelId: nid, chapterId: cid }
+    }
+  },
+  { immediate: true },
+)
+
 /** 滚动容器。★ 进度全靠它，不能用 window —— 理由见文件头 */
 const scrollerRef = ref(null)
 
-/** 作品详情（这里只用它的目录：上一章/下一章/目录抽屉都要） */
+/** 作品详情。★ P6 起它【不带目录】了，这里只用它的书名（顶栏和 document.title） */
 const novel = ref(null)
-const chapters = computed(() => novel.value?.chapters ?? [])
+
+/**
+ * 整本书的目录（全量精简：id / chapterNo / title）—— 上一章/下一章和目录抽屉都要它。
+ *
+ * ★★ P6 起目录【不再跟着详情回来】，单独走 `GET /novels/{id}/catalog`。
+ *   阅读器要的是「我在第几章、前后各是谁」，这需要**整条有序列表**，
+ *   分页给不了（详情页用的那个分页接口，下一页的第一条不一定紧邻当前章）。
+ *   ★ 所以这里【不是】忘了改成分页 —— 阅读器就该拿全量，
+ *   只是字段从 ChapterVO 缩成了 ChapterBriefVO，几百章也就几十 KB。
+ */
+const chapters = ref([])
 
 /** 当前章的正文 */
 const chapter = ref(null)
@@ -71,6 +138,15 @@ const loading = ref(false)
 const failed = ref(false)
 
 const catalogVisible = ref(false)
+
+/**
+ * 章评抽屉的开关。
+ *
+ * ★ 它和 `catalogVisible` 是**两个独立的抽屉**，不是一个变量存「当前开的是哪个」：
+ *   两个抽屉互斥（打开一个就关另一个）是 el-drawer 自己的行为，
+ *   用一个变量表达反而要自己维护「从目录切到评论」的中间态。
+ */
+const commentVisible = ref(false)
 
 /**
  * ★★ ready 是「进度恢复做完了」的闸门。
@@ -121,11 +197,22 @@ async function loadNovel() {
     novel.value = await getNovelDetail(novelId.value)
   } catch {
     /*
-     * ★ 目录拿不到【不阻断阅读】：正文接口自己会校验，能读到就正常显示。
-     *   只是「上一章 / 下一章」和目录抽屉会是空的。
-     *   这里刻意不置 failed —— 为了一份目录把整章正文拦下来，主次颠倒。
+     * ★ 详情拿不到【不阻断阅读】：正文接口自己会校验，能读到就正常显示。
+     *   只是顶栏没有书名。
+     *   这里刻意不置 failed —— 为了一份详情把整章正文拦下来，主次颠倒。
      */
     novel.value = null
+  }
+
+  try {
+    chapters.value = (await getNovelCatalog(novelId.value)) ?? []
+  } catch {
+    /*
+     * ★ 目录同样【不阻断阅读】，只是「上一章 / 下一章」和目录抽屉会是空的。
+     *   翻转按钮靠 chapters 判断有没有邻居，空数组就是两个按钮都置灰 ——
+     *   读者仍能读正文，符合「目录挂了不该让人读不了书」。
+     */
+    chapters.value = []
   }
 }
 
@@ -292,8 +379,20 @@ function flushProgress(forChapterId) {
   const scroller = scrollerRef.value
   if (!scroller) return
 
-  const cid = forChapterId ?? chapterId.value
-  saveProgress(novelId.value, cid, scroller.scrollTop)
+  /*
+   * ★★ 位置一律取自 `position` 快照，**不读 `novelId` / `chapterId`**。
+   *   理由见 `position` 的声明处：这两个 computed 在离开阅读器时
+   *   已经是 undefined 了，读它们等于把这次上报白白扔掉。
+   *
+   * ★ nid 为 null 只在「快照还没建立」时出现（immediate 之后实际不会），
+   *   这时直接放弃 —— **宁可少报一次，也不要报一个 novelId: null 上去**
+   *   换来一个 400。
+   */
+  const { novelId: nid, chapterId: here } = position.value
+  if (nid == null) return
+
+  const cid = forChapterId ?? here
+  saveProgress(nid, cid, scroller.scrollTop)
 
   /*
    * ★★ 游客不发请求。getProgress/reportProgress 都带了 silent，
@@ -306,7 +405,7 @@ function flushProgress(forChapterId) {
    */
   if (userStore.isLogin) {
     reportProgress({
-      novelId: Number(novelId.value),
+      novelId: Number(nid),
       chapterId: Number(cid),
       progress: currentPercent(),
     }).catch(() => {})
@@ -363,6 +462,78 @@ function handleKeydown(e) {
   }
 }
 
+/* ==================== 左右滑动翻章（P6 S15） ==================== */
+
+/**
+ * 触摸滑动的起点。`null` 表示这一轮触摸不算数（多指 / 起点没记上）。
+ * ★ 存 `{x, y}` 两个数就够 —— 不需要 touchmove 里的实时跟踪：
+ *   「翻不翻章」只看**起点到终点**的方向和距离，
+ *   而 touchmove 是每帧都触发的，跟着它算只会让判断抖动。
+ */
+let touchStart = null
+
+/** 横向滑多远才算翻章。低于这个数一律当成手指抖动 */
+const SWIPE_MIN = 50
+
+/**
+ * ★★ 滑动翻章的三个判断，每一个都对应一种「手机上正常操作被误判」：
+ *
+ * ① **必须区分横竖**：`|dx| > |dy|`。手机上读小说最主要的动作就是上下滚，
+ *    不判方向的话，每滚一次屏就翻一章 —— 而且**看起来像页面自己乱跳**，
+ *    因为手指抬起来才生效，用户完全不知道是自己滚出来的。
+ *
+ * ② **还要有一个距离下限**（50px）：方向判断挡不住「点一下」——
+ *    手指点链接/按钮时会有一两像素的位移，垂直方向恰好为 0（`|dx| > |dy|` 成立），
+ *    于是每次点击都可能顺带翻一章。这个下限就是为点击设的。
+ *
+ * ③ **划词选中时不算**：手机上选一段文字是「长按再拖」，那串动作天然满足
+ *    前两条（拖的是水平方向、距离也够）。不判的话，用户想复制一句话，
+ *    结果文字被选中、页面同时翻到了下一章。
+ *
+ * ★ 多指触摸（捏合缩放）直接放弃：`touchend` 时 `changedTouches` 里
+ *   可能只剩一根手指，起点却是两指的，算出来的位移没有意义。
+ *
+ * ★★ 翻章必须调 `gotoChapter`，**不能另写一套**：
+ *   键盘 `←/→`（`handleKeydown`）、顶栏按钮、这一条路径要落在同一个函数上，
+ *   否则「翻章」这件事就有了三份实现 —— 将来加个「翻章时上报进度」之类的改动，
+ *   只会改到其中一两个。
+ */
+function onTouchStart(e) {
+  if (e.touches.length > 1) {
+    touchStart = null
+    return
+  }
+  const t = e.touches[0]
+  touchStart = { x: t.clientX, y: t.clientY }
+}
+
+function onTouchEnd(e) {
+  const start = touchStart
+  touchStart = null
+  if (!start) return
+
+  // ★ touchend 的坐标在 changedTouches 里，e.touches 这时已经是空的了
+  const t = e.changedTouches[0]
+  if (!t) return
+
+  const dx = t.clientX - start.x
+  const dy = t.clientY - start.y
+
+  if (Math.abs(dx) < SWIPE_MIN) return
+  if (Math.abs(dx) <= Math.abs(dy)) return
+  if (window.getSelection()?.toString()) return
+
+  /*
+   * ★ 方向语义：手指【向左】划 = 往后翻（dx < 0 → 下一章）。
+   *   这是「把当前页往左推走、下一页从右边进来」的直觉，
+   *   和纸质书翻下一页的方向一致。
+   */
+  const target = dx < 0 ? nextChapter.value : prevChapter.value
+  // ★ 没有邻居时【不阻止也不提示】：滑到最后一章再划一下什么都不发生，
+  //   和顶栏那个按钮的置灰是同一个意思
+  if (target) gotoChapter(target.id)
+}
+
 /* ==================== 切章 watch ==================== */
 
 /**
@@ -387,6 +558,17 @@ function handleKeydown(e) {
  *   （两个 watch 会一起触发，把同一章正文请求发两遍）。
  */
 watch(chapterId, async (newId, oldId) => {
+  /*
+   * ★★ `newId` 为空 = **我们离开了阅读器**，不是「换章」。
+   *   路由一走，`route.params.chapterId` 就变成 `undefined`，这个 watch
+   *   照样会触发。不拦住的话，卸载过程中会对一个不存在的章节发一串
+   *   注定失败的请求，还会把 `novel` / `chapters` 清空、`failed` 置 true ——
+   *   虽然马上要卸载、用户看不见，但它会**抢在 onBeforeUnmount 之前
+   *   把状态搅乱**，让收尾那次上报的时机变得不可预期。
+   *   （离开时的收尾由 onBeforeUnmount 负责，那里用的是 position 快照。）
+   */
+  if (!newId) return
+
   cancelPendingReport()
   // ★ 切章前先把【旧章节】的进度落一次，否则这一章的阅读位置就丢了
   flushProgress(oldId)
@@ -410,13 +592,32 @@ watch(chapterId, async (newId, oldId) => {
       </div>
 
       <div class="right">
-        <el-button link :disabled="!prevChapter" @click="gotoChapter(prevChapter?.id)">
+        <!--
+          ★ 窄屏这两个会隐藏（`.nav-arrow`，见样式里那段 @media）：
+            正文末尾的 `.chapter-nav` 已经有同样的一组「上一章/下一章」大按钮，
+            顶栏再挤一份只会把「目录 / 本章说 / 设置」挤到屏幕外。
+            ★ 是【隐藏】不是 v-if —— 手机上窗口旋转、桌面端拖窗口都会实时跨越断点，
+              v-if 每次都要销毁重建按钮，而这里藏起来的代价是零。
+        -->
+        <el-button
+          class="nav-arrow"
+          link
+          :disabled="!prevChapter"
+          @click="gotoChapter(prevChapter?.id)"
+        >
           上一章
         </el-button>
-        <el-button link :disabled="!nextChapter" @click="gotoChapter(nextChapter?.id)">
+        <el-button
+          class="nav-arrow"
+          link
+          :disabled="!nextChapter"
+          @click="gotoChapter(nextChapter?.id)"
+        >
           下一章
         </el-button>
         <el-button link @click="catalogVisible = true">目录</el-button>
+        <!-- ★ 章评的入口。放在「目录」旁边：这两个都是「打开一个面板」，同一类东西 -->
+        <el-button link @click="commentVisible = true">本章说</el-button>
 
         <!--
           ★ 阅读设置用 el-popover 而不是 el-drawer：它只有三个选项、
@@ -481,7 +682,23 @@ watch(chapterId, async (newId, oldId) => {
     </header>
 
     <!-- ============ 正文（独立滚动容器） ============ -->
-    <main ref="scrollerRef" v-loading="loading" class="scroller" @scroll.passive="onScroll">
+    <!--
+      ★ 左右滑动翻章绑在【滚动容器】上，不是根节点 `div.reader`：
+        滑动是「在正文上划」的手势，绑在根上会把顶栏也圈进来
+        （在工具条上划一下也会翻章，而那里没有「正文」这个语境）。
+      ★ `touchstart` 用 `.passive`：它只记一个坐标，不阻止任何默认行为。
+        写成非 passive 的话，浏览器为了等我们的处理结果，
+        **每一次触摸开头都不能立刻开始滚动** —— 手机上表现为「滚动起步发涩」。
+        而 `touchend` 不需要 passive（那时滚动早就结束了）。
+    -->
+    <main
+      ref="scrollerRef"
+      v-loading="loading"
+      class="scroller"
+      @scroll.passive="onScroll"
+      @touchstart.passive="onTouchStart"
+      @touchend="onTouchEnd"
+    >
       <article v-if="chapter" class="article">
         <h1 class="chapter-title">{{ chapter.title }}</h1>
         <!--
@@ -536,6 +753,33 @@ watch(chapterId, async (newId, oldId) => {
 
         <el-empty v-if="!chapters.length" description="暂无目录" :image-size="60" />
       </div>
+    </el-drawer>
+
+    <!--
+      ★★ 章评抽屉（P6 加）。**必须理解为什么是抽屉、而不是放进正文下面** ——
+         P3 定死的两条会被它同时打破：
+
+      ① **进度百分比**。`currentPercent()` 的分母是
+         `scroller.scrollHeight - scroller.clientHeight`（见那个函数的注释）。
+         评论列表一旦渲染在 `<main>` **里面**，scrollHeight 立刻变大一大截，
+         于是「刚打开这一章、还没滚」就已经显示读了 30%，
+         滚到正文末尾也到不了 100%。
+         ★★ 更隐蔽的是：它**不会报错**，只是「继续阅读」每次跳的位置
+         都比上次靠后一点 —— 因为进度被一点点记大了。
+      ② **正文变成了不是最后一屏**。`.chapter-nav` 的「下一章」是读完一章
+         的落点，评论列表插在它后面的话，那个按钮就跑到屏幕外面去了。
+
+      → 抽屉是 `position: fixed` + 遮罩，**不改变 `<main>` 的任何尺寸**，
+        这两个问题一起消失。而且它和上面「目录」是同一个模式（`el-drawer`），
+        读者不需要学两种交互。
+
+      ★ `chapter-id` 传的是路由上的那一章 —— 翻章时这个 prop 变，
+        `CommentSection` 内部 watch 到之后自己重查，本页不用管。
+      ★ 抽屉内容在**第一次打开时**才挂载（el-drawer 的行为），
+        所以不打开就不发请求 —— 每翻一章都拉一次评论是纯浪费。
+    -->
+    <el-drawer v-model="commentVisible" title="本章说" size="60%" direction="btt">
+      <CommentSection :novel-id="novelId" :chapter-id="chapterId" />
     </el-drawer>
   </div>
 </template>
@@ -726,5 +970,70 @@ watch(chapterId, async (newId, oldId) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ==================== 窄屏（P6 S15） ==================== */
+
+/*
+ * ★★ 断点 900px 与 `composables/useMediaQuery.js` 的 `NARROW` 是同一个数
+ *   （那里解释了这个数字是怎么量出来的）。CSS 读不到那个常量，
+ *   改的时候两边一起改。
+ *
+ * ★★ 这一段修的是一个**比它看起来严重得多**的问题。
+ *   改之前，375px 下这一页横向溢出 134px —— 而溢出的后果不只是「有条横向滚动条」：
+ *
+ *   在手机的移动端模式下，`<meta name="viewport" content="width=device-width">`
+ *   给出的**布局视口会跟着内容一起被撑宽**（Chrome 的 initial containing block
+ *   按内容宽度算）。于是 `window.innerWidth` 变成 509 而不是 375，
+ *   而 `position: fixed` 的元素是相对【布局视口】定位的 ——
+ *   目录抽屉、设置气泡、确认框全部**整体偏到屏幕右边去**，
+ *   看起来像「抽屉的定位写错了」。
+ *
+ *   ★ 这一点值得记下来：那几个浮层的 bug 是**症状不是病因**。
+ *     单独去调抽屉的 `right`/`transform` 能「修好」它在 375 下的样子，
+ *     但换个宽度又错，而且真正的问题（顶栏溢出）一直还在。
+ */
+@media (max-width: 900px) {
+  /*
+   * ★ 顶栏从 `padding: 0 20px` 收到 10px，并允许左边被压缩。
+   *   `.left` 里是「← 返回」+ 书名，书名是 `max-width: 320px` 的死宽 ——
+   *   375px 的屏幕上，光它加上右边那排按钮就已经放不下了。
+   */
+  .toolbar {
+    padding: 0 10px;
+    gap: 8px;
+  }
+
+  .left {
+    /* ★ `min-width: 0` 是让 flex 子项【真的能被压到比内容窄】的唯一办法：
+       flex 项的默认 `min-width` 是 `auto`（= 内容的宽度），
+       不写这行，下面 `.book-title` 的省略号永远不会出现，只会一直往外顶。 */
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  /*
+   * ★ 书名从「最多 320px」改成「能占多少占多少、不够就省略」。
+   *   320px 是宽屏下「别把按钮挤走」的上限，窄屏没有这个余量可留。
+   */
+  .book-title {
+    max-width: none;
+    min-width: 0;
+  }
+
+  /* ★ 正文两侧留白收窄，把宽度还给文字（手机上每行能多放两个字） */
+  .scroller {
+    padding: 20px 12px 48px;
+  }
+
+  /*
+   * ★★ 顶栏这两个「上一章 / 下一章」收掉 —— 正文末尾的 `.chapter-nav`
+   *   已经有一组同样功能的按钮，而且那一组更大、更好点。
+   *   留着它们会把「目录 / 本章说 / 设置」挤到屏幕外面去，
+   *   而那两个是**只有这里才有**的入口：挤没了就真的没有别的路进去了。
+   */
+  .nav-arrow {
+    display: none;
+  }
 }
 </style>

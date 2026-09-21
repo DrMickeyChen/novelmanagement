@@ -19,7 +19,12 @@
  * 「这本书能不能过」很大程度取决于**它的章节审得怎么样了**：
  * 一本章节全是「草稿」的书，作品审核通过后读者进来只有一个空目录 ——
  * 上架了等于没上架。所以章节列表不能省，且**必须带状态标签**。
- * （`NovelDetailVO.chapters` 里带着状态，见 `api/novel.js` 的说明。）
+ *
+ * ★★ **P6 起目录是【单独一个 prop】**，不再从 `novel.chapters` 里读 ——
+ * 详情接口不再返回目录了（见 `api/novel.js` 的 `getNovelCatalog`）。
+ * 所以三个调用方都要**并行发两个请求**，然后 `:novel="detail" :chapters="chapters"`。
+ * ★ 这是有意的：让「目录为空的空态」只在一种情况下出现（真的没章节），
+ * 而不是「调用方忘了传」也长得一模一样。
  *
  * ============================================================
  * ★★ 「上次驳回理由」必须显示
@@ -34,10 +39,15 @@ import { chapterStatusType, novelStatusType } from '@/utils/status'
 defineProps({
   /**
    * `NovelDetailVO`（**不是** `NovelVO`）。
-   * ★ 必须是详情：`NovelVO` 里没有 `intro` / `tags` / `auditRemark` / `chapters`，
+   * ★ 必须是详情：`NovelVO` 里没有 `intro` / `tags` / `auditRemark`，
    *   而这几样恰恰是这个组件要显示的全部内容。
    */
   novel: { type: Object, default: null },
+  /**
+   * 目录，来自 `getNovelCatalog`（**含全部状态、不分页**）。
+   * ★ 和 `novel` 是两个请求的结果，不是从 `novel` 里取出来的 —— 见文件头。
+   */
+  chapters: { type: Array, default: () => [] },
 })
 </script>
 
@@ -61,7 +71,7 @@ defineProps({
         {{ novel.statusDesc }}
       </el-tag>
       <span class="field-label">
-        共 {{ novel.chapters?.length || 0 }} 章 · {{ formatWordCount(novel.wordCount) }}
+        共 {{ chapters.length }} 章 · {{ formatWordCount(novel.wordCount) }}
       </span>
     </div>
 
@@ -79,14 +89,14 @@ defineProps({
       <span class="field-label">目录</span>
     </div>
     <div class="chapter-list">
-      <div v-for="c in novel.chapters" :key="c.id" class="chapter-row">
+      <div v-for="c in chapters" :key="c.id" class="chapter-row">
         <span class="chapter-no">第 {{ c.chapterNo }} 章</span>
         <span class="chapter-title">{{ c.title }}</span>
         <el-tag :type="chapterStatusType(c.status)" size="small">
           {{ c.statusDesc }}
         </el-tag>
       </div>
-      <div v-if="!novel.chapters?.length" class="chapter-empty">
+      <div v-if="!chapters.length" class="chapter-empty">
         这本书还没有章节 —— 通过审核后读者进来会是一个空目录
       </div>
     </div>

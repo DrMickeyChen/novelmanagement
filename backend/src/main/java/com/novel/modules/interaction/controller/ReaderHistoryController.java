@@ -1,8 +1,10 @@
 package com.novel.modules.interaction.controller;
 
+import com.novel.common.result.PageResult;
 import com.novel.common.result.Result;
 import com.novel.modules.interaction.dto.HistoryReportDTO;
 import com.novel.modules.interaction.service.HistoryService;
+import com.novel.modules.interaction.vo.ReadHistoryItemVO;
 import com.novel.modules.interaction.vo.ReadHistoryVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -14,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -77,6 +80,38 @@ public class ReaderHistoryController {
     public Result<Void> report(@Valid @RequestBody HistoryReportDTO dto) {
         historyService.report(dto);
         return Result.success("已记录", null);
+    }
+
+    @Operation(
+            summary = "我的阅读历史",
+            description = """
+                    按**最后阅读时间倒序**返回（同秒按 id 兜底，否则翻页顺序会跳）。
+
+                    ★ 每一行带书名 / 封面 / 作者 / 分类，以及
+                    `chapterNo` + `chapterTitle` + `progress` ——
+                    光有 novelId 的列表页是渲染不出来的，而让前端逐个去查
+                    就是 N+1 搬到了浏览器里。
+
+                    **★★ `available: false` 是合法状态**：这本书已经下架或被删了，
+                    于是 `title` / `cover` 等字段**整个 key 消失**
+                    （全局 `default-property-inclusion: non_null`），
+                    只剩 `novelId` / `progress` / `updateTime`。
+                    渲染成「已下架」而不是把这一行删掉。
+
+                    ★ `chapterId` 与 `chapterNo` / `chapterTitle` **同生共死**：
+                    读过的章节后来被作者撤回了，三个一起消失。
+
+                    ★ **刻意不复用 `GET /api/reader/history/{novelId}`** ——
+                    那是阅读器每次上报进度后都要调的接口，
+                    给它加这三个字段就是每本书一次查询的开销，
+                    而阅读器一个都用不上。
+
+                    **★ 需要登录。**""")
+    @GetMapping
+    public Result<PageResult<ReadHistoryItemVO>> myPage(
+            @Parameter(description = "页码，从 1 开始") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，上限 100") @RequestParam(defaultValue = "20") long size) {
+        return Result.success(historyService.myPage(page, size));
     }
 
     @Operation(

@@ -4,16 +4,22 @@ import com.novel.common.enums.CommentStatus;
 import com.novel.common.result.PageResult;
 import com.novel.modules.interaction.dto.CommentAuditDTO;
 import com.novel.modules.interaction.dto.CommentCreateDTO;
+import com.novel.modules.interaction.dto.CommentReplyDTO;
 import com.novel.modules.interaction.vo.CommentVO;
 
 /**
  * 评论服务。<b>读者侧和管理侧共用一个接口</b> —— 它们操作的是同一张表、
  * 同一套状态机，拆成两个接口只会让「改状态」那段逻辑有两个入口。
  *
- * <p><b>★★ 六个方法分成两组，分界线是「谁在调」：</b>
+ * <p><b>★★ 十个方法分成两组，分界线是「谁在调」：</b>
  * <pre>
- *   读者侧（{@code ReaderCommentController}，前四个）
+ *   读者侧（{@code ReaderCommentController}，前八个）
  *     userId 一律取自 {@code UserContext}，方法签名里【没有】userId 参数
+ *     ★ P6 补了四个：章评列表 / 发章评 / 回复 / 展开回复。
+ *     书评和章评是【两个方法】、不是给已有那个加一个 targetType 参数 ——
+ *     参数化的版本里，「把 chapterId 传进 novelId 那个位置」是编译器
+ *     完全看不出来的错误（两个都是 Long），写出来能编译、能跑、
+ *     只是永远查不到东西。
  *   管理侧（{@code AdminCommentController}，后两个）
  *     管理员审的就是别人的评论，所以不做归属校验 ——
  *     但【也不接受】调用方指定的 userId，审核人同样从 {@code UserContext} 取
@@ -54,6 +60,23 @@ public interface CommentService {
     PageResult<CommentVO> readerPage(Long novelId, long page, long size);
 
     /**
+     * 某一章的章评列表（分页），<b>只返回已显示的</b>，每条一级评论带
+     * 最多 3 条二级回复和回复总数。
+     *
+     * <p><b>★ 和 {@link #readerPage} 是两条独立的方法，理由见类注释。</b>
+     *
+     * <p><b>★ 也刻意【不校验】章节是否存在 / 是否发布</b> —— 一字不差地
+     * 照搬 {@link #readerPage} 的理由：可见性写在 WHERE 里已经够了，
+     * 而「3001 章节不存在」和「空列表」的差别对匿名调用者就是一份
+     * 「某个 chapterId 真不真」的探针。★ 但<b>写入</b>（{@link #createChapterComment}）
+     * 必须校验 —— 那才是有判据差别的那个方向：只读不校验没有代价，
+     * 写入不校验就能给任意 id 造数据。
+     *
+     * @param chapterId 章节 id（章评的 {@code target_id}）
+     */
+    PageResult<CommentVO> chapterReaderPage(Long chapterId, long page, long size);
+
+    /**
      * 发表评论。<b>落库状态恒为「待审核」</b>，读者看不到自己刚发的评论。
      *
      * <p><b>★ 有 10 秒频控</b>，同一用户 10 秒内第二次调用返回
@@ -67,6 +90,59 @@ public interface CommentService {
     Long create(Long novelId, CommentCreateDTO dto);
 
     /**
+     * 发表章评。<b>和 {@link #create} 共用同一个 10 秒频控</b> ——
+     * 两个接口是同一个「发评论」动作，各限各的等于额度翻倍。
+     *
+     * <p><b>★ 校验比发书评多两道（缺一不可）：</b>
+     * 作品已上架 → 章节属于这本书 → 章节已发布。
+     * 只按 {@code chapterId} 查的话，把 {@code chapterId} 换成别的书的章节
+     * 就能给一本完全无关的书刷评论。三道校验的顺序和返回码
+     * 逐字照抄 {@code HistoryServiceImpl#report}（同一个场景，不该有两套说法）。
+     *
+     * @param chapterId 章节 id，来自 URL 路径
+     * @return 新评论的 id
+     */
+    Long createChapterComment(Long novelId, Long chapterId, CommentCreateDTO dto);
+
+    /**
+     * 回复一条一级评论（<b>只支持两级</b>）。
+     *
+     * <p><b>★★ {@code targetType} / {@code targetId} 从父评论【继承】，不从参数传。</b>
+     * 回复一条书评和回复一条章评，在库里唯一的区别就是这个字段 ——
+     * 让调用方自己填，就必然出现「父是书评、子填了章评」这种自相矛盾的行，
+     * 而它在列表里<b>表现为这条回复干脆不出现</b>（查询按 target 过滤）。
+     *
+     * <p><b>★ 回复一条回复返回 {@code COMMENT_REPLY_NOT_ALLOWED(4006)}</b>，
+     * 不静默挂到祖父下面。三级回复要做「回复 @某人」前缀和递归渲染，
+     * 产品价值远小于成本，而<b>静默展平比明确拒绝更难解释</b>：
+     * 用户明明回复的是 B，界面上却挂在 A 下面。
+     *
+     * <p><b>★ 不重新校验「作品已上架」</b>：父评论必须是「已显示」的，
+     * 而那是管理员审过的 —— 目标在那一刻是合法的，而回复够不到
+     * 一个没有任何评论指向的 id，所以它没法用来造数据。
+     * （对照 {@link #createChapterComment}：那个的 target 直接来自 URL。）
+     *
+     * @param parentId 父评论 id
+     * @param dto      只有正文，<b>没有 score</b> —— 回复打分会让
+     *                 {@code novel.score} 被「嗯」「+1」这类回复反复稀释
+     */
+    Long reply(Long parentId, CommentReplyDTO dto);
+
+    /**
+     * 展开某条一级评论的全部二级回复（分页）。
+     *
+     * <p><b>★ 列表接口最多内联 3 条，这一条才是「还有 5 条回复」的去处。</b>
+     * 没有它，前端只能假装那 3 条就是全部（而 {@code replyCount} 又说不是）。
+     *
+     * <p>★ 排序按 <b>id 正序</b>（从早到晚），和一级评论列表的倒序相反 ——
+     * 一级评论是「最新的内容最值得看」，回复是一段对话，正着读才对。
+     *
+     * @param commentId 一级评论 id。★ 传一条二级回复的 id 会返回空列表，
+     *                  不是报错（它确实没有回复）
+     */
+    PageResult<CommentVO> replyPage(Long commentId, long page, long size);
+
+    /**
      * 点赞。<b>幂等</b> —— 同一个人对同一条评论点第二次不会重复计数，
      * 仍返回成功和当前的点赞总数（用户意图和第一次相同）。
      *
@@ -74,6 +150,26 @@ public interface CommentService {
      * @return 点赞之后的总数，供前端直接更新按钮上的数字
      */
     int like(Long commentId);
+
+    /**
+     * 取消点赞（幂等）。<b>返回取消之后的总数。</b>
+     *
+     * <p><b>★ 和 {@link #like} 对称，但幂等的方向相反：</b>
+     * 「取消一条本来就没赞过的」是<b>成功</b>，不报错 ——
+     * 用户的意图是「让它变成未赞」，而它已经是了。
+     *
+     * <p><b>★★ 不需要判「这条评论是不是我的」。</b>
+     * Set 的成员是 userId，取消时删的只能是自己的那个成员，
+     * 天然安全 —— 这一点和 {@link #delete}（必须判归属）不一样。
+     *
+     * <p><b>★ 计数是【重算】的，不是 -1：</b>
+     * {@code like_count} 是 Set 基数的投影。Redis 的 Set 丢过一次之后，
+     * 两者会分叉，而 -1 会把这个分叉原样保留下去。重算的代价是
+     * 「数字可能变小」—— 那是修复，不是错误。见实现类里的完整论证。
+     *
+     * @return 取消之后的点赞总数（不会为负）
+     */
+    int unlike(Long commentId);
 
     /**
      * 删除自己的评论（逻辑删）。

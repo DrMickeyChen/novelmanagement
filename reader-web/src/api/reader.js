@@ -7,7 +7,10 @@
  * ★ 路径前缀 `/api/reader/**` 是约定：**会落用户数据的写接口都放这里**。
  *   免登录的 `/api/novels/**` 下只允许「不写用户数据」的接口
  *   （唯一的例外是阅读量埋点，它只动一个 Redis 计数器）。
- *   以后加书架、评论、点赞，都加到这个文件里。
+ *
+ * ★ P6 加了书架和个人资料，它们**各自开了新文件**（`api/shelf.js` /
+ *   `api/profile.js`）而不是堆进这里 —— 前缀约定管的是权限口径，
+ *   不是「必须写在同一个文件里」。这个文件继续只管阅读进度这一件事。
  */
 import request from '@/utils/request'
 
@@ -52,4 +55,30 @@ export function reportProgress(data) {
  */
 export function getProgress(novelId) {
   return request.get(`/reader/history/${novelId}`, { silent: true })
+}
+
+/**
+ * 我的阅读历史（分页）。
+ *
+ * @param {{page?: number, size?: number}} params
+ * @returns {Promise<{records: Array, total: number, current: number, size: number}>}
+ *
+ * ★★ 和上面 `getProgress` 【同源不同接口，刻意不合并】：
+ *   这个返回 `ReadHistoryItemVO`（带书名/封面/章名），
+ *   上面那个返回 `ReadHistoryVO`（只有 novelId + 进度）。
+ *   合并的话，阅读器**每次滚动上报之后**都要为这三个字段多付一次查询，
+ *   而它一个都用不上 —— 后端 `ReadHistoryVO` 的注释把这条写死了。
+ *
+ * ★ 排序是**最后阅读时间倒序**（同秒按 id 兜底）。
+ *   和书架页不同：这里重读同一本书会把它**顶到最上面**，
+ *   因为这一页回答的是「我最近在读什么」。
+ *
+ * ★★ `available === false` 同样是合法状态，接法见 `api/shelf.js`
+ *   的 `getShelfList`（规则一字不差，那边写得全）。
+ *
+ * ★ 这个接口【不带 silent】—— 它是用户主动打开的一页，
+ *   401 就该按默认处理（提示 + 跳登录），和滚动上报那种后台请求不是一回事。
+ */
+export function getHistoryList(params) {
+  return request.get('/reader/history', { params })
 }

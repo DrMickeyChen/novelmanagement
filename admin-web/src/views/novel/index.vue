@@ -32,7 +32,7 @@
  */
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { getNovelPage, getNovelDetail, changeNovelStatus } from '@/api/novel'
+import { getNovelPage, getNovelDetail, getNovelCatalog, changeNovelStatus } from '@/api/novel'
 import { getCategoryList } from '@/api/category'
 import { usePagedList } from '@/composables/usePagedList'
 import { formatWordCount, formatDateTime } from '@/utils/format'
@@ -109,6 +109,8 @@ function reset() {
 const detailVisible = ref(false)
 const detailLoading = ref(false)
 const detail = ref(null)
+/** 目录。★ P6 起详情不再带它了，是**另一个请求**（见 api/novel.js） */
+const detailChapters = ref([])
 
 /**
  * ★ 先开弹窗、再拉数据（`v-loading` 顶住中间那段）。
@@ -118,6 +120,7 @@ const detail = ref(null)
  */
 function openDetail(row) {
   detail.value = null
+  detailChapters.value = []
   detailVisible.value = true
   loadDetail(row.id)
 }
@@ -125,7 +128,10 @@ function openDetail(row) {
 async function loadDetail(id) {
   detailLoading.value = true
   try {
-    detail.value = await getNovelDetail(id)
+    // ★ 详情和目录并发；任一失败都算失败（两个接口的错误码本来就一样）
+    const [d, chapters] = await Promise.all([getNovelDetail(id), getNovelCatalog(id)])
+    detail.value = d
+    detailChapters.value = chapters ?? []
   } catch {
     // 拦截器已提示（2001 不存在）。★ 关掉弹窗 —— 里面没有任何东西可看
     detailVisible.value = false
@@ -299,7 +305,7 @@ async function doChangeStatus(row, target) {
     <!-- ==================== 详情弹窗（只读，和审核弹窗不是一回事） ==================== -->
     <el-dialog v-model="detailVisible" title="作品详情" width="760px" top="6vh">
       <div v-loading="detailLoading" class="detail-body">
-        <NovelPreview :novel="detail" />
+        <NovelPreview :novel="detail" :chapters="detailChapters" />
       </div>
     </el-dialog>
   </div>

@@ -6,7 +6,9 @@ import com.novel.common.result.Result;
 import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelService;
 import com.novel.modules.content.service.NovelViewCounter;
+import com.novel.modules.content.vo.ChapterBriefVO;
 import com.novel.modules.content.vo.ChapterDetailVO;
+import com.novel.modules.content.vo.ChapterVO;
 import com.novel.modules.content.vo.NovelDetailVO;
 import com.novel.modules.content.vo.NovelVO;
 import io.swagger.v3.oas.annotations.Operation;
@@ -129,9 +131,14 @@ public class ReaderNovelController {
     }
 
     @Operation(
-            summary = "作品详情（含目录）",
+            summary = "作品详情",
             description = """
-                    目录**只列已发布的章节** —— 草稿章、待审章、被驳回的章都不会出现。
+                    ★ **P6 起不再返回 `chapters`** —— 目录改成独立的分页接口
+                    `GET /api/novels/{id}/chapters`，翻页浏览目录请调那一个。
+                    详情里只给 `firstChapterId`，够「开始阅读」按钮用。
+
+                    改动理由：几百章的书每打开一次详情就要拖回全部章节，
+                    而详情页是**匿名、高频**的浏览入口。
 
                     ★ **刻意不区分「作品不存在」和「作品未上架」，两者都返回 `2001`。**
                     否则匿名调用者可以靠错误码的差别枚举出「哪些 id 是真实存在的书」——
@@ -143,6 +150,57 @@ public class ReaderNovelController {
     @GetMapping("/{id}")
     public Result<NovelDetailVO> detail(@PathVariable Long id) {
         return Result.success(novelService.readerDetail(id));
+    }
+
+    @Operation(
+            summary = "作品目录（分页）",
+            description = """
+                    详情页的目录用这个接口翻页。**只列已发布的章节** ——
+                    草稿章、待审章、被驳回的章都不会出现。
+
+                    按 `chapterNo` **正序**（第 1 章在最前），这是读目录的顺序；
+                    分页参数 `page` / `size` 走 `buildPage` 兜底（`size` 夹到 1~100）。
+
+                    ★ `total` 就是这本书的**已发布章节数**，前端显示「共 N 章」用它，
+                    **不要**再回详情接口要一个章节总数 —— 那个数会在两个地方各维护一遍。
+
+                    ★ **作品不存在 / 未上架返回 `2001`**，和详情接口一字不差
+                    （理由见上）。目录接口不该变成「这个 novelId 真不真」的探针。
+
+                    **无需登录。**""")
+    @GetMapping("/{id}/chapters")
+    public Result<PageResult<ChapterVO>> chapters(
+            @PathVariable Long id,
+            @Parameter(description = "页码，从 1 开始") @RequestParam(defaultValue = "1") long page,
+            @Parameter(description = "每页条数，1~100") @RequestParam(defaultValue = "20") long size) {
+
+        return Result.success(novelService.chapterPage(id, page, size));
+    }
+
+    @Operation(
+            summary = "作品目录全量（精简）",
+            description = """
+                    ★ **这个接口是给阅读器用的，不是详情页用的。**
+
+                    阅读器和详情页要的目录**不是同一种东西**：
+                    详情页是「翻页浏览」（分页），而阅读器要回答的是
+                    「我在第几章、前后各是哪一章」—— 它需要**整条有序列表**，
+                    分页给不了（下一页的那一章是不是紧邻的，分页接口不知道）。
+
+                    所以这里返回全量，但**只有 `id` / `chapterNo` / `title`**，
+                    一条 40 字节左右。`ChapterVO` 那些 `status` / `wordCount` /
+                    `novelTitle` 对阅读器的目录抽屉没有意义。
+
+                    ★ **和上面的分页接口不是重复的，别合并**：合并的话，
+                    要么阅读器得翻 N 页才拼得出上一章/下一章，
+                    要么详情页得拖回整本目录 —— 两个方向的代价都比多一个接口大。
+
+                    只列已发布的章节；作品不存在 / 未上架返回 `2001`。
+
+                    **无需登录。**""")
+    @GetMapping("/{id}/catalog")
+    public Result<List<ChapterBriefVO>> catalog(@PathVariable Long id) {
+        return Result.success(novelService.catalog(id));
     }
 
     @Operation(

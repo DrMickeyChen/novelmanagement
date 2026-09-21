@@ -36,8 +36,16 @@ import request from '@/utils/request'
  *   （★ 传 `null` 而不是空串。axios 会跳过 null/undefined 参数，
  *     正好对上后端「不传 = 全部」；传空串会变成 `?status=`，
  *     后端把空串转 Integer 会失败）
- * @param {number} [params.novelId] 只看某本书的评论。★ 只筛**书评**
- *   （后端在 SQL 里带了 `target_type = 1`）—— 章评 P5 没有写入路径
+ *   ★ 页面默认传 `0`（待审核），见 views/comment/index.vue 的文件头
+ * @param {number} [params.novelId] 只看某本书的评论。
+ *   ★★ **P6 起它筛的是「这本书的书评 + 它全部章节的章评」**，不再只有书评。
+ *   实现是 `NovelCommentMapper#selectAdminPage` 里那个 OR 子查询：
+ *   `(target_type=1 AND target_id=novelId)` **或**
+ *   `(target_type=2 AND target_id IN (SELECT id FROM chapter WHERE novel_id=novelId))`。
+ *   ★ 不能简化成 `target_id = novelId` —— 章评的 `target_id` 是 chapterId，
+ *   和作品 id 是两个独立的 id 空间，撞号是常态。
+ *   这个参数名保持 `novelId` 不变（页面上也是「作品 id」），
+ *   因为管理员的心智模型就是「这本书的评论」，不是「这个 target」
  * @param {string} [params.keyword] 正文模糊匹配
  * @param {number} [params.page]
  * @param {number} [params.size] 上限 100（后端 PaginationInnerInterceptor 夹的）
@@ -48,6 +56,11 @@ import request from '@/utils/request'
  *     不显示的话，已删除的评论和正常评论看起来一模一样。
  *   ★ `nickname` 为空时**整个 key 会消失**（全局 non_null），
  *     写 `row.nickname ?? '已注销用户'`，不要写 `=== null`。
+ *   ★ 带 `targetType`（1 书评 / 2 章评）+ `targetId` + `targetTypeDesc`（中文）。
+ *     **`novelId` 这个字段 P6 已经没有了** —— 它被上面三个取代，
+ *     理由见 CommentVO 的字段注释（一个有时装作品 id、有时装章节 id 的字段，
+ *     前端 `if (row.novelId)` 会在章评那半行上静默跳过）。
+ *     ★ `targetTypeDesc` 只有**管理端视图**才填，别指望读者端接口也返回它。
  */
 export function getCommentPage(params) {
   return request.get('/admin/comments', { params })

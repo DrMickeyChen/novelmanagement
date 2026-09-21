@@ -5,6 +5,7 @@ import com.novel.modules.content.entity.Novel;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
@@ -110,6 +111,22 @@ public class NovelVO {
     private Integer isFinish;
 
     /**
+     * 评分（书评平均分，1 位小数）。<b>冗余列，由 {@code novel_comment} 重算而来。</b>
+     *
+     * <p><b>★ {@code 0} 的意思是「还没有人评分」，不是「0 分」。</b>
+     * 列是 {@code NOT NULL DEFAULT 0.0}，所以没有第二个值可以表达「无」——
+     * 前端必须写 {@code score > 0 ? 显示星星 : 显示「暂无评分」}，
+     * <b>不要直接渲染 0 星</b>：那是在说「这本书被评了 0 分」，
+     * 而 0 分是打不出来的（{@code CommentCreateDTO} 的评分最小是 1）。
+     *
+     * <p>★ <b>不在 {@code NovelBriefVO} 里</b>：列表页（首页/榜单/搜索）
+     * 不显示评分，给它加一列只会让那几条查询多算一个用不上的值。
+     * 详情页要，所以放在这一层 —— 它是 {@code NovelDetailVO} 的父类。
+     */
+    @Schema(description = "评分（书评平均分）。0 表示暂无评分", example = "4.3")
+    private BigDecimal score;
+
+    /**
      * 最后更新时间 —— 取的是<b>最新一个已发布章节</b>的发布时间，
      * 不是 {@code novel.update_time}（那是「这一行记录最后被改的时间」，
      * 管理端改个分类也会变，拿它排「最近更新」会排出一堆假更新）。
@@ -168,6 +185,7 @@ public class NovelVO {
         this.setWordCount(entity.getWordCount());
         this.setViewCount(entity.getViewCount());
         this.setIsFinish(entity.getIsFinish());
+        this.setScore(entity.getScore());
         this.setLastUpdateTime(entity.getLastUpdateTime());
     }
 }

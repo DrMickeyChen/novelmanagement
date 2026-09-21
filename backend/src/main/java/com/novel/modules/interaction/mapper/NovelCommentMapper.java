@@ -7,10 +7,14 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.math.BigDecimal;
+
 /**
  * 评论 Mapper。
  *
- * <p>四个方法里只有一个手写 SQL（{@link #selectAdminPage}），其余走 {@code BaseMapper}。
+ * <p>手写 SQL 的只有三条：{@link #selectAdminPage}（要看得见已删除的）、
+ * {@link #selectByIdIncludingDeleted}（要分辨「已删除」和「不存在」）、
+ * {@link #avgScoreOfNovel}（聚合），其余走 {@code BaseMapper}。
  * 这样安排是为了让「哪一条查询不受 {@code @TableLogic} 保护」这件事
  * <b>一眼可见</b> —— 手写 SQL 在本项目里是有含义的，不是随手写的。
  *
@@ -41,6 +45,9 @@ public interface NovelCommentMapper extends BaseMapper<NovelComment> {
      * 「查的是正常数据、但忘了补」。这里方向正好相反：查到已删除的行<b>就是需求本身</b>。
      * 读到这里的人请先确认这一点，再决定要不要「顺手补上」——
      * 补上不会报错，只会让这个接口悄悄退化成和 MP 自动生成的一模一样。
+     * <p>★ 唯一的例外是下面那个「待审核」分支，它<b>必须</b>补 {@code deleted = 0}，
+     * 理由见那段 {@code <if>} 上的注释。别把这两处看成自相矛盾：
+     * 一处是<b>检索</b>（要能找到），一处是<b>队列</b>（要能处理）。
      *
      * <p><b>★ 关于 {@code <script>}：</b>三个筛选条件都可选，用
      * {@code <script>} 让 MyBatis 按 XML 的方式拼动态 SQL（这是它给注解方式留的口子）。
@@ -58,16 +65,29 @@ public interface NovelCommentMapper extends BaseMapper<NovelComment> {
      * 它存的是「评论挂在谁身上」：{@code target_type = 1} 时是作品 id，
      * {@code = 2} 时是章节 id（见建表语句的
      * {@code target_type '1书评 2章评'} 与 {@code target_id 'novel_id 或 chapter_id'}）。
-     * <p>这两个条件必须<b>一起</b>写，缺了 {@code target_type = 1} 的话，
-     * 「作品 105 的评论」会把「章节 105 的章评」一起捞出来 ——
-     * 而两边的 id 空间是独立的，撞号是常态，且<b>结果看起来完全正常</b>
-     * （就是多了几条不相干的评论）。
-     * <p>顺带：条件顺序和索引 {@code idx_target (target_type, target_id, status)}
-     * 的前缀一致，所以这个筛选是走索引的，不是全表扫。
      * <p>★ 这个坑是 S9 验收时真的踩到的：写成了 {@code novel_id = #{novelId}}，
      * MySQL 报 {@code Unknown column 'novel_id'} → 接口 500。
      * 而<b>不带这个筛选条件时一切正常</b>（另外两条查询都没问题），
      * 所以只有「按作品筛」这一个入口会挂。
+     *
+     * <p><b>★★ P6 加章评时这里必须跟着改，否则「按作品筛」会静默少一半。</b>
+     * 章评的 {@code target_id} 是 <b>chapterId</b>，和作品 id 是两个独立的
+     * id 空间、撞号是常态，所以不能简单地写成「{@code target_id = novelId}」——
+     * 那会把「章节 105 的章评」当成「作品 105 的评论」捞出来。
+     * 现在的条件是两项相或：书评直接比 target_id，章评要先从
+     * {@code chapter} 里把这本作品的章节 id 捞出来。
+     * <p>★ <b>子查询【刻意】不写 {@code deleted = 0}</b>（手写 SQL，
+     * {@code @TableLogic} 在这里完全不生效，写不写全看这一行的意图）。
+     * 理由和外面那条「故意不滤评论的 deleted」是同一个取向：
+     * 「这本书的评论」问的是<b>这本书曾经有过哪些评论</b>，
+     * 章节被作者删掉之后那些章评仍然属于这本书 ——
+     * 而管理员打开这个筛选，往往正是要查那些说不清来源的旧评论。
+     * <p>★ <b>少了整段 OR 的症状是「筛出来有东西，只是少了一半」</b>：
+     * 不报错、不空、条数还挺合理，除非有人特意去数，否则永远发现不了。
+     * 这是本模块最容易写错、且错了不报错的一处。
+     *
+     * <p>顺带：书评那一项的条件顺序和索引 {@code idx_target (target_type, target_id, status)}
+     * 的前缀一致，所以它仍然走索引；章评那一项走 {@code idx_novel_id}。
      *
      * <p><b>★ 按 {@code id} 倒序而不是 {@code create_time}：</b>
      * 同一秒里发出的两条评论用时间排是不稳定的，翻页时会出现
@@ -76,10 +96,10 @@ public interface NovelCommentMapper extends BaseMapper<NovelComment> {
      * 而且严格全序。
      *
      * @param page    分页参数。★ 必须是【第一个】参数，MP 靠它识别这是分页查询
-     * @param status  状态筛选，{@code null} = 全部（含已删除）
+     * @param status  状态筛选，{@code null} = 全部（含已删除）。
+     *                ★ 传 {@code 0}（待审核）时会**额外排除已删除的**，见那段 {@code <if>}
      * @param novelId 作品 id 筛选，{@code null} = 全部。
-     *                只筛<b>书评</b>（{@code target_type = 1}）—— 章评不参与，
-     *                理由见下面那条 ★★
+     *                <b>书评和这本书下面的章评都会返回</b> —— 见下面那条 ★★
      * @param keyword 正文关键词，{@code null} / 空串 = 不筛
      */
     @Select("""
@@ -87,8 +107,30 @@ public interface NovelCommentMapper extends BaseMapper<NovelComment> {
             SELECT * FROM novel_comment
             <where>
                 <if test="status != null"> AND status = #{status} </if>
+                <!--
+                  ★★ 「待审核」这一档必须额外滤掉已删除的（P6 S8 发现）。
+
+                  一条评论被评论人自己删掉时，它的 `status` 原封不动 ——
+                  「待审核时被作者反悔删掉」是完全正常的一条路径，
+                  于是这些行**永远留在待审队列里**，而且永远处理不了
+                  （审核走 selectById，对它们返回 4001，所以按钮是禁用的）。
+
+                 这不是检索视图，是**队列**：待审核的意思是「等着我处置」，
+                  而作者已经撤回的评论不等着任何人。检索视图是「全部状态」，
+                  那一档P5 定的「要能看到已删除的」照旧有效。
+
+                  ★ 少了这一行的症状：队列越用越脏，而脏行看起来和正常行一样，
+                  只是点了没反应（按钮禁用 + 悬浮说明能解释，但没人会去读）。
+                -->
+                <if test="status != null and status == 0"> AND deleted = 0 </if>
                 <if test="novelId != null">
-                    AND target_type = 1 AND target_id = #{novelId}
+                    AND (
+                        (target_type = 1 AND target_id = #{novelId})
+                        OR
+                        (target_type = 2 AND target_id IN (
+                            SELECT id FROM chapter WHERE novel_id = #{novelId}
+                        ))
+                    )
                 </if>
                 <if test="keyword != null and keyword != ''">
                     AND content LIKE CONCAT('%', #{keyword}, '%')
@@ -101,6 +143,27 @@ public interface NovelCommentMapper extends BaseMapper<NovelComment> {
                                         @Param("status") Integer status,
                                         @Param("novelId") Long novelId,
                                         @Param("keyword") String keyword);
+
+    /**
+     * 某本书的<b>平均分</b>，给 {@code novel.score} 用。没有可计分的书评时返回 {@code 0}。
+     *
+     * <p><b>★★ 四个条件一个都不能少</b>：
+     * {@code target_type = 1}（章评的 {@code target_id} 是 chapterId，和作品 id
+     * <b>是两个 id 空间、撞号是常态</b> —— 少了它就是「拿章节 105 的分养作品 105」）；
+     * {@code status = 1}（待审和被隐藏的书评不能加分）；{@code score IS NOT NULL}
+     * （书评可以不打分）；{@code deleted = 0}（手写 SQL，
+     * {@code @TableLogic} 在这里完全不生效 —— 漏了它，被删掉的书评会一直算在平均分里，
+     * 而<b>分数看起来永远合理</b>，除非有人特意删过一条带分的书评）。
+     *
+     * <p>★ {@code IFNULL} 不能省：一行都没匹配上时 {@code AVG} 返回 null，
+     * 而 {@code novel.score} 是 {@code NOT NULL DEFAULT 0.0}。
+     */
+    @Select("""
+            SELECT IFNULL(ROUND(AVG(score), 1), 0) FROM novel_comment
+            WHERE target_type = 1 AND target_id = #{novelId}
+              AND status = 1 AND score IS NOT NULL AND deleted = 0
+            """)
+    BigDecimal avgScoreOfNovel(@Param("novelId") Long novelId);
 
     /**
      * 按 id 取评论，<b>包括已被逻辑删除的</b>。

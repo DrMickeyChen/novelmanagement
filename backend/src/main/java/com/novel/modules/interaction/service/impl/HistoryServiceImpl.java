@@ -1,22 +1,32 @@
 package com.novel.modules.interaction.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.novel.common.constant.CommonConstant;
 import com.novel.common.exception.BusinessException;
+import com.novel.common.result.PageResult;
 import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.modules.content.entity.Chapter;
+import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelAccessGuard;
 import com.novel.modules.content.service.NovelService;
+import com.novel.modules.content.vo.ChapterBriefVO;
+import com.novel.modules.content.vo.NovelBriefVO;
 import com.novel.modules.interaction.dto.HistoryReportDTO;
 import com.novel.modules.interaction.entity.ReadHistory;
 import com.novel.modules.interaction.mapper.ReadHistoryMapper;
 import com.novel.modules.interaction.service.HistoryService;
+import com.novel.modules.interaction.vo.ReadHistoryItemVO;
 import com.novel.modules.interaction.vo.ReadHistoryVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * 阅读进度服务实现。
@@ -40,6 +50,9 @@ public class HistoryServiceImpl implements HistoryService {
      */
     private final NovelService novelService;
     private final NovelAccessGuard guard;
+
+    /** 列表要补章名，第三个「借一次」的跨模块调用，方向同上 */
+    private final ChapterService chapterService;
 
     @Override
     public void report(HistoryReportDTO dto) {
@@ -134,6 +147,65 @@ public class HistoryServiceImpl implements HistoryService {
 
         // row 为 null 是正常情况（这本书第一次读），返回 null 让 Controller 包成 code 200
         return ReadHistoryVO.of(row);
+    }
+
+    @Override
+    public PageResult<ReadHistoryItemVO> myPage(long page, long size) {
+        Long userId = UserContext.requireUserId();
+
+        Page<ReadHistory> result = readHistoryMapper.selectPage(buildPage(page, size),
+                new LambdaQueryWrapper<ReadHistory>()
+                        .eq(ReadHistory::getUserId, userId)
+                        /*
+                         * ★ 这个索引(idx_user_time)存在的唯一理由就是这条排序。
+                         *   P2 建表时它就没有任何查询在用 —— 这里终于用上了。
+                         */
+                        .orderByDesc(ReadHistory::getUpdateTime)
+                        /*
+                         * ★ id 兜底。update_time 是 DATETIME（秒精度），
+                         *   同一秒读完两本书排序值相同，而 MySQL 对相同排序值
+                         *   返回顺序不保证稳定 —— 现象是翻页时某条重复出现、
+                         *   另一条永远看不到。完整论证见 NovelServiceImpl#applyReaderSort。
+                         */
+                        .orderByDesc(ReadHistory::getId));
+
+        List<ReadHistory> rows = result.getRecords();
+        if (rows.isEmpty()) {
+            // ★ 提前返回，省掉后面两次批量查（新用户的历史页是空的，这是常态）
+            return new PageResult<>(List.of(), result.getTotal(),
+                    result.getCurrent(), result.getSize(), result.getPages());
+        }
+
+        /*
+         * ★★ 两次批量查，不是每行两次。
+         *   注意第二次查的是【章节】而不是「每本书的最新章」——
+         *   历史列表要显示的是「我读到哪」，那是 history.chapter_id，
+         *   和 novel.last_chapter_id（作品的最新章）是两个东西。
+         */
+        Map<Long, NovelBriefVO> briefs = novelService.briefsOf(
+                rows.stream().map(ReadHistory::getNovelId).toList());
+        Map<Long, ChapterBriefVO> chapters = chapterService.briefsOf(
+                rows.stream().map(ReadHistory::getChapterId).toList());
+
+        List<ReadHistoryItemVO> items = rows.stream()
+                .map(h -> ReadHistoryItemVO.of(h, briefs.get(h.getNovelId()),
+                        chapters.get(h.getChapterId())))
+                .toList();
+        return new PageResult<>(items, result.getTotal(),
+                result.getCurrent(), result.getSize(), result.getPages());
+    }
+
+    /**
+     * 分页对象 + 页码兜底。
+     *
+     * <p>★ 上限由 {@code MybatisPlusConfig} 的 {@code setMaxLimit(100)} 管；
+     * 下限必须在这里管 —— <b>MP 的分页插件在 {@code size < 0} 时不做分页，
+     * 会把整张表返回</b>（负数在 MP 里表示「不分页」）。
+     * 同 {@code ShelfServiceImpl#buildPage}。
+     */
+    private Page<ReadHistory> buildPage(long page, long size) {
+        return new Page<>(page < 1 ? 1 : page,
+                size < 1 ? CommonConstant.DEFAULT_PAGE_SIZE : size);
     }
 
     /**

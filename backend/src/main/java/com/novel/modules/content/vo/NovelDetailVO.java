@@ -7,12 +7,10 @@ import lombok.EqualsAndHashCode;
 import lombok.ToString;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 /**
  * 作品<b>详情</b>出参 —— 在 {@link NovelVO} 的基础上多出「简介 / 标签 / 驳回理由 /
- * 目录」这几样只有详情页才需要的东西。
+ * 首章 id」这几样只有详情页才需要的东西。
  *
  * <p><b>★ 为什么这里用继承，而 {@code NovelCreateDTO} / {@code NovelUpdateDTO} 却是分开的两个类：</b>
  * 两处的取舍正好相反，理由不同，不是标准不一致：
@@ -45,15 +43,14 @@ import java.util.List;
  * 继承只会让「哪些字段到底从哪来」变得难查。
  *
  * <p><b>什么时候该把继承拆掉：</b>如果哪天要「给列表 VO 删掉一个字段」，
- * 子类会跟着丢。但删列表字段会同时影响三个端点的列表页，本来就不该随手删 ——
- * 真到那一步，把 {@link #chapters} 之外的东西抽出来另说。
+ * 子类会跟着丢。但删列表字段会同时影响三个端点的列表页，本来就不该随手删。
  *
  * @author MickeyChen
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
 @ToString(callSuper = true)
-@Schema(description = "作品详情（在列表项的基础上多了简介、标签、目录）")
+@Schema(description = "作品详情（在列表项的基础上多了简介、标签、首章 id）")
 public class NovelDetailVO extends NovelVO {
 
     /**
@@ -94,42 +91,36 @@ public class NovelDetailVO extends NovelVO {
     private LocalDateTime createTime;
 
     /**
-     * 章节目录。
+     * 第一章的 id（<b>已发布章节里 <code>chapterNo</code> 最小的那个</b>），
+     * 详情页「开始阅读」按钮的跳转目标。<b>这本书一章都没发布时为 {@code null}</b>。
      *
-     * <p><b>★★ 这个列表的筛选条件随端点而变，这是 C-7 最容易做错的地方：</b>
-     * <table border="1">
-     *   <tr><th>端点</th><th>包含哪些章节</th></tr>
-     *   <tr><td>读者端详情 {@code GET /api/novels/{id}}</td>
-     *       <td><b>只有已发布（status = 2）的</b>。草稿章、待审章、被驳回的章
-     *           都必须排除 —— 漏一个就是「未审核的内容被读者看到了」。</td></tr>
-     *   <tr><td>作者端详情 {@code GET /api/author/novels/{id}}</td>
-     *       <td>全部状态（作者要看到自己的草稿）</td></tr>
-     *   <tr><td>管理端详情 {@code GET /api/admin/novels/{id}}</td>
-     *       <td>全部状态（审核员要看到待审的那些）</td></tr>
-     * </table>
+     * <p><b>★★ P6 之前这里是 {@code chapters}（完整目录），现在没有了 —— 这不是漏改。</b>
+     * 目录改成独立接口，读者端翻页看目录走 {@code GET /api/novels/{id}/chapters}，
+     * 阅读器要整条列表走 {@code GET /api/novels/{id}/catalog}。
+     * 理由：几百章的书每打开一次详情都要拖回全部章节，而详情页是匿名高频入口。
      *
-     * <p><b>★ 初始化成空列表而不是 {@code null}，是有意的：</b>
-     * 全局配了 {@code default-property-inclusion: non_null}，
-     * {@code null} 会让这个字段<b>在 JSON 里整个消失</b>，
-     * 前端就得写 {@code detail.chapters || []}。给空数组则是
-     * {@code "chapters": []}，前端可以直接 {@code v-for}。
-     * <p>但这也意味着「忘了填」和「这本书确实没有章节」在返回里长得一样 ——
-     * 所以<b>三个详情方法都必须显式调用 {@code setChapters(...)}</b>，
-     * 靠空列表兜底会把「漏填目录」这种 bug 藏起来。
+     * <p><b>★ 那为什么还要留这一个 id：</b>「开始阅读」原来取 {@code chapters[0]}，
+     * 目录分页之后第一页可能一条都没有（这本书的章节全在第二页是不可能的，
+     * 但「一章都没发布」是可能的），而更根本的是 —— <b>详情接口不该为了一个按钮
+     * 让调用方再发一次目录请求</b>。给一个 id 是一个字段的成本，前端一次请求就够。
+     * <p>★ 不能改成在 {@code NovelVO} 上放 {@code chapterCount} 让前端去猜：
+     * 那个数由 {@code syncNovelStat} 维护，和「第一章是哪一章」是两件事。
+     *
+     * <p><b>★ 为什么不放 {@code NovelVO}（列表也带上）：</b>列表页没有「开始阅读」按钮。
+     * 列表 20 条就是 20 次「查第一章」，为一个不显示的按钮付这个代价没有道理。
      */
-    @Schema(description = "章节目录。★ 读者端只含已发布章节")
-    private List<ChapterVO> chapters = new ArrayList<>();
+    @Schema(description = "第一章 id。★ 仅读者端返回；一章都没发布时为空", example = "10")
+    private Long firstChapterId;
 
     /**
-     * 从实体转换。<b>不填 {@link #chapters}</b> —— 目录由调用方按上表的规则查好后
-     * 再 {@code setChapters(...)}。
+     * 从实体转换。<b>不填 {@link #firstChapterId}</b> —— 「第一章是哪一章」要查
+     * {@code chapter} 表，而 {@code of()} 不查库（同 {@code NovelVO.of} 的理由）。
      *
-     * <p>为什么不在这里一起查：读者端要过滤状态、作者端不要，
-     * 而 {@code of()} 拿不到「当前是谁在问」这个信息。
-     * 与其加一个 {@code boolean forReader} 参数（调用方很容易传错，
-     * 而传错的后果是内容泄露），不如把这一步显式留在调用处 ——
-     * <b>调用处的代码是 {@code readerDetail} / {@code authorDetail}，
-     * 名字本身就说明了它该用什么口径</b>。
+     * <p><b>★ 三个详情方法里只有 {@code readerDetail} 会填它。</b>
+     * 作者端和管理端的详情页都没有「开始阅读」按钮，多查一次是白查。
+     * 不填时为 {@code null}，这个 key 在 JSON 里直接消失
+     * （{@code default-property-inclusion: non_null}）——
+     * 这两个端点的前端本来就不读它，所以不需要和「这本书没章节」区分开。
      */
     public static NovelDetailVO of(Novel entity, String categoryName, String authorName) {
         NovelDetailVO vo = new NovelDetailVO();

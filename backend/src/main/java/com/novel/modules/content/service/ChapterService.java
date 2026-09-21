@@ -4,10 +4,13 @@ import com.novel.common.enums.ChapterStatus;
 import com.novel.common.result.PageResult;
 import com.novel.modules.content.dto.ChapterCreateDTO;
 import com.novel.modules.content.dto.ChapterSaveDTO;
+import com.novel.modules.content.vo.ChapterBriefVO;
 import com.novel.modules.content.vo.ChapterDetailVO;
 import com.novel.modules.content.vo.ChapterVO;
 
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 章节服务。读者端 / 作者端 / 管理端三处共用。
@@ -181,4 +184,25 @@ public interface ChapterService {
      * 泄给读者很荒唐。实现里显式清空。
      */
     ChapterDetailVO readerDetail(Long novelId, Long chapterId);
+
+    /* ==================== 供 interaction 模块调用 ==================== */
+
+    /**
+     * 批量取章节摘要，返回 {@code chapterId → ChapterBriefVO}。
+     *
+     * <p>给「手里只有一串 chapterId」的列表用 —— 目前是书架的
+     * 「读到第 12 章《风起》」和阅读历史的列表，两者的 chapterId 都来自
+     * {@code read_history}（interaction 自己的表）。
+     *
+     * <p><b>★ 只返回已发布的章节</b>，未发布的在 map 里没有这个 key。
+     * 于是「读过的章节后来被作者撤回了」这一行会退化成只显示书名，
+     * 不会把一个读者看不到了的章节标题继续显示出来 ——
+     * 读者侧只见已发布内容，这条规则全项目只应该有一处口径（同
+     * {@code NovelService#briefsOf} 只返回已上架的作品）。
+     *
+     * <p>★ 空集合直接返回空 map，<b>不进 SQL</b>（{@code IN ()} 是语法错误）。
+     * 一次 {@code IN} 批量查完，<b>不要</b>循环调 {@code readerDetail} ——
+     * 那不只是 N+1，还会顺带把每章的正文都读出来。
+     */
+    Map<Long, ChapterBriefVO> briefsOf(Collection<Long> chapterIds);
 }

@@ -54,6 +54,35 @@ public class NovelComment implements Serializable {
     @Serial
     private static final long serialVersionUID = 1L;
 
+    /** {@link #targetType} 的书评取值：{@code targetId} 是 {@code novel_id} */
+    public static final int TARGET_TYPE_NOVEL = 1;
+
+    /** {@link #targetType} 的章评取值：{@code targetId} 是 {@code chapter_id} */
+    public static final int TARGET_TYPE_CHAPTER = 2;
+
+    /**
+     * {@link #targetType} 的中文文案：{@code 1 → 书评}、{@code 2 → 章评}。
+     *
+     * <p>★ <b>文案由后端给、颜色由前端给</b>，和 {@code CommentVO#statusDesc} 是同一条规矩
+     * （{@code admin-web/src/utils/status.js} 的类注释第一句就写明了）。
+     * 前端拿 {@code targetType} 的<b>数字</b>去取颜色，不拿这个字符串做判断。
+     *
+     * <p>★ 未知值返回 {@code null} 而不是抛异常：这是个展示字段，
+     * 为一个「库里出现了 3」的情况把整个评论列表打成 500，代价远大于
+     * 那一行的类型列空着。（对照 {@code CommentStatus#fromCode} 的抛异常 ——
+     * 那个值决定的是<b>状态流转</b>，走错了会写坏数据。）
+     */
+    public static String targetTypeDesc(Integer targetType) {
+        if (targetType == null) {
+            return null;
+        }
+        return switch (targetType) {
+            case TARGET_TYPE_NOVEL -> "书评";
+            case TARGET_TYPE_CHAPTER -> "章评";
+            default -> null;
+        };
+    }
+
     @TableId(type = IdType.AUTO)
     private Long id;
 
@@ -69,9 +98,11 @@ public class NovelComment implements Serializable {
      * {@code common/enums/AuditTargetType} <b>几乎一样</b>（都含 NOVEL / CHAPTER），
      * 而「两个近义枚举同时存在」正是最难发现的一类混淆 ——
      * 参照 {@code sys_role} / {@code sys_role_menu} / {@code sys_menu} 三张表的教训。
-     * <p>P5 只会写入 {@code 1}（书评），章评是 P6 的事；一个只会被赋一个值的枚举
-     * 换不来任何检查能力。写成一个有名字的常量（见 {@code CommentServiceImpl}）
-     * 已经足够，等 P6 真的开始写 {@code 2} 时再决定要不要升级成枚举。
+     * <p>P5 只会写 {@code 1}（书评）；P6 开始写 {@code 2}（章评）。
+     * <b>★ P6 复查过，结论是仍然不升级成枚举</b> —— 理由同上，两个近义枚举
+     * 比一个常量更难查。但两个常量从 {@code CommentServiceImpl} <b>搬到了本类</b>：
+     * 因为 {@code CommentVO} 也要按它出中文文案，常量留在实现类里会让 VO
+     * 反向依赖 Service 实现。
      */
     private Integer targetType;
 

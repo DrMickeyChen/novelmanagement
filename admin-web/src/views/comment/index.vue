@@ -42,13 +42,30 @@
  * （见 utils/status.js 的文件头）。
  * 判断一律用数字 `row.status` —— 文案是会改的，
  * 拿文案当条件的话，改一次文案就会静默地让某个分支永不命中。
+ *
+ * ============================================================
+ * ★★ 默认筛「待审核」，和作品/章节审核页只查 status=1 是同一个意思
+ * ============================================================
+ * 这一页虽能改判（三种状态都看得到），但**进来时的默认视图是待审队列** ——
+ * 管理员打开这一页的目的是「有没有要处理的」，不是「历史上有过哪些评论」。
+ * 默认「全部状态」的话，一屏 10 条里可能 9 条是已处理的，
+ * 待审的那条藏在第 3 页 —— 而那正是唯一需要他动手的东西。
+ *
+ * ============================================================
+ * ★★ 「目标」列是 P6 加的，P5 时那一列显示的是 `row.novelId`
+ * ============================================================
+ * P6 有了章评之后 `targetId` 对章评来说是 **chapterId**，和作品 id
+ * 是两个独立的 id 空间、撞号是常态（详见后端 CommentVO 的字段注释）——
+ * 再叫 `novelId` 会让管理员把一本不相干的书当成评论对象。
+ * 所以这一列是 **类型标签 + id**，类型文案用后端的 `targetTypeDesc`，
+ * 颜色用 `commentTargetTag`（它是 P5 就写好、一直没人用的那张表）。
  */
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getCommentPage, auditComment } from '@/api/comment'
 import { usePagedList } from '@/composables/usePagedList'
 import { formatDateTime } from '@/utils/format'
-import { commentStatusType } from '@/utils/status'
+import { commentStatusType, commentTargetTag } from '@/utils/status'
 import AuditDialog from '@/components/AuditDialog.vue'
 
 /* ==================== 状态常量 ==================== */
@@ -62,13 +79,29 @@ const STATUS_PENDING = 0
 const STATUS_VISIBLE = 1
 const STATUS_HIDDEN = 2
 
+/**
+ * ★ `target_type` 的取值（后端 `NovelComment.TARGET_TYPE_*`）。
+ *   只有书评有 `score` —— 章评不给评分不是「读者没打」，是产品上就没有
+ *   这个概念。所以弹窗里「未评分」三个字对章评是**错的**，
+ *   要整段不显示（见弹窗里的 `v-if`）。
+ */
+const TARGET_TYPE_NOVEL = 1
+
 /* ==================== 列表 ==================== */
+
+/**
+ * ★ 默认筛选值单独写成一个函数，`reset()` 也用它 ——
+ *   「重置」的语义是**回到这一页的初始状态**，而不是「什么都不筛」。
+ *   两处各写一份的话，改了默认值而忘了改 reset，
+ *   管理员点完「重置」会看到一个从没见过的视图（全部状态）。
+ */
+const defaultFilter = () => ({ status: STATUS_PENDING, novelId: null, keyword: '' })
 
 /**
  * 筛选条件。★ `null` = 不限（axios 跳过 null/undefined 参数，
  * 正好对上后端「不传 = 全部」）。不要用空字符串。
  */
-const filter = ref({ status: null, novelId: null, keyword: '' })
+const filter = ref(defaultFilter())
 
 const paged = usePagedList(
   ({ page, size }) =>
@@ -92,7 +125,7 @@ function search() {
 }
 
 function reset() {
-  filter.value = { status: null, novelId: null, keyword: '' }
+  filter.value = defaultFilter()
   paged.reload()
 }
 
@@ -214,13 +247,19 @@ async function submitAudit({ pass, remark }) {
           ★ 作品 id 用**数字输入框**而不是下拉：作品有成百上千本，
             下拉框要先把它们全查出来（而且还会分页），得不偿失。
             日常用法是「从大盘/作品列表拿到 id，回到这里查」。
+
+          ★★ P6 起这个框筛出来的是「这本书的书评 **+ 它全部章节的章评**」
+            （后端那个 OR 子查询，见 api/comment.js）。
+            文案写「作品 id（含章评）」而不是「作品 id」，是因为
+            「搜一本 300 章的书却出来 200 条章评」需要提前有个交代 ——
+            否则管理员会以为筛选条件写错了。
         -->
         <el-input-number
           v-model="filter.novelId"
-          style="width: 160px"
+          style="width: 170px"
           :min="1"
           :controls="false"
-          placeholder="作品 id"
+          placeholder="作品 id（含章评）"
           @keyup.enter="search"
         />
 
@@ -240,7 +279,9 @@ async function submitAudit({ pass, remark }) {
       <p class="hint">
         管理端对评论只有两个动作：通过（已显示）和隐藏（已隐藏），没有删除 ——
         隐藏会留下「谁在什么时候因为什么处置了它」的记录，删除不会。
-        通过后评论立刻出现在读者端，隐藏后立刻消失。
+        通过后评论立刻出现在读者端，隐藏后立刻消失。<br />
+        ★ 默认只筛「待审核」（进来就能看到要处理的）。要看已处理过的，
+        把左上角的状态换成「全部状态」—— 已隐藏的评论也**能改判**回已显示。
       </p>
     </el-card>
 
@@ -249,9 +290,16 @@ async function submitAudit({ pass, remark }) {
       <el-table v-loading="paged.loading.value" :data="paged.list.value" row-key="id" stripe>
         <el-table-column prop="id" label="ID" width="80" />
 
-        <el-table-column label="作品" width="100">
+        <!--
+          ★★ 类型标签和 id 必须**成对**显示，缺一个就会误读（见文件头）。
+            「#12」单独放在这里等于什么都没说：12 是作品 id 还是章节 id？
+        -->
+        <el-table-column label="评论对象" width="130">
           <template #default="{ row }">
-            <span class="novel-id">#{{ row.novelId }}</span>
+            <el-tag :type="commentTargetTag(row.targetType)" size="small">
+              {{ row.targetTypeDesc }}
+            </el-tag>
+            <span class="target-id">#{{ row.targetId }}</span>
           </template>
         </el-table-column>
 
@@ -371,7 +419,11 @@ async function submitAudit({ pass, remark }) {
     <AuditDialog
       v-model="auditVisible"
       title="审核评论"
-      :target-name="auditTarget ? `评论 #${auditTarget.id}` : ''"
+      :target-name="
+        auditTarget
+          ? `评论 #${auditTarget.id}（${auditTarget.targetTypeDesc} #${auditTarget.targetId}）`
+          : ''
+      "
       :pass-text="passText()"
       :reject-text="rejectText()"
       :pass-hint="passHint()"
@@ -386,9 +438,12 @@ async function submitAudit({ pass, remark }) {
         <p class="preview-meta">
           {{ auditTarget.nickname || '已注销用户' }}
           ·
-          <span v-if="auditTarget.score">{{ auditTarget.score }} 分</span>
-          <span v-else class="none">未评分</span>
-          ·
+          <!-- ★ 只有书评才提评分，见 TARGET_TYPE_NOVEL -->
+          <template v-if="auditTarget.targetType === TARGET_TYPE_NOVEL">
+            <span v-if="auditTarget.score">{{ auditTarget.score }} 分</span>
+            <span v-else class="none">未评分</span>
+            ·
+          </template>
           {{ formatDateTime(auditTarget.createTime) }}
           ·
           点赞 {{ auditTarget.likeCount ?? 0 }}
@@ -423,7 +478,8 @@ async function submitAudit({ pass, remark }) {
   justify-content: flex-end;
 }
 
-.novel-id {
+.target-id {
+  margin-left: 6px;
   color: #606266;
   font-family: Consolas, Monaco, monospace;
 }

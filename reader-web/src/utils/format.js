@@ -47,3 +47,24 @@ export function formatDate(dateTime) {
   if (!dateTime || typeof dateTime !== 'string') return ''
   return dateTime.slice(0, 10)
 }
+
+/**
+ * 时间取到「分」：`2026-09-19 23:56`。
+ *
+ * ★ 名字和行为**和另外两端逐字一致**（`admin-web` / `author-web` 的
+ *   `utils/format.js` 里都有）—— 展示层不要求三端逐字节相同，
+ *   但同一个函数名在三个端做同一件事，将来改动才不会漏掉一端。
+ *
+ * ★ 阅读端为什么需要它：**评论列表**（P6 加的）。只精确到天的话，
+ *   今天发的所有评论显示的都是今天，一屏里几行时间一模一样 ——
+ *   而「谁先说的」在回复场景里是有意义的信息。
+ *
+ * ★ 为什么不做成「3 分钟前」这种相对时间：那个要靠**客户端时钟**算，
+ *   而客户端时钟可能不准（差几小时很常见），于是一条刚发的评论
+ *   会显示成「3 小时前」，且只在部分用户的机器上出现。
+ *   服务端给的是绝对时间，截字符串永远不会算错。
+ */
+export function formatDateTime(dateTime) {
+  if (!dateTime || typeof dateTime !== 'string') return ''
+  return dateTime.slice(0, 16)
+}

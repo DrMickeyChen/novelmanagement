@@ -1,18 +1,37 @@
 <script setup>
 /**
- * 作品详情页 —— 简介 + 目录 + 「开始/继续阅读」。
+ * 作品详情页 —— 简介 + 目录 + 评分 + 书评区 + 「开始/继续阅读」。
  *
- * ★ 目录是【一次性全量】返回的（NovelDetailVO.chapters），不单独请求。
- *   种子书只有 3~8 章，为一屏目录多发一个请求不划算。
- *   章数上来之后要改成分页目录，这是记在 P3 文档里的遗留项。
+ * ★★ P6 起目录**不再跟着详情回来**，改成分页接口 `GET /novels/{id}/chapters`。
+ *   理由：详情页是**匿名高频**入口，几百章的书每打开一次就拖回整本目录，
+ *   而绝大多数访问只是「看一眼简介」。
+ *   这是对 P3「一次性全量返回」的**有意反转**，见 `docs/P6-书架评论.md`。
+ *
+ * ★ 书评区是 [`CommentSection`](@/components/CommentSection.vue)，
+ *   和阅读器里的章评区**同一个组件**（靠 `chapterId` 有没有值区分）。
+ *   它自己拉数据、自己分页 —— 本页**不需要**为它维护任何状态。
+ *
+ * ★★ P6 加的「加入书架」按钮，有一个刻意的取舍：
+ *   **本页不显示收藏数**。`NovelVO`（详情接口的父类）里根本没有
+ *   `collectCount` —— 收藏数是书架域的东西，只在 `NovelBriefVO` 和
+ *   `ShelfStatusVO` 上有。要显示就得从 `/reader/shelf/{id}` 拿，
+ *   而那个接口**需要登录** → 同一个详情页，登录的人看到「87 收藏」、
+ *   游客看不到这个数字。**同一页按登录态显示不同的事实**比不显示更糟：
+ *   它会让「收藏数」看起来像是个只有会员才有的东西。
+ *   （按钮的「在不在书架」是另一回事 —— 那个本来就是「我」的状态。）
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { getNovelDetail, reportNovelView } from '@/api/novel'
+import { ElMessage } from 'element-plus'
+import { getNovelCatalog, getNovelChapters, getNovelDetail, reportNovelView } from '@/api/novel'
+import { addToShelf, getShelfStatus, removeFromShelf } from '@/api/shelf'
 import { formatDate, formatWordCount } from '@/utils/format'
 import { loadProgress } from '@/utils/readerStorage'
+import { useUserStore } from '@/stores/user'
+import CommentSection from '@/components/CommentSection.vue'
 
 const route = useRoute()
+const userStore = useUserStore()
 
 const novelId = computed(() => route.params.id)
 
@@ -21,8 +40,12 @@ const loading = ref(false)
 /** 加载失败。★ 只有 true / false，不区分原因（见下面 load 的说明） */
 const failed = ref(false)
 
-/** 目录。★ detail 还没回来时给空数组，模板里的 v-for 就不用再判空 */
-const chapters = computed(() => detail.value?.chapters ?? [])
+/** 当前这一页的目录。★ 加载中给空数组，模板里的 v-for 就不用再判空 */
+const chapters = ref([])
+/** 已发布章节总数。★ 就是「共 N 章」的那个 N，由目录接口的 total 给 */
+const chapterTotal = ref(0)
+const page = ref(1)
+const PAGE_SIZE = 20
 
 /**
  * 本机记录的阅读进度（只有 novelId 对得上才有）。
@@ -37,40 +60,159 @@ const chapters = computed(() => detail.value?.chapters ?? [])
 const localProgress = ref(null)
 
 /**
- * 续读目标章节。
+ * 本机进度指向的那一章，**现在还在不在目录里**。查不到就是 {@code null}。
+ *
+ * ★★ 为什么为了这一个判断还要发一次请求（而且只在本机有进度时才发）：
+ *   目录分页之后，「本机记录的这一章还在不在」**没法从当前这一页回答** ——
+ *   它可能在别的页上。而 P3 就定死了不能省这个判断：
+ *   章节被作者删掉 / 被驳回下架之后，本机记录指向一个不存在的 id，
+ *   直接跳过去读者看到的是「章节不存在」。
+ *   `getNovelCatalog` 每条只有 4 个字段（几十字节），比整份 `ChapterVO` 便宜得多，
+ *   而且**游客和第一次来的读者一次都不会调到**。
+ *
+ * ★ 拿它顺便解决了另一个问题：提示语里的「第 N 章」需要 chapterNo，
+ *   而本机进度里只有 chapterId（`readerStorage` 的存法，P3 定的，不动）。
+ */
+const progressChapter = ref(null)
+
+/**
+ * 续读目标章节 id。
  *
  * ★ 三级回退，顺序不能换：
- *   ① 本机有记录、且那一章确实还在目录里 → 用它
- *      （「还在目录里」这个判断不能省：章节被作者删掉 / 被驳回下架之后，
- *        本机记录就指向一个不存在的 id，直接跳过去会报「章节不存在」）
- *   ② 没有记录 → 目录第一章
- *   ③ 目录是空的（一本书一个已发布章节都没有）→ null，按钮置灰
+ *   ① 本机有记录、且那一章还在目录里 → 用它
+ *   ② 没有记录（或记录已失效）→ `detail.firstChapterId`（后端给的第一章）
+ *   ③ 一章都没发布 → null，按钮置灰
+ *
+ * ★ ②用的是 `firstChapterId` 而不是「目录第一页的第一个」：分页之后
+ *   第一页不一定从第一章开始（这个判断在服务端更可靠）。
  */
-const continueChapter = computed(() => {
-  if (!chapters.value.length) return null
-
-  const recorded = localProgress.value
-  if (recorded) {
-    const hit = chapters.value.find((c) => c.id === recorded.chapterId)
-    if (hit) return hit
-  }
-  return chapters.value[0]
-})
-
-/** 有本机记录且能对上时，按钮文案才是「继续阅读」 */
-const isResuming = computed(
-  () =>
-    !!localProgress.value &&
-    chapters.value.some((c) => c.id === localProgress.value.chapterId),
+const continueChapterId = computed(
+  () => progressChapter.value?.id ?? detail.value?.firstChapterId ?? null,
 )
 
-/** 阅读地址。★ continueChapter 为 null 时返回 null，按钮据此置灰 */
+/** 有本机记录且能对上时，按钮文案才是「继续阅读」 */
+const isResuming = computed(() => !!progressChapter.value)
+
+/** 阅读地址。★ 目标为 null 时返回 null，按钮据此置灰 */
 const readPath = computed(() =>
-  continueChapter.value ? `/read/${novelId.value}/${continueChapter.value.id}` : null,
+  continueChapterId.value ? `/read/${novelId.value}/${continueChapterId.value}` : null,
 )
 
 /** 目录里标记「读到这里」的那一章 */
 const readToChapterId = computed(() => (isResuming.value ? localProgress.value.chapterId : null))
+
+/**
+ * 评分。
+ *
+ * ★★ **判 `> 0`，不要判「有没有值」**：`novel.score` 的列是
+ *   `NOT NULL DEFAULT 0.0`，语义是「0 = 还没有人评过分」
+ *   （见后端 `NovelVO#score` 的注释）。显示成「0.0 分」的话，
+ *   读者会以为大家都打了 0 分 —— 那是完全不同的一件事。
+ *
+ * ★ `toFixed(1)`：后端算的是 `ROUND(AVG(score), 1)`，但 JSON 里
+ *   `4.0` 会变成数字 `4`，直接显示就是「4 分」。和旁边「4.3 分」
+ *   排在一起宽度不齐，也不像一个评分。
+ */
+const scoreValue = computed(() => Number(detail.value?.score) || 0)
+
+/* ==================== 加入书架 ==================== */
+
+/**
+ * 这本书在不在我的书架。
+ *
+ * ★★ 状态**只由服务端给**，前端不猜：
+ *   点击之后用的是响应里的 `onShelf`，而不是把本地的翻转一下。
+ *   两个接口都是幂等的 —— 对一本已在书架里的书再点「加入」，
+ *   返回的仍然是 `onShelf: true`。自己翻转的话，这种情况下
+ *   按钮会显示成「未加入」而书其实在书架里。
+ *
+ * ★ 匿名时保持 false：没登录就没有「我的书架」这回事。
+ *   （按钮仍然显示，点了提示去登录 —— 见 `toggleShelf`。）
+ */
+const onShelf = ref(false)
+const shelfBusy = ref(false)
+
+/**
+ * 查书架状态。**只有登录时才发** —— 这个接口是 `/api/reader/**`，
+ * 匿名调必然 401（而它没带 silent，会顺手把页面踢去登录页）。
+ */
+async function loadShelfStatus() {
+  if (!userStore.isLogin) {
+    onShelf.value = false
+    return
+  }
+  try {
+    const res = await getShelfStatus(novelId.value)
+    // ★ `?? false`：onShelf 是包装类型，理论上可能整个 key 消失
+    onShelf.value = res?.onShelf ?? false
+  } catch {
+    /* 查不到就当不在书架 —— 比让按钮停在一个假状态上好。
+       拦截器已经弹过提示了。 */
+  }
+}
+
+/**
+ * 加入 / 移出。
+ *
+ * ★ 按当前状态决定调哪个接口，而不是一个 toggle 接口 ——
+ *   后端刻意没做 toggle（它既不幂等也不可重试，理由见 `ReaderShelfController`）。
+ *
+ * ★★ 这一处**不弹确认框**，而书架页的「移除」弹。
+ *   看着不一致，但是有意的，两者的「误点成本」不一样：
+ *     · 书架页的「移除」：用户是来整理书架的，点错那一行就消失了，
+ *       而且他很可能不记得刚删的是哪本 → 弹一句。
+ *     · 这里的「已在书架」：按钮本身写着当前状态，点错了**再点一次就回来**，
+ *       且成功提示就写着「已移出书架」，用户立刻看得到 → 不弹。
+ *   给一个一眼能看懂、一下能撤销的按钮加确认框，只会让「取消收藏」
+ *   这件事变得很烦。
+ */
+async function toggleShelf() {
+  if (!userStore.isLogin) {
+    /*
+     * ★ 未登录时**只提示，不跳转**：跳转永远由用户点登录页的入口触发。
+     *   正在看简介被弹去登录页，回来时页面位置全没了。
+     *   （`CommentItem.vue` 的 `ensureLogin` 是这条规矩的第一处，
+     *   全站保持一致。）
+     */
+    ElMessage.warning('登录后可以加入书架')
+    return
+  }
+  if (shelfBusy.value) return
+
+  shelfBusy.value = true
+  try {
+    const res = onShelf.value
+      ? await removeFromShelf(novelId.value)
+      : await addToShelf(novelId.value)
+    onShelf.value = res?.onShelf ?? !onShelf.value
+    ElMessage.success(onShelf.value ? '已加入书架' : '已移出书架')
+  } catch {
+    /* 失败原因由 request.js 的拦截器提示（含 2001「作品不存在或已下架」），
+       这里只需要别让它变成 unhandledrejection */
+  } finally {
+    shelfBusy.value = false
+  }
+}
+
+/**
+ * 退出登录时把按钮状态清掉。
+ *
+ * ★ 必须清：阅读端的退出**不跳转**（首页是公开页，停在原地正好让用户
+ *   看到导航栏变了，见 `BasicLayout` 的注释）。所以用户完全可能在
+ *   详情页上点「退出」，这时按钮还写着「已在书架」——
+ *   而它已经不属于任何人了，再点会走未登录分支提示「登录后可以加入书架」，
+ *   看着像 bug。清成 false，按钮回到「加入书架」，语义立刻正确。
+ */
+watch(
+  () => userStore.isLogin,
+  (isLogin) => {
+    if (isLogin) {
+      loadShelfStatus()
+    } else {
+      onShelf.value = false
+    }
+  },
+)
 
 onMounted(() => {
   load()
@@ -92,9 +234,27 @@ async function load() {
   loading.value = true
   failed.value = false
   try {
-    detail.value = await getNovelDetail(novelId.value)
-    // 详情拿到之后再读进度：两者互不依赖，但先有目录才有意义
+    /*
+     * ★ 详情和目录第一页【并发】发，不串行。
+     *   串行的话要等详情回来才发目录，首屏就多一个 RTT。
+     *
+     * ★ 任何一路失败都算整页失败（而不是「详情有、目录空」）：
+     *   两个请求的错误码本来就一样（不存在/未上架都是 2001），
+     *   分开处理只会得到一个「有书名、目录永远空着」的残页 ——
+     *   那看起来像「这本书没有章节」，是错的。
+     */
+    const [d] = await Promise.all([getNovelDetail(novelId.value), loadChapterPage(1)])
+    detail.value = d
     localProgress.value = loadProgress(novelId.value)
+    await resolveProgressChapter()
+    /*
+     * ★ 书架状态**放在这里而不是 onMounted**：作品不存在时不该再去问
+     *   「它在不在我的书架」—— 那是一次注定没意义的往返。
+     * ★ 不 await：它是按钮上一个角标级别的信息，不该拖住整页的
+     *   `loading`（详情还没出来就已经在转圈了，再等它没有意义）。
+     *   它自己兜住了异常，不会变成 unhandledrejection。
+     */
+    loadShelfStatus()
   } catch {
     /*
      * ★ 这里【不区分失败原因】，因为拿不到区分所需的依据：
@@ -109,8 +269,47 @@ async function load() {
      */
     failed.value = true
     detail.value = null
+    chapters.value = []
+    chapterTotal.value = 0
   } finally {
     loading.value = false
+  }
+}
+
+/**
+ * 拉某一页目录。
+ *
+ * ★ 翻页只换目录，**不重新拉详情** —— 详情和页码无关，
+ *   重拉会让书名/简介闪一下，而且白费一个请求。
+ */
+async function loadChapterPage(target) {
+  const res = await getNovelChapters(novelId.value, { page: target, size: PAGE_SIZE })
+  chapters.value = res.records ?? []
+  chapterTotal.value = res.total ?? 0
+  // ★ 用服务端回的 current，不是 target：页码越界时服务端会纠正，
+  //   拿 target 当当前页会让分页条停在一个没有内容的页码上
+  page.value = res.current ?? target
+}
+
+/** 翻页。★ 失败由 request.js 的拦截器提示，这里只需要别让它变成 unhandledrejection */
+function changePage(target) {
+  loadChapterPage(target).catch(() => {})
+}
+
+/**
+ * 查本机进度指向的那一章是否还在目录里。**只有本机有进度时才会发请求。**
+ *
+ * ★ 请求失败就当作「对不上」（progressChapter 保持 null）：
+ *   这时按钮回退成「开始阅读」跳到第一章 —— 比跳到一个读不了的章节好。
+ */
+async function resolveProgressChapter() {
+  progressChapter.value = null
+  if (!localProgress.value) return
+  try {
+    const catalog = await getNovelCatalog(novelId.value)
+    progressChapter.value = catalog.find((c) => c.id === localProgress.value.chapterId) ?? null
+  } catch {
+    /* 见上 */
   }
 }
 </script>
@@ -162,6 +361,22 @@ async function load() {
           </el-tag>
         </div>
 
+        <!--
+          ★★ 评分（P6 加）。放在元信息【下面单独一行】而不是塞进那行里：
+             el-rate 是块级高度的控件，混在一行小字里会把那行撑歪。
+          ★ 星星的刻度和颜色都用 Element 默认的 —— 这里没有自定义主题，
+             和 el-tag / el-button 一样交给组件库。
+        -->
+        <div class="score">
+          <template v-if="scoreValue > 0">
+            <!-- allow-half：均分算出来是 4.3 这种小数，不给半星就只能四舍五入到整数 -->
+            <el-rate :model-value="scoreValue" disabled allow-half />
+            <span class="score-value">{{ scoreValue.toFixed(1) }}</span>
+            <span class="score-unit">分</span>
+          </template>
+          <span v-else class="score-empty">暂无评分</span>
+        </div>
+
         <div class="actions">
           <router-link v-if="readPath" :to="readPath">
             <el-button type="primary" size="large">
@@ -170,8 +385,23 @@ async function load() {
           </router-link>
           <el-button v-else size="large" disabled>暂无章节</el-button>
 
+          <!--
+            ★★ 加入书架（P6 加）。**未登录也显示**，点了提示去登录 ——
+               不藏起来是因为「有没有书架」是读者端的一个基本功能，
+               游客看不到就永远不知道它存在。
+               （`CommentItem.vue` 定的规矩：需要登录的**区域**顶部放引导条，
+               区域**内的单个操作**只在被点击时提示一句。这里是后者。）
+
+            ★ 按钮文案跟着 `onShelf` 走，而不是「加入书架 / 取消收藏」两个
+               意思相反的动词 —— 用户扫一眼就知道**现在是什么状态**，
+               不需要靠推断自己刚才点没点过。
+          -->
+          <el-button size="large" :loading="shelfBusy" @click="toggleShelf">
+            {{ onShelf ? '已在书架' : '加入书架' }}
+          </el-button>
+
           <span v-if="isResuming" class="resume-hint">
-            上次读到 第 {{ continueChapter.chapterNo }} 章
+            上次读到 第 {{ progressChapter.chapterNo }} 章
           </span>
         </div>
       </el-card>
@@ -192,7 +422,7 @@ async function load() {
       <el-card shadow="never" class="section">
         <template #header>
           <span class="section-title">目录</span>
-          <span class="section-sub">共 {{ chapters.length }} 章</span>
+          <span class="section-sub">共 {{ chapterTotal }} 章</span>
         </template>
 
         <div class="chapters">
@@ -210,7 +440,34 @@ async function load() {
         </div>
 
         <el-empty v-if="!chapters.length" description="还没有已发布的章节" :image-size="60" />
+
+        <!--
+          ★ 只有一页时不显示分页条（`chapterTotal > PAGE_SIZE`）——
+            一个「1」孤零零地待在目录下面，比没有更难看。
+        -->
+        <el-pagination
+          v-if="chapterTotal > PAGE_SIZE"
+          class="chapter-pager"
+          layout="prev, pager, next"
+          background
+          :current-page="page"
+          :page-size="PAGE_SIZE"
+          :total="chapterTotal"
+          @current-change="changePage"
+        />
       </el-card>
+
+      <!--
+        ★★ 书评区（P6 加）。**不传 `chapterId`** 就是这个组件判定
+           「评论对象是整本书」的唯一依据 —— 章评区（阅读器里）才传。
+           见 `components/CommentSection.vue` 的文件头。
+
+        ★ 它自己发请求、自己管分页，所以【不跟着 `loading`】：
+           详情还在转圈时它也已经在拉书评了，两件事互不等待。
+           搁在 `v-else-if="detail"` 里面是为了让「书不存在」时
+           不会对着一个不存在的 id 拉评论。
+      -->
+      <CommentSection :novel-id="novelId" />
     </template>
   </div>
 </template>
@@ -258,6 +515,35 @@ async function load() {
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 12px;
+}
+
+/*
+ * ★ 评分单独一行。`min-height` 是为了让「暂无评分」和「五颗星」
+ *   这两种状态占一样的高度 —— 不然有评分的书和没评分的书，
+ *   下面「开始阅读」按钮的纵向位置会差十几像素，列表里翻着看很明显。
+ */
+.score {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  min-height: 24px;
+}
+
+.score-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: #ff9900;
+}
+
+.score-unit {
+  font-size: 13px;
+  color: #909399;
+}
+
+.score-empty {
+  font-size: 13px;
+  color: #c0c4cc;
 }
 
 .actions {
@@ -314,6 +600,11 @@ async function load() {
 .chapter:hover {
   background: #f5f7fa;
   color: #409eff;
+}
+
+.chapter-pager {
+  margin-top: 14px;
+  justify-content: center;
 }
 
 /* 「读到这里」的那一章：左侧一条竖线，扫一眼就能找到 */
