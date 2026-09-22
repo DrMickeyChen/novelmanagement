@@ -21,6 +21,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -85,10 +86,6 @@ public class AuditLogServiceImpl implements AuditLogService {
 
     @Override
     public void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark) {
-        AuditLog entity = new AuditLog();
-        entity.setTargetType(targetType);
-        entity.setTargetId(targetId);
-        entity.setAction(action);
         /*
          * ★ 操作人从当前登录态取，不接受调用方传入 —— 见 AuditLogService#record 的注释。
          *
@@ -96,9 +93,50 @@ public class AuditLogServiceImpl implements AuditLogService {
          * 记成 null 的流水等于没记（查账时看到一条「某人做了某事」但不知道是谁）。
          * 如果真到了没有登录态的场景（定时任务），requireUserId 会明确报错，
          * 而不是悄悄写一条 operator_id 为 null 的记录。
+         *
+         * ★★ M3 起这个「没有登录态的场景」真的存在了（MQ 消费者），
+         *   而处置办法【不是】在这里放宽 —— 是让那种场景走下面那个显式重载。
+         *   本方法保持原样：它一旦拿不到登录态就该抛，这是它的价值所在。
          */
-        entity.setOperatorId(UserContext.requireUserId());
+        Long operatorId = UserContext.requireUserId();
+
+        /*
+         * ★ createTime 传 null = 「交给 MybatisMetaObjectHandler 填当前时间」。
+         *   HTTP 路径上「现在」就是事件发生的时刻，没有第二个时间可用。
+         *   有积压的那条链路（MQ）才需要显式传事件时刻，见那个重载。
+         */
+        record(targetType, targetId, action, remark, operatorId, null);
+    }
+
+    /**
+     * ★★ M3 新增：操作人与发生时刻都由调用方给出的版本，唯一调用方是
+     * {@code AuditRecordConsumer}。适用场景与「为什么要有第二个重载」写在
+     * {@link AuditLogService} 的接口注释里。
+     *
+     * <p><b>★ 这个方法是本类唯一的写实现</b> —— 上面那个老重载只是取到
+     * {@code operatorId} 之后转调过来。<b>别把 INSERT 复制成两份</b>：
+     * 两份 insert 意味着「日志怎么打」「用户 id 怎么校验」有两个可以各自漂移的版本，
+     * 而这正是流水表最不能有的东西。
+     */
+    @Override
+    public void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark,
+                       Long operatorId, LocalDateTime createTime) {
+        AuditLog entity = new AuditLog();
+        entity.setTargetType(targetType);
+        entity.setTargetId(targetId);
+        entity.setAction(action);
+        entity.setOperatorId(operatorId);
         entity.setRemark(remark);
+        /*
+         * ★ createTime 为 null 时【刻意不 set】—— MybatisMetaObjectHandler 用的是
+         *   strictInsertFill（「字段已经有值就不覆盖」），所以：
+         *     传了值 → 用传进来的事件时刻（消息积压时它是唯一正确的时间）
+         *     传 null → 字段留空 → handler 填 now()
+         *   ★ 写成 setCreateTime(createTime == null ? LocalDateTime.now() : createTime)
+         *     也能跑，但那就把「什么时候由谁决定时间」这件事从 handler 挪到了这里，
+         *     而且多一次无意义的 now()。让 null 一路传下去，语义更清楚。
+         */
+        entity.setCreateTime(createTime);
 
         auditLogMapper.insert(entity);
 
@@ -107,9 +145,13 @@ public class AuditLogServiceImpl implements AuditLogService {
          * 但一定要打 —— 这是「系统日志」和「业务流水」互相印证的另一半：
          * 库里的 audit_log 被谁删过（有权限直接连库的人），
          * 应用日志里那一条还在。
+         *
+         * ★ 注意这里打的是 entity.getCreateTime()（落库后的真实值），
+         *   不是入参 createTime —— 后者在老重载那条路上是 null，
+         *   直接打日志会打出一片 null，看着像「时间没记上」。
          */
-        log.info("审核流水 | type={} targetId={} action={} operatorId={}",
-                targetType, targetId, action, entity.getOperatorId());
+        log.info("审核流水 | type={} targetId={} action={} operatorId={} at={}",
+                targetType, targetId, action, entity.getOperatorId(), entity.getCreateTime());
     }
 
     @Override

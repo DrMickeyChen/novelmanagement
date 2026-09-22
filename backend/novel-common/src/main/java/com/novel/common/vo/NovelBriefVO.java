@@ -95,6 +95,14 @@ public class NovelBriefVO {
      *
      * <p>★ 它和 {@code viewCount} 不一样，是<b>会随读者操作实时变</b>的 ——
      * 所以书架页展示的必须是取数那一刻的值，而不是前端从某处缓存下来的。
+     *
+     * <p>★★ <b>M3 起这个「实时」要打个折</b>：写回从同步 Feign 变成了
+     * {@code NOVEL_STAT} 消息（interaction → content，见 {@code NovelStatProducer}），
+     * 落库延迟通常在百毫秒级 —— 快到用户看不出来，但<b>它不再是同一个事务里的事</b>。
+     * ★ 真正受影响的是 {@code ShelfStatusVO}：它那个 collectCount 取自
+     * interaction 本地的 {@code COUNT(*)}（同步、当场算），
+     * 而本字段读的是 content 库里的冗余列（异步、可能落后一步）。
+     * <b>同一个「收藏数」在两个 VO 里新鲜度不同，这是刻意保留的，不是不一致。</b>
      */
     @Schema(description = "收藏数", example = "87")
     private Integer collectCount;

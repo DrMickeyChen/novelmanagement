@@ -117,6 +117,32 @@
 
         <!--
           ============================================================
+          第二期 M3 新增：RocketMQ（消息队列）
+          ============================================================
+          ★★★ 属性名【不能】叫 rocketmq.version ★★★
+
+          咱们 import 的 SCA BOM（spring-cloud-alibaba-dependencies:2023.0.3.2）
+          内部【已经有一个同名属性】：
+                  <rocketmq.version>5.3.1</rocketmq.version>
+          它管着 org.apache.rocketmq:rocketmq-client 和 rocketmq-acl。
+
+          Maven 的规矩是「import 一个 BOM 只带版本、【不带】它的 <properties>」，
+          所以在这里写 rocketmq.version=2.3.6 并不会真的改掉 rocketmq-client 的版本
+          （它仍然解析成 5.3.1）—— 但它会严重误导读代码的人。
+
+          更坏的是：下一个人看到这个名字，只要在自己模块里写一条
+                  <artifactId>rocketmq-client</artifactId>
+                  <version>${rocketmq.version}</version>
+          就会把客户端【静默锁到 2.3.6】这个 rocketmq-client 压根不存在的版本上，
+          然后对着一个莫名其妙的解析错误发呆。
+
+          所以这里叫 rocketmq-spring.version —— 名字里就写着它是
+          【rocketmq-spring（那个 Spring Boot starter）】的版本，不是 client 的。
+        -->
+        <rocketmq-spring.version>2.3.6</rocketmq-spring.version>
+
+        <!--
+          ============================================================
           第二期 M0 新增：Spring Cloud 的两个版本号
           ============================================================
           ★★ 这三行是一个【整体】，不能单独升其中一个：
@@ -221,6 +247,42 @@
                 <groupId>io.jsonwebtoken</groupId>
                 <artifactId>jjwt-jackson</artifactId>
                 <version>${jjwt.version}</version>
+            </dependency>
+
+            <!--
+              ============================================================
+              M3：RocketMQ 的 Spring Boot starter
+              ============================================================
+              ★★ 为什么这一条必须自己写、BOM 给不了：
+
+                  SCA 的 BOM 确实管着 RocketMQ（rocketmq-client / rocketmq-acl
+                  都锁在 5.3.1，正好等于 docker-compose 里 broker 镜像的版本），
+                  但它【不管 rocketmq-spring-boot-starter】——
+                  而 RocketMQTemplate / @RocketMQMessageListener /
+                  @RocketMQTransactionListener 全都在这个 starter 里。
+
+                  另一个候选是 BOM 管的 spring-cloud-starter-stream-rocketmq，
+                  但那是 Spring Cloud Stream 的函数式模型（Consumer<Message<T>>），
+                  【不支持事务消息】—— 而 M3 断掉 auth ⇄ content 那个环
+                  靠的正是事务消息。所以那条路走不通。
+
+              ★ 版本 2.3.6 的由来（两条下限，都不是拍脑袋）：
+                  ① Spring Boot 3 的下限是 2.2.3 —— 从那一版起才改用 jakarta.*，
+                     2.2.0 及以下在 Boot 3 上自动装配直接失效；
+                  ② Boot 3.2 + JDK17+ 有一个已知 bug：
+                     NoClassDefFoundError: .../protocol/heartbeat/MessageModel，
+                     2.3.2 起才修（RocketMQ 改了包路径）。
+                  取 2.3.6 = 本机镜像仓库里的最新 release，两条下限都远在身后。
+
+              ★★ 只有 auth / content / interaction 三个服务会引用它。
+                  novel-common 【不引】，novel-gateway 【也不引】——
+                  见那两个 pom 里各自的说明。这样网关的 classpath
+                  结构上就不可能因为 M3 而变化。
+            -->
+            <dependency>
+                <groupId>org.apache.rocketmq</groupId>
+                <artifactId>rocketmq-spring-boot-starter</artifactId>
+                <version>${rocketmq-spring.version}</version>
             </dependency>
 
             <!--

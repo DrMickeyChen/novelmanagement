@@ -81,6 +81,22 @@ novel:
     token: ${INTERNAL_TOKEN}
 
 # ============================================================
+# RocketMQ（M3 新增）
+# ============================================================
+rocketmq:
+  # ★★ 生产【故意不写默认值】，和上面的 INTERNAL_TOKEN 同一条规矩：
+  #    不配就启动失败，而不是悄悄连到开发机的 192.168.127.137。
+  #    开发环境的实际值在 application-dev.yml。
+  #    ★ 留占位符而不是整段删掉的理由见 novel-content 的 application.yml
+  #      （删掉的话报错是「no bean of type 'RocketMQTemplate'」，看不出根因）。
+  name-server: ${ROCKETMQ_NAME_SERVER}
+
+  # ★★ 本服务的生产者组【和 content / interaction 不一样】，理由见
+  #    application-dev.yml 里那段（事务回查按生产者组做身份）。
+  producer:
+    group: novel-tx-audit
+
+# ============================================================
 # MyBatis-Plus
 # ============================================================
 # ★ 镜像（novel-content / novel-interaction 同款）—— 这三个服务读写的是【同一个 novel 库】，

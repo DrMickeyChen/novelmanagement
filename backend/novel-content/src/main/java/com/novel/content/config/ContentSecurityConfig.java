@@ -122,23 +122,35 @@ public class ContentSecurityConfig {
     /**
      * ★★ <b>内部接口。</b>本服务给别的服务调的那些端点。
      *
-     * <p>M2 之后有两组（见 {@code InternalContentController}）：
+     * <p>M2 之后有两组，<b>M3 之后只剩一组</b>（全部内容见 {@code InternalContentController}）：
      * <ul>
-     *   <li><b>被 novel-interaction 调</b>（8 个）：拿作品/章节简介、查章节状态、
-     *       校验作品已上架、回写收藏数与评分、取章节 id 列表、
-     *       代写评论审核流水 —— 即 {@code ContentClient} 那一整套。</li>
-     *   <li><b>被 novel-auth 调</b>（1 个）：{@code POST /internal/author-apply-audit-logs}
-     *       （auth 审完一条作者申请，回头调本服务写审核流水）。
-     *       ★ 这个端点 M2 之前住在 novel-backend，M2 之后跟着
-     *       {@code AuditLogService} 一起搬到了这里 ——
-     *       auth 那边的 Feign 客户端也随之改名 BackendAuditClient →
-     *       ContentAuditClient。漏改的症状见那个类的注释。</li>
+     *   <li><b>被 novel-interaction 调</b>：拿作品/章节简介、查章节状态、
+     *       校验作品已上架、取章节 id 列表 —— 即 {@code ContentClient} 那一套。</li>
+     *   <li><s><b>被 novel-auth 调</b>（1 个）：{@code POST /internal/author-apply-audit-logs}</s>
+     *       ★★ <b>M3 已删除</b>：auth 审完作者申请改成发一条事务消息
+     *       （{@code AuthorApplyAuditProducer}），那个端点连同
+     *       {@code InternalAuditLogController} 整个类一起没了 ——
+     *       连带删掉的是 {@code novel-auth} 里全部的 Feign 依赖，
+     *       所以「auth 按服务名找 content」这件事再也不存在。
+     *       ★ 这个端点 M2 之前住在 novel-backend，M2 跟着 {@code AuditLogService}
+     *       搬到这里，客户端也从 BackendAuditClient 改名成 ContentAuditClient ——
+     *       <b>现在两头都没了。</b></li>
      * </ul>
+     * <p>★★ 同一次改造还删掉了两个<b>写</b>端点（{@code PUT .../collect-count}、
+     * {@code PUT .../score}），它们改走 {@code NOVEL_STAT} 消息（自发自消）。
+     * <b>于是 content 的 {@code /internal/**} 现在全是只读的。</b>
+     * 这不是「白名单该收了」，恰恰相反：只读接口更需要 {@code permitAll}，
+     * 因为「它凭什么不要身份」这个问题现在连问都不用问 ——
+     * 它们本来就是查询。
      *
      * <p><b>它们为什么必须 {@code permitAll()}：</b>
-     * 调它们的服务手里<b>没有</b>登录用户的 token —— 有的是
-     * 「当前请求的登录态」（靠 Feign 的出站拦截器转成 {@code X-User-*} 头带过来）。
-     * 而下游<b>不验签</b>，所以这一层没法做认证，只能放行。
+     * IAM 不在这里。调它们的服务手里<b>没有</b>登录用户的 token ——
+     * 网关已经把 token 验完并转成了身份头，而下游<b>不验签</b>，
+     * 所以这一层没法做认证，只能放行。
+     * ★ 改造前这里还多一句「身份靠 Feign 出站拦截器带 {@code X-User-*} 头过来」——
+     * 那件事本身仍然成立（interaction 的拦截器还写着这个头），
+     * 只是 content 的 {@code /internal/**} 里已经<b>没有一条需要身份的写接口</b>了，
+     * 判据的落点搬到了 MQ 消费者那侧，见 {@code InternalContentController} 的类注释。
      *
      * <p><b>那它们凭什么不能被人随便调？把关的是 {@link HeaderAuthenticationFilter}：</b>
      * 请求必须带服务间共享密钥（{@code X-Internal-Token}），
@@ -147,7 +159,9 @@ public class ContentSecurityConfig {
      * <p><b>★★ 两处必须一起改，改一处就是一个洞：</b>
      * <pre>
      *   删掉这一条 / 忘了加  → 合法的服务调用被自己的 anyRequest() 拦下
-     *                          → 书架/历史列表 500、作者申请审核 500
+     *                          → 书架/历史列表 500
+     *                          （M3 之前这里还列着「作者申请审核 500」——
+     *                           那条边改走 MQ 了，不再经过这个白名单）
      *   删掉过滤器里的那道闸 → /internal/** 对全世界开放，且【没有任何症状】
      * </pre>
      *
@@ -288,7 +302,12 @@ public class ContentSecurityConfig {
                          *   /api/novels/1/delete 之类的路径。
                          *
                          * 它敢匿名开放，是因为三件事同时成立：
-                         *   ① 不写库 —— 只对一个 Redis 计数器 INCR，由定时任务异步汇总；
+                         *   ① 不写库 —— ★ M3 起是「发一条异步消息就返回」，
+                         *      请求路径上一次数据库写都没有（改造前是 Redis INCR
+                         *      + 定时回写）。★ 措辞从「不落库」改成了「不写库」：
+                         *      走 MQ 之后接口确实产生了持久数据（一条消息），
+                         *      「不落库」已经是一句假话。完整论证见
+                         *      ReaderNovelController 的类注释。
                          *   ② 不产生数据 —— 没有 INSERT、没有唯一键、不记录调用者；
                          *   ③ 不放宽读的口径 —— 对不存在的书、未上架的书、正常的书，
                          *      响应<b>一个字节都不差</b>（见 ReaderNovelController#recordView

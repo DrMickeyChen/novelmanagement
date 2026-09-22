@@ -17,15 +17,22 @@ import java.util.Map;
  *
  * <p>它为什么必须存在、以及它制造的那个<b>服务级的环</b>
  * （{@code novel-content ⇄ novel-interaction}），完整的论证写在
- * {@code InternalAuditLogController}（本服务）和
- * {@code InternalCommentController}（interaction）的类注释里。
+ * {@code InternalCommentController}（interaction，也就是对端那个端点）
+ * 的类注释里 —— <b>M3 之后那是唯一一处从头讲清它的地方</b>
+ * （content 侧原来那份写在 {@code InternalAuditLogController} 里，
+ * 而那个类随它最后的写端点一起在 M3 删掉了）。
  * 这里只留一句结论：
  * <blockquote>
  * 铁律 1 禁的是<b>代码依赖</b>，而这个接缝是铁律 1 原文里明确列出的例外
  * （原话：「{@code CommentTextLookup}（content 读 interaction）」）。
  * M2 把「同进程 DI」换成了「一次 HTTP 调用」，接缝没变、
- * 服务级却成了环 —— <b>而这个环 MQ 不一定解得掉</b>，见上面那两个类注释。
+ * 服务级却成了环 —— <b>而这个环 MQ 不一定解得掉</b>，见上面那个类注释。
  * </blockquote>
+ * ★★ <b>M3 的对照（值得记一笔，因为它解释了「为什么另一个环解掉了」）：</b>
+ * 同期存在的环 #1（{@code novel-auth ⇄ novel-content}）<b>已经解掉了</b> ——
+ * 它的回程是一次<b>写</b>（审核流水），而写可以异步化（改成一条事务消息）。
+ * 本环的回程是一次<b>读</b>（要显示评论正文），页面就在等这个值，异步化没有意义。
+ * <b>两个环形状相同、结局不同，差别只在回程是读还是写。</b>
  *
  * <p><b>★ 接口住在消费方（content）</b>，理由同 {@link AuthUserClient} ——
  * 「发一次 HTTP 请求」这件事必须住在调用发生的地方。

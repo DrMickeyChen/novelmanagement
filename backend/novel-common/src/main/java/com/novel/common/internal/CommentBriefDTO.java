@@ -13,8 +13,18 @@ package com.novel.common.internal;
  * 留着就意味着 interaction 要 import content 的内部类型，
  * 那正是铁律 1 禁止的方向。
  * <p>★ 改名成 {@code ...DTO} 是跟随本包既有的命名范式
- * （{@code AuthorApplyAuditDTO} / {@code AuthorApplyBriefDTO}）：
+ * （{@code AuthorApplyBriefDTO} / 已经删掉的 {@code AuthorApplyAuditDTO}）：
  * 这个包里的东西都是「跨服务传的信封」，看到 DTO 就知道它会在 HTTP 上跑。
+ * <p>★★ <b>M3 之后本包只剩三个类</b>（{@code AuthorApplyBriefDTO} /
+ * {@code CommentBriefDTO} / {@code InternalResults}）——
+ * 另外两个「信封」是随它们各自的 {@code /internal} 端点一起走的：
+ * {@code AuthorApplyAuditDTO}（审核流水写）与 {@code CommentAuditLogDTO}
+ * （评论流水写）都改成了 MQ 载荷（{@code AuditRecordMessage} 在
+ * {@code com.novel.common.mq} 下）。
+ * <b>★ 包的性质因此变了</b>：{@code internal} 现在只装「同步读」的信封，
+ * 「异步写」的信封在 {@code mq} 包里 —— 这个分界是有意的，
+ * 因为两者的失败语义完全不同（一个是调用失败要当场告诉用户，
+ * 一个是丢进 Broker 由重试兜着）。
  *
  * <p><b>★ 三个访问器的名字 {@code text()} / {@code novelId()} / {@code chapterId()}
  * 一个都没改</b> —— record 的访问器名就是 JSON 的字段名，改了它

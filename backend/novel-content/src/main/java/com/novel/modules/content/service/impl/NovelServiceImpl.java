@@ -9,6 +9,7 @@ import com.novel.common.enums.AuditTargetType;
 import com.novel.common.enums.ChapterStatus;
 import com.novel.common.enums.NovelStatus;
 import com.novel.common.exception.BusinessException;
+import com.novel.common.internal.NovelCollectCountDTO;
 import com.novel.common.result.PageResult;
 import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
@@ -1192,5 +1193,57 @@ public class NovelServiceImpl implements NovelService {
         novelMapper.update(null, new LambdaUpdateWrapper<Novel>()
                 .eq(Novel::getId, novelId)
                 .set(Novel::getScore, score));
+    }
+
+    /* ==================== 供 interaction 的对账任务调用（M3） ==================== */
+
+    /**
+     * 对账扫描的一页。★ <b>收藏数非 0、按 id 升序、游标分页</b>，三条都是刻意的 ——
+     * 完整论证（为什么翻全集、为什么只报非 0、为什么游标不 offset）
+     * 在 {@link NovelService#collectCountsAfter} 的接口注释里，这里只讲实现。
+     */
+    @Override
+    public List<NovelCollectCountDTO> collectCountsAfter(Long afterId, Integer size) {
+        /*
+         * ★★ 为什么用 LambdaQueryWrapper 而不是像 ChapterMapper 那样手写 @Select：
+         *   Wrapper 会自动补 deleted = 0（@TableLogic），手写 SQL 不会 ——
+         *   这正是 NovelMapper 的类注释里那句「这个 Mapper 一条手写 SQL 都没有，
+         *   是刻意的」。对账漏掉这个条件，后果是给已删除的书反复重推统计值。
+         *
+         * ★ 只 select 两列：这一页最多 100 行，但 novel 表有十余列，
+         *   其中 cover 是长 URL、description 是长文本 —— 选进来纯属白搬。
+         *   ★ 顺带避开了「单列投影 + 可空列 → List 里塞 null 元素」那个坑
+         *   （docs/P5 实施记录 ⑥）：那是【单】列投影才有的问题，
+         *   这里两列、且 collect_count 由 `> 0` 保证非空，实体不会退化成 null。
+         *
+         * ★ 游标用 gt 而不是 ge：`ge` 会让下一页重复返回上一页的最后一个 id，
+         *   而调用方又拿它当新游标 —— 死循环，且每一轮都重推同一条消息。
+         */
+        LambdaQueryWrapper<Novel> wrapper = new LambdaQueryWrapper<Novel>()
+                .select(Novel::getId, Novel::getCollectCount)
+                .gt(Novel::getCollectCount, 0)
+                /*
+                 * ★ afterId 为 null 时兜成 0 而不是跳过这个条件：
+                 *   「不加条件」和「id > 0」在 id 全是正数时结果一样，
+                 *   但前者让 SQL 的形态取决于参数（两条不同的执行计划），
+                 *   而且哪天 id 出现 0 / 负数，两句话的结果就分开了。
+                 *   这里要的语义是明确的：「从头开始」= 大于 0。
+                 */
+                .gt(Novel::getId, afterId == null ? 0L : afterId)
+                // ★ 升序是游标分页的前提：调用方拿最后一个 id 当下一页的游标
+                .orderByAsc(Novel::getId);
+
+        /*
+         * ★ 用 buildPage(1, size) + selectPage，理由同 rank：
+         *   .last("LIMIT " + size) 是往 SQL 里拼字符串，绕过分页插件。
+         * ★ size 为 null / 小于 1 时 buildPage 兜成 DEFAULT_PAGE_SIZE；
+         *   上界（100）由 PaginationInnerInterceptor.setMaxLimit 兜 ——
+         *   ★ 那个上界是调用方必须知道的，见接口注释最后一段。
+         */
+        Page<Novel> page = novelMapper.selectPage(buildPage(1, size == null ? 0 : size), wrapper);
+
+        return page.getRecords().stream()
+                .map(novel -> new NovelCollectCountDTO(novel.getId(), novel.getCollectCount()))
+                .toList();
     }
 }

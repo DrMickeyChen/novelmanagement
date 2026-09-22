@@ -1,16 +1,14 @@
 package com.novel.interaction.client;
 
-import com.novel.common.enums.AuditAction;
 import com.novel.common.enums.ChapterStatus;
-import com.novel.common.internal.CommentAuditLogDTO;
 import com.novel.common.internal.InternalResults;
+import com.novel.common.internal.NovelCollectCountDTO;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.common.vo.NovelBriefVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -37,7 +35,8 @@ import java.util.Map;
  * 给别人的章节刷章评 —— 全部成功。
  * <p>而它坏掉的样子非常隐蔽：功能测试全绿（正常路径本来就该成功），
  * 只有真的去点一本下架的书才会发现。这就是为什么拆信封这件事
- * <b>必须有唯一一处实现</b>，而不是靠 8 个调用点各自记得。
+ * <b>必须有唯一一处实现</b>，而不是靠每个调用点各自记得。
+ * （M2 时是 8 个，M3 删掉 3 个写端点后是 5 个 —— 都在下面这一个类里。）
  *
  * <h3>★★ 两个解包方法的选择不是风格问题</h3>
  *
@@ -170,62 +169,58 @@ public class ContentGateway {
         return ids == null ? List.of() : ids;
     }
 
-    /* ==================== 写回 ==================== */
+    /* ==================== 对账扫描（M3） ==================== */
 
     /**
-     * 写回收藏数（绝对值）。★ 失败会抛 —— 但<b>调用方不处理它</b>。
+     * 【对账专用】按 id 升序取「收藏数非 0 的作品」的一页。
      *
-     * <p><b>★★ 这是个已知的数据不一致缺口，M2 只记录不修：</b>
-     * {@code ShelfServiceImpl} 先在自己的库里算出 count（本地事务成功），
-     * 再调这里写回 content。如果这一步失败，<b>收藏数就停在旧值上</b>
-     * —— 书架行是真的加了，数字是旧的，而且不会自愈（除非有人再动一次书架）。
-     * <p>★ 修它需要跨服务事务或最终一致（对账 / 重试队列），
-     * <b>那正是 M3 要做 MQ 的动机之一</b>。M2 不动，见
-     * {@code docs/M2-摘出content.md} 的风险清单。
+     * <p><b>★★ 唯一调用点是 {@code NovelStatReconcileJob}</b>，不是任何请求路径。
+     * 这也决定了它的失败语义：<b>抛出去是对的</b> ——
+     * 对账任务在这一轮少扫一页，就等于这一轮不做判断（下一轮 10 分钟后再来），
+     * 而不是「拿一份不完整的账本去修」（那会把没扫到的书全判成漂移，
+     * 甚至可能用一份半截数据去覆盖正确的值）。
+     * <p>★ 所以这里<b>绝不</b>返回「空列表兜底」…… 注意下面那行 {@code List.of()}
+     * 兜的是<b>对端返回 null</b>（HTTP 这层多出来的「什么都没返回」），
+     * <b>不是</b>「调用失败」。两者看着像，处置完全相反：
+     * 调用失败必须抛（见上），而对端真的返回了空列表是正常结果 ——
+     * 它表示<b>扫到底了</b>，循环该结束。
+     *
+     * <p>★ 页大小必须 ≤ 100，理由在 {@link ContentClient#collectCounts} 的注释里
+     * （请求超过 100 时返回的是被静默截断的一页，而调用方靠
+     * 「返回条数 &lt; 请求条数」判断扫到底 —— 会提前结束、静默漏书）。
      */
-    public void refreshCollectCount(Long novelId, long count) {
-        InternalResults.unwrap(contentClient.refreshCollectCount(novelId, count),
-                "写回收藏数 novelId=" + novelId + " count=" + count);
+    public List<NovelCollectCountDTO> collectCountsAfter(Long afterId, int size) {
+        List<NovelCollectCountDTO> page = InternalResults.unwrap(
+                contentClient.collectCounts(afterId, size),
+                "对账扫描 afterId=" + afterId + " size=" + size);
+        return page == null ? List.of() : page;
     }
 
-    /**
-     * 写回作品评分（绝对值）。
+    /*
+     * ==================== ★★ M3：三个【写】方法全部从这里删掉了 ====================
      *
-     * <p><b>★★ 这个调用点在【事务里】（评论审核），这是 M2 里最需要盯的一处：</b>
-     * Feign 的 read-timeout 是 5000ms，content 慢一次，
-     * 评论审核的数据库事务就被挂住最长 5 秒 ——
-     * 而评论审核是管理端的操作，管理员会以为「按钮没反应」然后<b>再点一次</b>。
-     * <p>★ M2 接受这个代价（改造前是同进程调用，不存在超时），
-     * <b>它和上面那条一起构成了 M3 的 MQ 要解决的两件事</b>。
+     * 原来是 refreshCollectCount / refreshScore / recordCommentAudit，
+     * 现在换成了两条消息：
+     *   refreshCollectCount + refreshScore  →  interaction/mq/producer/NovelStatProducer
+     *   recordCommentAudit                  →  interaction/mq/producer/CommentAuditProducer
+     *
+     * ★★ 注意这里删掉的是【整个方向】：本类从此只读不写。
+     *   interaction 对 content 的依赖还剩 5 条（两次校验 + 两次批量取摘要 +
+     *   一次按作品取章节 id），全是【读】—— M3 的对账又加了第 6 条
+     *   （collectCountsAfter，也是读，而且不来自任何请求路径）。
+     *   ★ 服务级环 #2（content ⇄ interaction）**没有因此解开**，
+     *   因为 content 反过来还要读 interaction 一次（管理端审核日志要显示评论正文）。
+     *   那一条是同步读，不是消息能解的，见 docs/M3-引入MQ.md 的「记一笔」。
+     *
+     * ★ 删掉的两个债（M2 记的 R8 / R9）以及「为什么换成 MQ 就消掉了」，
+     *   论证跟着代码搬到了 NovelStatProducer / NovelStatMessage 的类注释里 ——
+     *   它们讲的是「这条消息为什么长这样」，留在一个已经不存在的方法上没意义。
+     *
+     * ★ 而原来 recordCommentAudit 那段注释里有一条【不该丢】的论证：
+     *   「少一个参数就少一个能用错的面」—— 改造前 {@code AuditTargetType} 是调用方传的，
+     *   手滑写成 record(AUTHOR_APPLY, commentId, ...) 会往流水表里写一条
+     *   「作者申请 #5 通过」的假记录，能编译、不报错，而且那张表只追加不可改。
+     *   现在这个面由 CommentAuditProducer 收口（它在内部写死 AuditTargetType.COMMENT，
+     *   调用方连类型都传不了）—— 约束还在，只是换了地方。
      */
-    public void refreshScore(Long novelId, BigDecimal score) {
-        InternalResults.unwrap(contentClient.refreshScore(novelId, score),
-                "写回作品评分 novelId=" + novelId + " score=" + score);
-    }
-
-    /* ==================== 写流水 ==================== */
-
-    /**
-     * 记一条「评论审核」流水。
-     *
-     * <p>★ 改造前这里是 {@code auditLogService.record(COMMENT, commentId, action, remark)}
-     * —— 那时 {@code AuditTargetType} 是调用方传的。现在<b>不传了</b>：
-     * 对端那个端点只接受评论，类型由它写死。
-     * <p><b>★ 少一个参数就少一个能用错的面</b>：改造前如果手滑写成
-     * {@code record(AUTHOR_APPLY, commentId, ...)}，会往流水表里写一条
-     * 「作者申请 #5 通过」的假记录 —— 能编译、不报错，而且流水表
-     * 只追加不可改，那条假记录删不掉。
-     *
-     * @param commentId 评论 id
-     * @param remark    审核备注（驳回理由）。★ 允许为空 ——
-     *                  「驳回必须填理由」是前端规则，后端刻意不拦
-     */
-    public void recordCommentAudit(Long commentId, AuditAction action, String remark) {
-        CommentAuditLogDTO dto = new CommentAuditLogDTO();
-        dto.setCommentId(commentId);
-        dto.setAction(action);
-        dto.setRemark(remark);
-        InternalResults.unwrap(contentClient.recordCommentAudit(dto),
-                "记评论审核流水 commentId=" + commentId);
-    }
 }

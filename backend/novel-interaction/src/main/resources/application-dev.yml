@@ -174,6 +174,38 @@ novel:
     #      生产环境靠环境变量 JWT_SECRET 覆盖它（见 application.yml）。
     secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
 
+# ---------------- RocketMQ（M3 新增） ----------------
+#
+# ★★ 顶层键，不在 spring: 下面（前缀是 rocketmq）。写成 spring.rocketmq.* 会被
+#    静默忽略、退回 localhost:9876 —— 完整说明见 novel-content 的 application-dev.yml，
+#    这里不复述同一段论证，只记本服务【特有】的部分。
+#
+# ★ name-server 的值必须和 content / auth 两份【逐字相同】（同一个 broker）。
+rocketmq:
+  name-server: 192.168.127.137:9876
+
+  # ★★ 和 content 共用 novel-producer，而不是各起一个组。
+  #
+  #    生产者组的语义是「一组发送同类消息的实例」，它【不】参与消费，
+  #    也不决定谁能收到 —— 那是消费组的事。本服务发 PROGRESS_REPORT（自己消费）
+  #    和 NOVEL_STAT（content 消费），都属于同一批业务消息。
+  #
+  #    ★ 反过来，如果哪天要发【事务消息】，就必须单独起一个组 ——
+  #      事务回查是按 (生产者组, 事务) 定位的，混在一起会互相干扰。
+  #      auth 就是因此单独用了 novel-tx-audit。
+  producer:
+    group: novel-producer
+
+  # ★★ 本服务【唯一】的消费组不在 yml 里，写在 @RocketMQMessageListener 上
+  #    （group-content-view 那种是 content 的；本服务的是 group-interaction-progress）。
+  #    这样设计是刻意的：一个 (服务, Tag) 一个组，见 MqConstant 的类注释。
+  #    ★ 后果是「消费组有哪些」这件事 grep yml 查不到，要 grep 注解 ——
+  #      好在 @RocketMQMessageListener 一共就那么几处。
+  #
+  # ★ 这里同样【没有】rocketmq.consumer.* 段：max-reconsume-times 那个属性
+  #   根本不存在（RocketMQProperties$PullConsumer 上没有这个字段），
+  #   写了会被静默忽略。重试次数只能写在注解上。详见 content 那份的注释。
+
 # ---------------- 接口文档显示开关 ----------------
 springdoc:
   api-docs:

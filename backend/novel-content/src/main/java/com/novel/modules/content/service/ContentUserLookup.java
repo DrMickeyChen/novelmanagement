@@ -58,9 +58,16 @@ import java.util.Objects;
  * <p><b>依赖方向提醒：</b>只能 content → system，绝不能反过来。
  * system 模块（认证/用户）不该知道小说的存在，否则二期的 auth 服务
  * 就反向依赖 content 了，拆分顺序（M1 先拆 auth、M2 再拆 content）直接作废。
- * <p>★ M1 之后这条规矩多了一个例外，但它不在这里 ——
- * 见 {@code InternalAuditLogController} 的类注释（那是铁律 1 原文
- * 明确列出的一个接缝，方向相反）。
+ * <p>★ <b>M3 之后这条规矩的例外从两个减到了一个，而且剩下的那个不在这儿：
+ * {@code CommentBriefClient}（content 读 interaction）。</b>
+ * 原来还有第二个反向的接缝 —— {@code AuthorApplyAuditRecorder}
+ * （auth 审完作者申请要 content 记流水），M3 把它换成了一条事务消息，
+ * 于是它连同 {@code novel-auth} 里全部的 Feign 依赖一起消失了。
+ * <p>★★ <b>这次删除顺带说明了一件容易搞混的事</b>：
+ * 那个接缝在 M1/M2 期间是铁律 1 原文里明确列出的例外，<b>但它同时是一个
+ * 服务级的环</b>（{@code novel-auth ⇄ novel-content}）——
+ * 「代码依赖合规」和「服务级没有环」是两件事，M1 两条都记了。
+ * M3 解掉的是后一条。完整的对照写在 {@code InternalCommentController} 的类注释里。
  *
  * <h3>★ 失败时不降级，直接抛</h3>
  *

@@ -37,13 +37,28 @@
              为的就是让 spring-webmvc 传不过来 —— 网关一旦沾上 spring-webmvc
              就启动不了（见下面 gateway 本体那条注释）。
 
-         ★ 所以引 novel-common 这件事【必须】配合一条验证命令（见 README / docs/M1）：
-             mvn -f backend/novel-gateway/pom.xml dependency:tree \
-               | grep -E "spring-boot-starter-web:jar|spring-webmvc|tomcat-embed-core"
-           期望：零输出。
-           ★ 正则必须【锚定到 starter-web:jar】—— 松散地 grep
-             "spring-boot-starter-web" 会误命中 spring-boot-starter-webflux
-             （那是网关自己要的），于是永远「验证失败」，最后被人忽略掉。
+         ★ 所以引 novel-common 这件事【必须】配合一条验证命令。
+           ★★ 命令本体（以及正则里那几个锚点为什么不能省）写在下面
+              「网关本体」那条注释里 —— 只抄那一条，别自己写：
+              M3 实测过两种「看起来也对、其实什么都验不到」的写法。
+
+           ★★ 反例一（M1~M2 就是这么写的，M3 订正）：
+                  mvn -f backend/novel-gateway/pom.xml dependency:tree
+              它【静默地什么都没验到】：novel-common 从来没有 install 进本地仓库，
+              Maven 只打一句 WARNING
+                  The POM for com.novel:novel-common:jar:1.0.0 is missing
+              就把 novel-common 当成【叶子节点】列出来 —— 而它下面那棵子树
+              （spring-boot-starter-web / spring-webmvc / tomcat-embed-core 全在里面）
+              一个字都不打印：退出码 0、BUILD SUCCESS、零命中。
+              ★ 也就是说，把本 pom 里那条 <exclusions> 删掉，它照样「通过」。
+                一条不会失败的护栏比没有护栏更糟 —— 它给人「已经验过了」的错觉。
+
+           ★★ 反例二：跑聚合 POM 但不做段落切分。
+              那三个 jar 在 novel-common 的子树里【确实存在】（M3 实测 3 命中），
+              它们正是被本 pom 中 novel-common 那条依赖的 <exclusions> 挡在外面的，
+              不切段就会把 novel-common 的正常依赖误判成网关的违规。
+              ★ 顺带：那 3 命中就是这条护栏的【阳性对照】——
+                它证明这条管道有能力失败，而不是只会打印零。
     -->
 
     <dependencies>
@@ -108,8 +123,44 @@
                   which is incompatible with Spring Cloud Gateway.
 
           验证这件事不能靠自觉，跑这条命令（必须零输出）：
-              mvn -f backend/novel-gateway/pom.xml dependency:tree \
-                | grep -E "spring-boot-starter-web|spring-webmvc|tomcat-embed-core"
+              mvn -f backend/pom.xml dependency:tree > tree.log
+              sed -n '/@ novel-gateway /,/@ novel-auth /p' tree.log \
+                | grep -E "spring-boot-starter-web:jar|spring-webmvc|tomcat-embed-core|rocketmq|netty-all"
+
+          ★★ 那条 sed 的范围【依赖 reactor 顺序】，改模块依赖前先看一眼：
+             它成立的依据是「gateway 排在 auth 前面」。今天的顺序是
+                 parent → common → content → interaction → gateway → auth
+             （M3 实测）。★ 这个顺序是 POM 依赖图算出来的，不是谁规定的 ——
+             哪天 gateway 被排到 auth 后面，范围就【永远不开始】，
+             sed 一个字都不输出 → 又变回「不会失败的护栏」。
+             ★ 想彻底躲开这一点，用带上游的定向构建（只跑 3 个模块，也更快）：
+                 mvn -f backend/pom.xml -pl novel-gateway -am dependency:tree \
+                   | sed -n '/com.novel:novel-gateway:jar/,$p' \
+                   | grep -E "spring-boot-starter-web:jar|spring-webmvc:jar|tomcat-embed-core:jar|rocketmq|netty-all"
+               ★ 这里 `,$p`（切到文件尾）是对的：`-am` 只带出 parent / common，
+                 gateway 必然排在最后。仍然【不能】单跑本模块的 pom，理由见上面。
+
+          ★★ 两个必须注意的地方，都是实测踩出来的：
+
+          ① `:jar` 这个锚【不能省】。
+             `grep "spring-boot-starter-web"` 会命中
+                 org.springframework.boot:spring-boot-starter-webflux:jar
+             —— 因为前者是后者的前缀。而 webflux 【正是网关自己要的】，
+             于是这条命令会永远报一个假阳性，久而久之就没人看它了。
+             （M3 实测：加宽之前先跑了一遍，唯一命中就是这条 webflux。）
+
+          ② `rocketmq|netty-all` 是 M3 加上的，它们【不在】原来那三类里。
+             M3 给 auth / content / interaction 三个服务加了 RocketMQ，
+             而 rocketmq-client 会拖进来 io.netty:netty-all —— 一个 jar
+             装下所有 Netty 类。网关跑的是 Boot 托管的【逐个 netty-* 模块】
+             （Reactor Netty），两者混用是 NoSuchMethodError 的经典来源，
+             而且【运行时才炸】，你拿不到「Spring MVC found on classpath」
+             那句友好的启动期报错。
+
+             ★ M3 实测的结论：netty-all 确实进来了，但只进了那三个服务
+               （content / interaction / auth 各一个），网关里没有 ——
+               因为网关根本不依赖 rocketmq，也不依赖 novel-common 的这一部分。
+               这条 grep 加宽，防的是【将来有人手滑把 rocketmq 加进 common】。
 
           启动日志也要看一眼：应该是
               Netty started on port 8080

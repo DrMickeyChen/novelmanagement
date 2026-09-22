@@ -67,10 +67,31 @@ class JwtUtilTest {
     void shouldRejectTamperedToken() {
         String token = jwtUtil.generateToken(1L, "admin", "jti-abc");
 
-        // 动最后一个字符 = 动签名。这是攻击者最想干的事：
-        // 把 sub 里的 1 改成 2 就能冒充别人 —— 只要签名对得上。
-        char last = token.charAt(token.length() - 1);
-        String tampered = token.substring(0, token.length() - 1) + (last == 'A' ? 'B' : 'A');
+        // 动签名。这是攻击者最想干的事：把 sub 里的 1 改成 2 就能冒充别人 ——
+        // 只要签名对得上。
+        //
+        // ★★ 必须改【签名段的第一个字符】，不能改最后一个。这不是风格问题，
+        //    是一个会让这条测试变成 flaky 的真实陷阱（M3 构建时踩到并查清）：
+        //
+        //    HMAC-SHA256 的签名是 32 字节 = 256 bit，base64url 按 6 bit 一组
+        //    → 43 个字符（42 × 6 = 252，还剩 4 bit）。所以【最后一个字符只承载
+        //    4 个有效 bit，另外 2 bit 是补零】，它的取值只可能是
+        //    A E I M Q U Y c g k o s w 0 4 8 这 16 个。
+        //
+        //    原来的写法是「末位不是 A 就改成 A」，而 A 和 B 的高 4 位都是 0000 ——
+        //    于是签名末尾 4 bit 恰好为 0 的那 1/16 的 token，改完【解出来的字节
+        //    一模一样】，验签照样通过，assertThrows 落空、整个 package 挂掉。
+        //    （实测 20000 次采样命中 6.29%。）
+        //
+        //    ★ 而它偏偏是一条【安全不变量】的测试：一个 6.25% 概率时灵时不灵的
+        //      「改了就验不过」，比没有这条测试更误导 ——
+        //      失败时第一反应会去怀疑 JwtUtil，而 JwtUtil 完全没问题。
+        //
+        //    首字符的 6 个 bit 全部有效，换成任何别的字符都必然改变解码结果。
+        String[] parts = token.split("\\.");
+        char[] signature = parts[2].toCharArray();
+        signature[0] = signature[0] == 'A' ? 'B' : 'A';
+        String tampered = parts[0] + "." + parts[1] + "." + new String(signature);
 
         assertThrows(JwtException.class, () -> jwtUtil.parseToken(tampered));
     }

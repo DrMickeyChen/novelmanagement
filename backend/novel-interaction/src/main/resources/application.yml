@@ -33,11 +33,14 @@ spring:
   application:
     # ★★ 这个名字有四处硬绑定，改它必须同时改：
     #      ① 网关 application.yml 的 lb://novel-interaction
-    #      ② novel-auth 的 ContentAuditClient 的 @FeignClient(name=...)
+    #      ② 本模块 client/AuthNicknameClient 的 @FeignClient(name=...)
     #      ③ 本模块 pom 的 artifactId / finalName（jar 名）
     #      ④ package.json 的 dev:interaction
-    #    漏改②的症状最隐蔽：审核作者申请时 Nacos 找不到实例 → 审计流水写不进去
-    #    → 前端 500，而「作者申请审核」是个低频操作，回归里很容易被跳过。
+    #    漏改②的症状最隐蔽：Feign 拿不到实例（Nacos 里没有这个名字）
+    #    → 一次运行时错误，而它只在「某个列表页要显示昵称」时才被触发。
+    #    ★ M3 之前②写的是「novel-auth 的 ContentAuditClient」—— 那个客户端
+    #      随环 #1 一起删掉了（审核流水改走 MQ），但**这条名字绑定没消失**，
+    #      只是换成了本模块自己的 AuthNicknameClient。名字仍然不能乱改。
     name: novel-interaction
 
   profiles:
@@ -138,6 +141,24 @@ novel:
   #  ★★ 漏删这一段的症状不是报错，是【配置有两个人以为自己在管】：
   #     这里留着的值没人读，改它不会有任何效果，
   #     而排查的人会对着这一份改半天。
+
+# ============================================================
+# RocketMQ（M3 新增）
+# ============================================================
+rocketmq:
+  # ★★ 生产【故意不写默认值】，和 novel.internal.token / novel.jwt.secret 同一条规矩：
+  #    不配就启动失败，而不是悄悄连到开发机的 192.168.127.137。
+  #    开发环境的实际值在 application-dev.yml。
+  #
+  # ★ 留这个占位符而不是整段删掉的理由见 novel-content 的 application.yml
+  #   （删掉的话报错是「no bean of type 'RocketMQTemplate'」，看不出根因）。
+  name-server: ${ROCKETMQ_NAME_SERVER}
+
+  # 生产者组：和 dev、和 content 一致 —— 它不是环境相关的配置。
+  # ★ 消费组不在这里，写在 @RocketMQMessageListener 的 group 属性上
+  #   （一个 (服务, Tag) 一个组，见 MqConstant）。
+  producer:
+    group: novel-producer
 
 # ============================================================
 # MyBatis-Plus

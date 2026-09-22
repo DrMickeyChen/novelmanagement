@@ -3,6 +3,7 @@ package com.novel.modules.system.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.novel.auth.mq.producer.AuthorApplyAuditProducer;
 import com.novel.common.constant.CommonConstant;
 import com.novel.common.enums.AuditAction;
 import com.novel.common.enums.AuditStatus;
@@ -19,7 +20,6 @@ import com.novel.modules.system.mapper.AuthorApplyMapper;
 import com.novel.modules.system.mapper.SysRoleMapper;
 import com.novel.modules.system.mapper.SysUserMapper;
 import com.novel.modules.system.mapper.SysUserRoleMapper;
-import com.novel.modules.system.service.AuthorApplyAuditRecorder;
 import com.novel.modules.system.service.AuthorApplyService;
 import com.novel.modules.system.vo.AuthorApplyVO;
 import lombok.RequiredArgsConstructor;
@@ -37,13 +37,24 @@ import java.util.Map;
 /**
  * 作者申请的实现。
  *
- * <p><b>★ 这个类只碰 {@code author_apply} / {@code sys_user} / {@code sys_role} /
+ * <p><b>★★ 这个类只碰 {@code author_apply} / {@code sys_user} / {@code sys_role} /
  * {@code sys_user_role} 四张表，全都在 {@code modules/system} 自己的地盘里</b> ——
- * 没有一处跨模块查询，二期 M1 摘 auth 服务时可以整个搬走。
- * <p>唯一的例外是「记审核流水」：那件事在 {@code modules/content}，
- * 走的是 {@link AuthorApplyAuditRecorder} 这个<b>定义在本模块</b>的接口
- * （实现在 content 侧）。<b>本类里找不到任何对 content 的 import</b>，
- * 这就是那个接口的全部意义 —— 理由写在它的类注释里。
+ * 没有一处跨模块查询，M1 摘 auth 服务时可以整个搬走。
+ *
+ * <p><b>★★★ M3 之后，这里连「唯一的例外」也没有了。</b>
+ * M1/M2 时期这句话后面跟着一句「唯一的例外是记审核流水，那件事在 content」——
+ * 那时它走的是 {@code AuthorApplyAuditRecorder} 这个<b>定义在本模块</b>的接口
+ * （实现在 content 侧，靠一次 Feign 调用）。M3 把那一步换成了
+ * {@link AuthorApplyAuditProducer} 的一条<b>事务消息</b>，
+ * 于是 {@code novel-auth} 里<b>一条出站边都不剩</b>：
+ * 那个接口、它的实现、以及 {@code ContentAuditClient} 全部删掉了，
+ * {@code @EnableFeignClients} 也一并摘掉了（见 {@code AuthApplication}）。
+ *
+ * <p>★ <b>注意「代码依赖」和「运行时依赖」这次是同时消失的</b>，这是 M1 那次没有的：
+ * M1 只是把依赖拧了个方向（接口留在消费方，实现变成发一次 HTTP），
+ * 所以{@code novel-auth ⇄ novel-content} 那个<b>服务级的环</b>还在；
+ * M3 把「发」这件事本身交给了 Broker，环才真正断开。
+ * <b>别再说这个类是「跨模块接缝的范例」了</b> —— 它现在是「没有接缝」的范例。
  *
  * @author MickeyChen
  */
@@ -69,7 +80,16 @@ public class AuthorApplyServiceImpl implements AuthorApplyService {
     private final SysRoleMapper roleMapper;
     private final SysUserRoleMapper userRoleMapper;
     private final TokenStore tokenStore;
-    private final AuthorApplyAuditRecorder auditRecorder;
+
+    /**
+     * ★ M3：从「一次 Feign 写」换成了「一条事务消息」。
+     *
+     * <p>类型从 {@code AuthorApplyAuditRecorder} 变成本类，是 M3 唯一动到本类的地方 ——
+     * <b>业务逻辑一行没改</b>，连调用点的位置都没挪（见 {@code audit()} 的注释）。
+     * 这个生产者住在 {@code com.novel.auth.mq}，是 {@code com.novel.auth} 下
+     * <b>唯一一个跟外部世界打交道的包</b>，而它打交道的对象是 Broker、不是兄弟服务。
+     */
+    private final AuthorApplyAuditProducer auditProducer;
 
     /* ================================================================
      *  管理端
@@ -196,9 +216,24 @@ public class AuthorApplyServiceImpl implements AuthorApplyService {
      * 审核：通过（并授予 AUTHOR 角色）或驳回。
      *
      * <p><b>★ 事务：申请状态、{@code sys_user_role}、审核流水三者必须一起成功或一起失败。</b>
-     * {@code record} 自己没有 {@code @Transactional}，所以它加入本方法的事务 ——
-     * 这正是那个接口注释里写明的设计（「一条不真实的流水比没有流水更糟」）。
-     * <p>反过来说：如果 {@code insertUserRole} 失败又没回滚，
+     *
+     * <p><b>★★ 这句「一起成功或一起失败」在 M2 期间是【假的】，M3 才把它做成真的 ——
+     * 这段沿革必须留着，它是理解本方法为什么要用事务消息的全部背景。</b>
+     * <pre>
+     *   改造前（单体）  流水和审核在同一个进程、同一个事务里，三者确实同生共死。
+     *   M2（拆服务）    「写流水」变成了一次 Feign 调用，而【Feign 不参与调用方的事务】。
+     *                  于是 content 那边立刻提交了一条流水，auth 这边随后一回滚，
+     *                  它就成了一条不会有人删的【孤儿流水】——
+     *                  而那句注释还挂在这里，说的是「一起成功或一起失败」。
+     *   M3（本次）      换成一条【事务消息】：半消息先行、本地事务提交后才可见、
+     *                  本进程崩了由 Broker 回查裁决。三个东西重新变成一个原子事实。
+     * </pre>
+     * ★ 所以 {@code publishAuthorApplyAudit} 的位置<b>刻意保持在最后一行</b>：
+     * 不是因为它必须在最后（事务消息已经不要求这个了 —— 半消息的可见性由
+     * afterCommit 决定，和它在方法体的哪一行无关），而是因为<b>把它挪走没有任何好处，
+     * 而留着它能让这次改动的 diff 只有一行</b>。
+     *
+     * <p>★ 反过来说：如果 {@code grantAuthorRole} 失败又没回滚，
      * 申请人会拿到「已通过」但进不去创作中心 —— 见类注释。
      */
     @Override
@@ -307,8 +342,14 @@ public class AuthorApplyServiceImpl implements AuthorApplyService {
          *   这里【没有】SUBMIT —— 提交申请不记流水：audit_log 记的是
          *   【状态流转】，而申请一出生就是「待审核」，没有「提交」这一次流转可记。
          *   和 {@code CommentServiceImpl#create} 是同一条规矩（那边的注释写得更长）。
+         *
+         * ★★ M3：这一行原来是 auditRecorder.record(...)，一次 Feign 写。
+         *   现在是一条事务消息 —— 参数一个没变（applyId / action / remark），
+         *   多出来的 operatorId 是本方法自己已经取好的那个（第 207 行），
+         *   跟着载荷一起走是因为 MQ 的消费线程上没有 UserContext。
+         *   完整的论证（以及「为什么这次可以把它放进载荷」）在 AuditRecordMessage 的类注释里。
          */
-        auditRecorder.record(applyId,
+        auditProducer.publishAuthorApplyAudit(operatorId, applyId,
                 target == AuditStatus.APPROVED ? AuditAction.APPROVE : AuditAction.REJECT,
                 dto.getRemark());
 

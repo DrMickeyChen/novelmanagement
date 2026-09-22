@@ -75,6 +75,29 @@
         </dependency>
 
         <!--
+          ==================== 消息队列（M3 新增） ====================
+          ★ 版本在父 pom 的 dependencyManagement 里（rocketmq-spring.version）。
+            为什么不叫 rocketmq.version，见父 pom 里那段长注释 —— 那是个真的坑。
+
+          ★★ content 在 M3 里是【收得最多】的一个服务，四个 Tag 占了三个：
+              VIEW_REPORT   自发自消  —— 阅读量（增量、并发批量聚合）
+              NOVEL_STAT    收        —— 收藏数 / 评分（绝对值 + 时间戳单调写）
+              AUDIT_RECORD  收        —— 审核流水（消费端 SETNX 幂等）
+            两个生产者都【不在这里】：进度是 interaction 自发自消，
+            审核流水是 auth 发的。
+
+          ★ 依赖里会带进来一个 spring-boot-starter-validation ——
+            本 pom 上面已经显式声明了同一个东西，所以是个 no-op。
+            （★ 加依赖前专门查过：如果这里【没有】它，那个 starter 会让
+             本来被静默忽略的 @NotNull 突然开始生效 —— 那是一次
+             静默的接口行为变更。查过才能说「无害」。）
+        -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!--
           ==================== 注册中心 ====================
           ★ 只加这一个依赖，本服务就变成 Nacos 上的一个实例，
             网关的 lb://novel-content 才找得到它。
@@ -129,15 +152,21 @@
               ★ 启动直接失败，而且报错指向「RedisConfig 缺一个 bean」，
                 【不指向】「你少加了一个依赖」—— 这是最费时间的那类错误。
 
-          ★ 反过来说：本服务【本来】就真的需要 Redis ——
-            NovelViewCounter 用 StringRedisTemplate 做阅读量脏集
-            （NOVEL_VIEWS + NOVEL_VIEW_DIRTY），按 SchedulingConfig 定时回写。
-            所以这不是「为了迁就 common 而加的依赖」，它本来就在。
+          ★ 反过来说：本服务【本来】就真的需要 Redis。
+            M3 之后还剩两处用 StringRedisTemplate 的地方 ——
+            AuditRecordConsumer 的消费幂等（SETNX mq:idempotent:{messageKey}）
+            与 NovelStatWriteGuard 的防乱序守卫（Lua 脚本 + NOVEL_STAT_AT）。
+            ★ 改造前那个理由（NovelViewCounter 的阅读量脏集）已经随类一起删了，
+              但结论没变：这不是「为了迁就 common 而加的依赖」，它本来就在。
+            （同样的警告在 application-dev.yml 的 spring.data.redis 那一段。）
 
-          ★ 同理 novel-interaction 也保留着这套配置（它自己不直接读写 Redis，
-            但 RedisConfig 一样会被扫到）。那条不在 M2 的改动清单里
-            （它是【保留】不是新增），但写在这里 —— 否则将来有人
-            「清理没用的 Redis 依赖」时会在 interaction 上踩同一个坑。
+          ★ 同理 novel-interaction 也保留着这套配置。★ 而它【也真的在用】——
+            （这条在 M3 时订正过：原文写的是「它自己不直接读写 Redis」，那是假话）
+            评论 10 秒频控的 SET NX EX（CommentServiceImpl）
+            与收藏数对账任务的分布式锁（NovelStatReconcileJob 的 LOCK_PREFIX）。
+            所以那条依赖既不能删、也不是「为了迁就 common 才保留的」。
+            ★ 写在这里的理由：将来有人「清理没用的 Redis 依赖」时，
+              在 interaction 上会踩和这里同一个坑。
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -1,6 +1,7 @@
 package com.novel.internal.controller;
 
 import com.novel.common.enums.ChapterStatus;
+import com.novel.common.internal.NovelCollectCountDTO;
 import com.novel.common.result.Result;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.common.vo.NovelBriefVO;
@@ -12,13 +13,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -75,16 +74,30 @@ import java.util.Map;
  * {@code /uploads/**} 两类前缀 —— 于是<b>网关在结构上就转发不出这个接口</b>。
  * 不是「记得别配路由」，是「配不出这条路由」。
  *
- * <h3>★ 这里的接口有【写】的，和 auth 那边不一样</h3>
+ * <h3>★ M3 之前这里有两个【写】接口，现在一个都不剩了</h3>
  *
- * <p>{@code refreshCollectCount} / {@code refreshScore} 会改
- * {@code novel.collect_count} / {@code novel.score}。它们<b>不需要身份</b>
- * （写的是「重算出来的绝对值」，和谁在操作无关，见
- * {@code NovelService#refreshCollectCount} 的注释），
- * 所以本类<b>没有</b> {@code InternalAuditLogController} 里那段
- * 「校验 {@code UserContext} 非空」的检查 —— 那两个写接口确实要记操作人，
- * 这两个不要。<b>「只读不要身份、写要身份」这条区别是有意的，但真正的判据是
- * 「这次写入需不需要知道是谁干的」。</b>
+ * <p>改造前 {@code refreshCollectCount} / {@code refreshScore} 会改
+ * {@code novel.collect_count} / {@code novel.score}，它们<b>不需要身份</b> ——
+ * 写的是「重算出来的绝对值」，和谁在操作无关。
+ * <p><b>★★ M3 把这两个写端点整个删了</b>：写回改走 {@code NOVEL_STAT} 消息，
+ * 消费者是 content 自己的 {@code NovelStatConsumer}（<b>自发自消</b>）。
+ * 于是本类<b>只剩读</b>，而「只读接口不需要身份」这件事不再需要论证 ——
+ * 它本来就是查询。
+ * <p>★ <b>判据「这次写入需不需要知道是谁干的」没有消失，但它在 content 里的落点换了。</b>
+ * M2 时期 content 有三个 {@code /internal} 写端点，这条判据由
+ * {@code InternalAuditLogController} 里那句「校验 {@code UserContext} 非空」印证。
+ * <b>M3 把那三个写端点全部删掉了</b>（两个统计写回 → {@code NOVEL_STAT} 消息，
+ * 审核流水 → {@code AUDIT_RECORD} 消息），于是：
+ * <pre>
+ *   content 的 /internal/**  从此【全是读】—— 本类就是全部内容
+ *   审核流水那条写              搬进了 AuditRecordConsumer，判据跟着变成
+ *                              「载荷里有没有 operatorId」
+ * </pre>
+ * ★ 那一步不是「换个地方写同一句话」，是<b>判据的形态变了</b>：
+ * HTTP 时代问的是「请求头里有没有身份」，MQ 时代问的是「消息里有没有操作人」——
+ * 因为消费者线程上<b>永远没有</b> {@code UserContext}（MQ 没有请求），
+ * 想照搬原来的检查会得到「每一条消息都抛异常」。
+ * 完整的论证在 {@code AuditRecordConsumer} 的类注释里（那段「绝不能伪造 UserContext」）。
  *
  * @author MickeyChen
  */
@@ -196,42 +209,62 @@ public class InternalContentController {
         return Result.success(chapterService.idsOfNovel(id));
     }
 
-    /* ==================== 写回（重算出来的绝对值） ==================== */
+    /* ==================== 对账扫描（M3） ==================== */
 
     /**
-     * 写回收藏数。<b>绝对值覆盖，不是 +1 / -1</b> ——
-     * 完整论证见 {@code NovelService#refreshCollectCount}。
+     * 按 id 升序取「收藏数非 0 的作品」的一页，给 interaction 的对账任务翻。
      *
-     * <p><b>★★ 这个接口必须配「不重试」</b>（{@code Retryer.NEVER_RETRY}，
-     * 在 {@code novel-interaction} 的 {@code FeignIdentityConfig} 里）。
-     * 好在这里写的是绝对值，重试一次结果也一样（幂等）——
-     * 但那是<b>运气好</b>，不是可以依赖的性质：换成增量写法它就是重复计数。
-     * 而 {@code novel.collect_count} 是读者端会显示的数字，
-     * 错了没人会去数、也就没人发现。
+     * <p><b>★★ 这是本类唯一一个「给机器看、不给人看」的接口。</b>
+     * 上面几个都是「interaction 要渲染页面，来问这边拿数据」，
+     * 而它的调用方是 {@code NovelStatReconcileJob} —— 一个每 10 分钟跑一次的定时任务，
+     * 拿这些数字去和 interaction 自己的 {@code COUNT(*)} 真值比对，修漂移。
      *
-     * <p>★ 第二参是 <b>{@code long}（基本类型）</b>而不是 {@code Long}：
-     * 收藏数不可能是 null，用包装类型等于凭空多一个要处理的空态。
+     * <p><b>★ 为什么这个端点【没有】条数上限 / 告警阈值：</b>
+     * 它一次只回答一页（≤ {@code PaginationInnerInterceptor} 的 100 行），
+     * 一次调用本身没有任何「太大了」的风险 —— 有风险的是<b>循环调用</b>它的人。
+     * 所以「扫了多少轮 / 超过多少行该去看看了」那条线画在调用方
+     * （{@code NovelStatReconcileJob} 的 {@code SCAN_WARN_THRESHOLD}），
+     * 那里才是循环发生的地方。
+     * <p>★ 两边各画一条线的坏处是具体的：两个阈值，改一个忘一个，
+     * 而它们谁都不会报错 —— 一个静默截断、一个静默不告警。
+     *
+     * <p><b>★★ 不能拿它当「批量查收藏数」的通用接口用。</b>
+     * 它一次最多 100 行、且只报非 0 的书 —— 想查「这几本书的收藏数」应该去
+     * {@link #novelBriefs}（那边带书名封面，是给人看的）。
+     * 用错它的症状是：书架上收藏数为 0 的书<b>查不到</b>，
+     * 而调用方多半会把「查不到」当成「作品已下架」—— 一个静默的错分类。
+     *
+     * <p>★ 匿名可调（{@code /internal/**} 走内部令牌，见 {@code ContentSecurityConfig}）：
+     * 它只读、且读的是「已经公开给读者看的收藏数」（作品详情页上就有）。
      */
-    @PutMapping("/novels/{id}/collect-count")
-    public Result<Void> refreshCollectCount(@PathVariable("id") Long id,
-                                            @RequestParam("count") long count) {
-        novelService.refreshCollectCount(id, count);
-        return Result.success();
+    @GetMapping("/novels/collect-counts")
+    public Result<List<NovelCollectCountDTO>> collectCounts(
+            @RequestParam(value = "afterId", required = false) Long afterId,
+            @RequestParam(value = "size", required = false) Integer size) {
+        return Result.success(novelService.collectCountsAfter(afterId, size));
     }
 
-    /**
-     * 写回作品评分。<b>绝对值覆盖</b>，且只在书评上做 ——
-     * 完整论证见 {@code NovelService#refreshScore}。
+    /*
+     * ==================== ★★ M3：两个【写】端点全部删掉了 ====================
      *
-     * <p>★ 第二参是 <b>{@code BigDecimal}</b> 而不是 {@code double}：
-     * {@code novel.score} 是 {@code DECIMAL}，用 double 会在
-     * 「算出来 7.3、存进去 7.299999999999999」这种地方留下一个
-     * 永远对不平的尾差（同实体字段的类型选择）。
+     * 原来是 PUT /novels/{id}/collect-count 与 PUT /novels/{id}/score，
+     * 由 interaction 的 ContentGateway 同步 Feign 调过来。
+     * M3 起它们走 NOVEL_STAT 消息，消费者是 content 自己的 NovelStatConsumer ——
+     * ★ 「跨服务写」变成了「自发自消」，这条边界上的写路径没有了。
+     *
+     * ★★ 所以本类现在【只剩读】，上面那段类注释里
+     *   「这里的接口有【写】的，和 auth 那边不一样」已经不成立了 ——
+     *   而且 M3 之后 content 整个 {@code /internal/**} 都没有写了
+     *   （{@code InternalAuditLogController} 连同它最后那个作者申请流水端点一起删掉了，
+     *   见类注释里那段「判据的落点换了」）。
+     *   **留着那句会变成假话，所以改在这里而不是删掉整段**：
+     *   读接口不需要身份这件事，理由从「写要身份、读不要」
+     *   变成了更简单的一条 —— 它们本来就是只读查询。
+     *
+     * ★ 那两个端点的入参约束（count 用 long 不用 Long、score 用 BigDecimal
+     *   不用 double）**没有丢** —— 它们跟着方法搬到了
+     *   NovelService#refreshCollectCount / #refreshScore 的签名和注释上，
+     *   而 NovelStatConsumer 调的就是那两个方法。MqConstant 和
+     *   NovelStatMessage 里各有一段讲「绝对值 vs 增量」的论证，也是从这里搬过去的。
      */
-    @PutMapping("/novels/{id}/score")
-    public Result<Void> refreshScore(@PathVariable("id") Long id,
-                                     @RequestParam("score") BigDecimal score) {
-        novelService.refreshScore(id, score);
-        return Result.success();
-    }
 }

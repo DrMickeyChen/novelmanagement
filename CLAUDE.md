@@ -11,7 +11,8 @@
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
-第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign（均已完成）** → M3 摘 interaction+MQ 阅读量 → M4 摘 search+ES → M5 治理。第三期 E1 AI。
+第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ（均已完成）** → M4 摘 search+ES → M5 治理。第三期 E1 AI。
+★ **M3 的实质只有 MQ**：大纲把 M3 写成「摘出 interaction + 引入 MQ」两件事，而 interaction 在 M2 就已经是独立进程了 —— 拆分那半早就兑现。见 `docs/M3-引入MQ.md` 开头。
 **★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
 
 三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
@@ -35,18 +36,21 @@
 
 1. **服务边界单向：`content → system` 允许，`system → content` 禁止。**
    二期先摘 auth（system）再摘 content，反了就有双向依赖拆不开。
-   跨模块读数据只能走接缝，接口定义在**消费方**那一侧：`ContentUserLookup`（content 读 system）、
-   `CommentTextLookup`（content 读 interaction）、`AuthorApplyAuditRecorder`（system 读 content，实现在 content）。
+   跨模块读数据只能走接缝，接口定义在**消费方**那一侧。★ **M3 之后只剩两条**：
+   `ContentUserLookup`（content 读 system）、`CommentTextLookup`（content 读 interaction）。
+   （第三条 `AuthorApplyAuditRecorder`（system 读 content）**已随 M3 删掉** ——
+   它整条边换成了事务消息，见铁律 7。）
    ★ **M1 之后这条要按 HTTP 重新表述**：接口**实现**住在消费方（就是「发一次 Feign 调用」），
    提供方只暴露 URL、不暴露类型 —— 否则那是个能编译、能被扫描、**永远不会被调用**的死 bean。
-   ★ **M1 造出的那个【服务级】环** `novel-auth ⇄ novel-content`（内容要作者昵称 + 审核要写审计日志）：
-   名字在 M2 之后变了（原 `novel-backend`），**环没解** —— **M3 的 MQ 解掉**，别提前发明新解法。
-   ★★ **M2 又造出第二个【服务级】环** `novel-content ⇄ novel-interaction`：
-   interaction 读 content 的 8 个内部端点；content 反过来读 interaction 的 1 个
-   （管理端审核日志要显示评论正文）。
-   ★★ **这一个 MQ 不一定解得了** —— 「审核日志要显示评论正文」是一次**同步读**，
+   ★ **M1 造出的那个【服务级】环** `novel-auth ⇄ novel-content`：**M3 用事务消息解掉了** ——
+   auth 对 content 的**唯一**一条出站边（`ContentAuditClient`）已删，
+   `grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/` → **0 命中**。
+   ★★ **M2 又造出第二个【服务级】环** `novel-content ⇄ novel-interaction`：**M3 没解，也解不了**。
+   interaction 读 content 的 8 个内部端点 → M3 后降到 4 条左右（删掉 3 条写回 + 1 条审核流水，保留读）；
+   content 反过来读 interaction 的 1 个（管理端审核日志要显示评论正文）。
+   ★★ **这一个 MQ 解不了** —— 「审核日志要显示评论正文」是一次**同步读**，
    要解只能改成「审核时把正文快照写进 `audit_log`」，那是 DDL、属于 M5。
-   **它可能活到 M5**，别以为 M3 一定会顺手解掉（论证见 `docs/M2-摘出content.md`）。
+   **它活到了 M5**（论证见 `docs/M2-摘出content.md` 与 `docs/M3-引入MQ.md` §十三）。
 2. **12 个文件逐字节锁定，任何一期都不许改**：三端各自的 `src/utils/request.js`、`src/utils/auth.js`、`src/stores/user.js`、`src/styles/index.css`。
    改完要复验 md5（基线值见 `docs/P4-创作中心.md` —— `request.js` = `2047681401d85ed69cebbd069f4ee7dd`，
    三端四个文件各自逐字节相同）。`utils/` 下**其它**文件（format/status/confirm/echarts）不在锁内。
@@ -57,6 +61,23 @@
    种子基线：`READER` 0 条菜单 / `AUTHOR` 2 条 / `ADMIN` 15 条，`sys_role_menu` 共 17 行，账号 1~4。
    清理数据用**字面 id 的 `IN (...)`**，不要用 `LIKE`。
 6. **上传安全**（`docs/P4-创作中心.md` D-10）：文件名绝不采信客户端；**校验文件头魔数**而不是只看扩展名；上传目录必须是**外部绝对路径**。
+7. **★★ 消息可靠性分级（M3）：推「增量」的可以乱序；推「绝对值」的，要么顺序、要么带时间戳做单调写。**
+   四条消息**故意不一样**，别统一：`VIEW_REPORT` 增量 / 并发 / 不用防；`PROGRESS_REPORT` 绝对值 /
+   ★ **全项目唯一一条 ORDERLY**；`NOVEL_STAT` 绝对值 / 并发 / **载荷时间戳 + 单调写**；`AUDIT_RECORD` 事实 / 并发 / **SETNX 幂等**。
+   ★★ **一个 (服务, Tag) 一个消费组**，四个组不许合并 —— 订阅按**消费组**存在 Broker 上，
+   组内不一致时后注册的**覆盖**前一个。**症状对照：某个 Tag 收不到消息且不报错 → 先查有没有两个 Tag 共用一个消费组。**
+   （形状与 `4 < 5` 那条路由不变式一模一样。）
+   ★ `maxReconsumeTimes` **必须显式写**（四个消费者都写 3）—— 顺序消费下不写 = `Integer.MAX_VALUE`。
+   ★★ **但别把「默认危险」说成「必然危险」**：显式写了之后，顺序消息重试 3 次照样进 `%DLQ%`、
+   队列照样前进。**实测推翻了初稿里「永不进 DLQ、永久卡死」的断言**（`docs/M3-引入MQ.md` §四 判断 B′）——
+   留一条 ORDERLY 的真正代价是**队头阻塞 + 固定 1 秒重试 + 单线程消费**，不是不可恢复。
+8. **★★ 一条不会失败的护栏比没有护栏更糟。** 加护栏时必须同时准备一个**能证明它会失败**的阳性对照。
+   实测教训：网关那条 `dependency:tree | grep` 有两个「看起来也对、其实什么都验不到」的写法，
+   其中一个在仓库里存在了两期（`-pl` 单模块时 `novel-common` 解析不到 → 被当叶子节点 → 子树一个字不打印）。
+   ★ 同理 `mvn dependency:tree -q` **不是安静，是什么都不打印**。
+9. **★★ 削峰削的是【写】，不是读。** 「请求路径上跨服务调用归零」这种说法要警惕 ——
+   M3 保留下来的两次 Feign 读**是有信息量的错误码**（`2001` / `3001` 的抗探测设计），不能为了好看搬走。
+   准确说法：「请求路径上的**写**从『两次远程读 + 一次本地写』变成『一次投递』」。
 
 ## ★ 注释规矩
 
@@ -114,6 +135,19 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 #   novel-content/target/novel-content.jar          （:8082，logs/novel-content.log）
 #   novel-interaction/target/novel-interaction.jar  （:8083，logs/novel-interaction.log）
 # SQL 日志在 stdout —— 要 grep SQL 得额外加 -RedirectStandardOutput
+
+# ★ M3 起中间件多一个 RocketMQ，在【同一个虚拟机】上（不是第五个 Java 进程）：
+#   namesrv :9876 / broker :10909,:10911,:10912；容器定义在 docs/docker/docker-compose.yml
+#   （★ 那个文件 M3 零改动，只是第一次被启动）
+#   ★★ 起来之后【不能只看 docker compose ps 显示 Up】，要 grep broker 日志里的 "boot success"
+#      —— 三条坑（uid 3000 的 bind mount / brokerIP1 必须是虚拟机局域网 IP / boot success）
+#      写在 docs/环境配置.md。
+#   ★★ 起来的顺序：**建议 broker 先于三个服务**，但这一条 M3 【没有实测】
+#      （R3 遗留项：M3 只验了「服务跑着时停掉 broker → 埋点仍 200」，
+#       没验「broker 挂着时服务能不能起」。别再把它当成已验证的事实引用。）
+#      ★ 补测的方法：停 broker 容器 → 起 novel-content → 看它是启动失败还是照常起。
+#   ★ broker.conf 的 defaultTopicQueueNums = 4 是【显式写的】，别删 ——
+#     ORDERLY 的讨论每次都要说清队列数，它不该藏在默认值里。
 
 # 前端：根目录 npm run dev（concurrently 起四端）；npm 装包要 --cache $env:TEMP\novel-npm-cache
 # ★ 绝不在某子项目跑着 vite dev 时在同一子项目 npm run build / install（争 node_modules/.vite，dev server 会崩）

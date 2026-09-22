@@ -26,9 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
  * {@code /api/novels/{id}/view} 那个免登录前缀下：</b>
  * <p>判据只有一条 —— <b>这个接口落不落用户数据。</b>
  * <pre>
- *   POST /api/novels/{id}/view     不落用户数据（只 INCR 一个 Redis 计数器）→ 可以匿名
+ *   POST /api/novels/{id}/view     不落用户数据（M3 起：只投一条不含调用者的消息）→ 可以匿名
  *   POST /api/reader/history       往 read_history 写一行「这个用户读到哪」→ 必须登录
  * </pre>
+ * <p>★★ <b>M3 改过上面第一行的措辞，值得记一笔</b>：它原来写的是
+ * 「只 INCR 一个 Redis 计数器」。阅读量改走 MQ 之后那句话<b>是假的</b>了
+ * —— 那个接口确实产生了持久数据（一条消息，在 Broker 上留 48 小时）。
+ * ★ 但<b>判据本身没变</b>：它仍然是异步的、可丢弃的、载荷里<b>不含任何
+ * 调用者信息</b>的，所以「落不落用户数据」这个问题的答案仍然是「不落」。
+ * 这正是这类注释难发现的地方 —— <b>结论还对、前提已经变了</b>。
  * 阅读进度是<b>带 user_id 的持久化数据</b>：匿名开放的话，要么写不了
  * （没有 user_id 可写），要么得凭空造一个身份 —— 前者是接口骗人，后者是灾难。
  * <p>反过来，也<b>不要</b>为了让埋点"统一"而把它挪到这里，

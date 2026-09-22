@@ -6,6 +6,7 @@ import com.novel.common.constant.CommonConstant;
 import com.novel.common.result.PageResult;
 import com.novel.common.security.UserContext;
 import com.novel.interaction.client.ContentGateway;
+import com.novel.interaction.mq.producer.NovelStatProducer;
 import com.novel.common.vo.NovelBriefVO;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.modules.interaction.entity.ReadHistory;
@@ -18,6 +19,7 @@ import com.novel.modules.interaction.vo.ShelfStatusVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
@@ -58,6 +60,17 @@ public class ShelfServiceImpl implements ShelfService {
      * 单向是刻意的：双向依赖拆不开。
      */
     private final ContentGateway contentGateway;
+
+    /**
+     * ★★ M3 新增：收藏数的写回从「同步 Feign」换成了「投递一条消息」。
+     *
+     * <p>原来那次 Feign 写回就是 M2 记的 R9 债：写失败时书架行已经提交、
+     * {@code collect_count} 却没变，<b>而且不会自愈</b>。
+     * 换成消息之后失败有重试、有死信、还有对账任务兜底。
+     * <p>★ 它内部走 {@code AfterCommit}，所以调用方<b>必须先有事务</b>
+     * （或者没有事务也行 —— 那会立刻发送）。两条分支都正确，见那个类的注释。
+     */
+    private final NovelStatProducer novelStatProducer;
 
     @Override
     public PageResult<ShelfItemVO> myPage(long page, long size) {
@@ -124,7 +137,46 @@ public class ShelfServiceImpl implements ShelfService {
         return ShelfStatusVO.of(novelId, onShelf, collectCountOf(novelId));
     }
 
+    /**
+     * ★★ M3 新增 {@code @Transactional} —— 这个方法改造前【没有】事务。
+     *
+     * <p>加它的理由是那个「先提交后发送」的窗口：
+     * <pre>
+     *   addIfAbsent 提交 → 进程/发送失败 → 消息没出去
+     * </pre>
+     * 加了事务之后，写行与 {@code AfterCommit} 的注册在同一个事务里，
+     * 「提交」这个动作同时决定了「行可见」和「消息会发」——
+     * 窗口从「随时可能」缩成「提交成功但发送失败」。
+     * ★ 那剩下的半边<b>没有纯应用的解法</b>，由对账任务兜
+     * （{@code NovelStatReconcileJob}）。别以为加了事务就万事大吉。
+     *
+     * <p>★ 顺带修掉一个改造前就有的毛病：{@code addIfAbsent} 成功后、
+     * 如果后面抛异常（改造前是 Feign 超时），书架行已经提交而调用方拿到 500 ——
+     * <b>「报错了」和「没做成」说的是两件相反的事</b>。加事务之后两者一致。
+     *
+     * <h3>★★ 一处要如实记下来的代价：那次 Feign 校验现在【在事务里】</h3>
+     *
+     * <p>注解挂在方法上，事务从方法入口就开了，所以第一行的
+     * {@code contentGateway.requirePublished} 是<b>在事务开着的时候</b>发出的。
+     * 内容服务慢的时候（Feign read-timeout <b>5000ms</b>），
+     * 这个事务就被挂住最长 5 秒 —— 和 M3 正在给 {@code CommentServiceImpl}
+     * 修掉的 R8 是同一个形状。<b>这一点必须说清楚，否则本期的文档会自相矛盾</b>
+     * （S6 的验收项写着「两个 {@code @Transactional} 方法体里的远程调用归零」）。
+     *
+     * <p>★ 为什么还是这么写：
+     * <ul>
+     *   <li>收藏 / 取消收藏是<b>用户点击频率</b>的写接口，不是热点，
+     *       挂住 5 秒的暴露面比评论审核小得多；</li>
+     *   <li>要把它挪出去，得把事务下移到另一个 bean 或用自注入
+     *       （同类内部调用不走代理，{@code @Transactional} 会静默失效）——
+     *       为一个低频接口引入这层结构，代价大于收益。</li>
+     * </ul>
+     * <p>★ 所以把它记为 <b>M5 治理项</b>：要么统一收口远程调用到事务外，
+     * 要么给 Feign 加熔断让超时不再等价于「挂住 5 秒」。
+     * <b>不写下来的话，下一个人只会看到「S6 说归零了，这里怎么还有一个」。</b>
+     */
     @Override
+    @Transactional
     public ShelfStatusVO add(Long novelId) {
         Long userId = UserContext.requireUserId();
 
@@ -148,7 +200,15 @@ public class ShelfServiceImpl implements ShelfService {
         return ShelfStatusVO.of(novelId, true, refreshCollectCount(novelId));
     }
 
+    /**
+     * ★★ M3 新增 {@code @Transactional}，同 {@link #add}。
+     *
+     * <p>★ 这个方法里<b>没有</b> {@code requirePublished}（下架的书也要能移出书架，
+     * 是刻意的），所以它是「事务里只有本地写」的那一半 ——
+     * 上面那段「Feign 在事务里」的代价<b>只落在 {@code add} 上</b>。
+     */
     @Override
+    @Transactional
     public ShelfStatusVO remove(Long novelId) {
         Long userId = UserContext.requireUserId();
 
@@ -205,16 +265,33 @@ public class ShelfServiceImpl implements ShelfService {
      *
      * <p>★ 值在这里算、行由 content 写：{@code user_shelf} 是
      * interaction 的表，{@code novel} 是 content 的。跨表 SQL 一行都不出现。
-     * <p><b>★★ M2 起这里是一次真实的 Feign 调用</b>（原计划 M3），
-     * 于是多了一个改造前不存在的问题：<b>本地重算成功、远程写失败，
-     * 收藏数就停在旧值上，而且不会自愈。</b>
-     * M2 接受它，记为 M3（MQ）的动机之一 —— 详见
-     * {@code ContentGateway#refreshCollectCount} 的注释。
+     *
+     * <h3>★★ M3：写回从「同步 Feign」换成了「一条消息」—— R9 债就此消掉</h3>
+     *
+     * <p>M2 那次真实的 Feign 写回带来过一个改造前没有的问题：
+     * <b>本地重算成功、远程写失败，收藏数就停在旧值上，而且不会自愈。</b>
+     * 现在失败有重试、有死信，最终还有对账任务兜底。
+     *
+     * <p><b>★★ 「重算」这个设计因此比 M2 更值钱了 —— 别顺手改成 ±1。</b>
+     * 重算推的是<b>绝对值</b>，而绝对值有两件白拿的好处：
+     * <ol>
+     *   <li><b>幂等是天然的</b>：重复消费写的是同一个数，不需要 SETNX、不需要去重表；</li>
+     *   <li><b>对账任务能拿它当真值比对</b>：{@code NovelStatReconcileJob} 之所以能
+     *       只比较两边的绝对值就发现「移出时忘了减」，前提就是这里推的是总数。</li>
+     * </ol>
+     * 改成增量的话，上面两条<b>同时</b>消失（重复消费会多加，
+     * 对账也没有一个能比对的数），而换来的只是省掉一次 {@code COUNT(*)} ——
+     * {@code user_shelf.idx_novel_id} 就是为它建的。
+     *
+     * <p>★ 返回值仍然是<b>本地算出来的 count</b>，直接进响应体
+     * （{@code ShelfStatusVO}）。也就是说这个数字是「interaction 认为的值」，
+     * 而 content 那边是<b>异步</b>追上的 —— <b>字段形状没变，新鲜度变了</b>。
+     * 读者点完收藏立刻刷新页面，看到的收藏数可能还是旧的（几秒内追平）。
      */
     private int refreshCollectCount(Long novelId) {
         long count = shelfMapper.selectCount(new LambdaQueryWrapper<UserShelf>()
                 .eq(UserShelf::getNovelId, novelId));
-        contentGateway.refreshCollectCount(novelId, count);
+        novelStatProducer.publishCollectCount(novelId, count);
         log.debug("收藏数已重算 | novelId={} count={}", novelId, count);
         return (int) count;
     }

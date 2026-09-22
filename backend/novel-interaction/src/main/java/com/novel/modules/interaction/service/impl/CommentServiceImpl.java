@@ -16,6 +16,8 @@ import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.interaction.client.AuthNicknameClient;
 import com.novel.interaction.client.ContentGateway;
+import com.novel.interaction.mq.producer.CommentAuditProducer;
+import com.novel.interaction.mq.producer.NovelStatProducer;
 import com.novel.modules.interaction.dto.CommentAuditDTO;
 import com.novel.modules.interaction.dto.CommentCreateDTO;
 import com.novel.modules.interaction.dto.CommentReplyDTO;
@@ -100,11 +102,31 @@ public class CommentServiceImpl implements CommentService {
      * <p><b>{@code StringRedisTemplate}：</b>不是 {@code RedisTemplate<String,Object>}。
      * 后者的 JSON 序列化器会把 {@code SADD} 的成员写成带 {@code "@class"} 的 JSON，
      * 也会影响 {@code SET NX} 的返回值语义 ——
-     * {@code NovelViewCounter} 的类注释里为同一件事写过一大段，这里不再重复。
+     * {@code RedisConfig#redisTemplate} 的注释里为同一件事写过一大段，
+     * 这里不再重复。
+     * <p>★ 那个指针原本指向 {@code NovelViewCounter}，M3 删掉了那个类，
+     * 论证搬进了 {@code RedisConfig}（它讲的是两个 bean 的区别，不是业务）。
      */
     private final ContentGateway contentGateway;
     private final AuthNicknameClient authNicknameClient;
     private final StringRedisTemplate stringRedisTemplate;
+
+    /**
+     * ★★ M3 新增的两个生产者 —— 它们把 R8 债清成了零。
+     *
+     * <p>改造前，本类的两个 {@code @Transactional} 方法（{@code delete} / {@code audit}）
+     * 各挂着一次 Feign 写回：{@code refreshScore}（写 {@code novel.score}）
+     * 和 {@code recordCommentAudit}（写 {@code audit_log}）。
+     * Feign 的 read-timeout 是 <b>5000ms</b>，content 慢一次，
+     * 评论审核的数据库事务就被挂住最长 5 秒 ——
+     * 而管理员会以为「按钮没反应」然后<b>再点一次</b>，
+     * 第二次撞上「状态已被改过」，拿到 4005。
+     * <p><b>现在这两个事务方法体里的远程调用是 0。</b>
+     * <p>★ 别再把 Feign 调用加回这两个方法 —— 要加就先读
+     * {@code AfterCommit} 的类注释和 {@code NovelStatMessage} 的类注释。
+     */
+    private final NovelStatProducer novelStatProducer;
+    private final CommentAuditProducer commentAuditProducer;
 
     /* ================================================================
      *  读者侧
@@ -588,15 +610,28 @@ public class CommentServiceImpl implements CommentService {
      * 增减会写错方向，而重算没有方向可写错。
      *
      * <p>★ 传 {@code novelId} 而不是 {@code commentId}：跨模块那一步
-     * （{@code ContentGateway#refreshScore}）是 content 的表，
+     * （原来是 {@code ContentGateway#refreshScore}，M3 起是
+     * {@code NovelStatProducer#publishScore}）是 content 的表，
      * 这边算完把<b>绝对值</b>交出去，写回由 content 自己做
      * —— 同 {@code ShelfServiceImpl#refreshCollectCount}。
+     *
+     * <p><b>★★ M3：从「同步 Feign 写回」换成「投递一条消息」，R8 债消掉。</b>
+     * 原来这行在 {@code delete} / {@code audit} 两个 {@code @Transactional}
+     * 方法体里，把数据库事务挂住最长 5 秒（Feign read-timeout）。
+     * 现在生产者内部走 {@code AfterCommit}，<b>本方法体里已经没有远程调用了</b> ——
+     * 只是「注册一个回调」，是本地操作。
+     *
+     * <p>★ 注意 {@code avgScoreOfNovel} <b>仍然在事务里</b>，而且必须留着：
+     * 它是本地 {@code COUNT/AVG}，要读到自己刚才那次状态变更
+     * （审核通过的那条书评得算进去）。★ 而这个值算出来之后
+     * <b>不会被回滚影响</b> —— 因为发送被推迟到了提交之后，
+     * 回滚的话回调根本不执行。这个顺序是 {@code AfterCommit} 保证的，别绕开它。
      */
     private void refreshNovelScore(Integer targetType, Long targetId) {
         if (targetType == null || !targetType.equals(NovelComment.TARGET_TYPE_NOVEL)) {
             return;
         }
-        contentGateway.refreshScore(targetId, commentMapper.avgScoreOfNovel(targetId));
+        novelStatProducer.publishScore(targetId, commentMapper.avgScoreOfNovel(targetId));
     }
 
     /**
@@ -834,10 +869,20 @@ public class CommentServiceImpl implements CommentService {
     /**
      * 审核：通过（→ 已显示）或隐藏（→ 已隐藏）。
      *
-     * <p><b>★ 事务：状态更新和审核流水必须一起成功或一起失败。</b>
-     * {@code AuditLogService#record} 自己没有 {@code @Transactional}，
-     * 所以它加入本方法的事务 —— 这正是那个接口注释里写明的设计
-     * （「一条不真实的流水比没有流水更糟」）。
+     * <p><b>★★ 事务边界在 M3 变了，这段话跟着改过，别再按旧版理解。</b>
+     * <p>改造前：{@code AuditLogService#record} 自己没有 {@code @Transactional}，
+     * 所以它<b>加入本方法的事务</b>，「状态更新」和「写流水」同生共死。
+     * <p>M2 把那条接缝改成 Feign 之后这句话就<b>静默失效</b>了
+     * （Feign 不参与调用方事务，流水在 content 那边立刻提交），
+     * 于是回滚会留下一条孤儿流水。
+     * <p><b>M3 起它是一条消息，靠 {@code AfterCommit} 保证「提交了才发」</b>：
+     * 回滚 → 回调不执行 → 消息没发出去 → 消费者看不到，
+     * 所以「记录了一次没发生的事」这个方向不可能出现。
+     * 代价是反方向留了一个更轻的窗口（提交后、发送前进程挂了 → 少一条流水），
+     * 取舍与理由见 {@code CommentAuditProducer} 的类注释。
+     * <p>★ 本方法的事务本身<b>照旧需要</b>：状态更新 + 那道
+     * 「前置状态」乐观检查 + 本地重算评分必须在同一个事务里。
+     * 变的只是「写流水」这一步从事务内挪到了提交后。
      */
     @Override
     @Transactional(rollbackFor = Exception.class)
@@ -932,7 +977,16 @@ public class CommentServiceImpl implements CommentService {
          *   给每条都记一笔会让这张「追加、永不删除」的表迅速变大，
          *   而它的价值在审核动作上；② 评论的提交时间已经在 create_time 里了。
          */
-        contentGateway.recordCommentAudit(commentId,
+        /*
+         * ★★ M3：从「同步 Feign 写」换成「投递一条 AUDIT_RECORD 消息」。
+         *   这是 M2 环 #1 在 interaction 这一侧的那一半 ——
+         *   原来 content 会【立刻】提交一条流水，而本方法随后一回滚，
+         *   它就是一条不会有人删的孤儿流水。
+         * ★ 换消息之后，回滚 → 回调不执行 → 消息根本没发出去，孤儿不可能产生。
+         *   发送方式的取舍（为什么这条不用事务消息、而 auth 那条用）
+         *   写在 CommentAuditProducer 的类注释里。
+         */
+        commentAuditProducer.publishCommentAudit(operatorId, commentId,
                 target == CommentStatus.VISIBLE ? AuditAction.APPROVE : AuditAction.REJECT,
                 dto.getRemark());
 

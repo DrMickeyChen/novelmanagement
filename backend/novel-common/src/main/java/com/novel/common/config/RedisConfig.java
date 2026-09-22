@@ -37,6 +37,30 @@ public class RedisConfig {
      *
      * <p>{@code StringRedisTemplate} Spring Boot 已经自动配好了（存纯字符串用），
      * 这里额外定义一个能存对象的，两个可以共存，不要覆盖默认的。
+     *
+     * <h3>★★ 需要 {@code INCR} / {@code SET NX} / {@code SADD} 时必须走
+     * {@code StringRedisTemplate}，不能走这个 bean</h3>
+     *
+     * <p>下面那个 {@code GenericJackson2JsonRedisSerializer} 会把数字 {@code 1}
+     * 写成 {@code {"@class":"java.lang.Integer","value":1}}，于是：
+     * <ul>
+     *   <li>{@code INCR} 直接报 {@code ERR value is not an integer or out of range}
+     *       —— Redis 的 INCR 要求 value 是十进制数字字符串，不是一坨 JSON；</li>
+     *   <li>{@code SET NX} 本身能跑（它只看 key 在不在），但读回来的是那坨 JSON，
+     *       于是「值等于 1」这种判断会莫名其妙地不成立；</li>
+     *   <li>{@code SADD} 存进去的成员也是带 {@code "@class"} 的 JSON，
+     *       用 {@code SISMEMBER} 拿一个纯字符串去查永远查不到。</li>
+     * </ul>
+     *
+     * <p>★ <b>这条论证原来写在 {@code NovelViewCounter} 的类注释里</b>，
+     * M3 删掉那个类时搬到了这里。搬家的理由：它讲的是
+     * <b>这两个 Redis bean 的区别</b>，不是某一段业务逻辑 ——
+     * 留在业务类里就会跟着业务一起被删掉，而它跟业务无关。
+     *
+     * <p>★ 目前真实的使用者是 interaction 的 {@code CommentServiceImpl}
+     * （评论 10 秒频控的 {@code SET NX EX}，以及点赞去重的 {@code SADD}）——
+     * 阅读量从 M3 起不再用 Redis 了，但这条规矩对将来任何计数器都成立
+     * （比如 E1 的 AI 每日额度）。
      */
     @Bean
     public RedisTemplate<String, Object> redisTemplate(RedisConnectionFactory connectionFactory) {

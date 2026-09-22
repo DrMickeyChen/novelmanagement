@@ -1,7 +1,7 @@
 package com.novel.interaction.client;
 
 import com.novel.common.enums.ChapterStatus;
-import com.novel.common.internal.CommentAuditLogDTO;
+import com.novel.common.internal.NovelCollectCountDTO;
 import com.novel.common.result.Result;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.common.vo.NovelBriefVO;
@@ -9,11 +9,9 @@ import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 
-import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
@@ -21,14 +19,14 @@ import java.util.Map;
 /**
  * <b>interaction 侧调 novel-content 的 Feign 客户端（M2）。</b>
  *
- * <p><b>★★ 这个接口有 8 个方法，它们【都不是】通用的 CRUD，
- * 而是 8 个具体的业务问题。</b> 这是有意维持的 —— 同
+ * <p><b>★★ 这个接口有 5 个方法（M2 时是 8 个，M3 删掉 3 个写端点），
+ * 它们【都不是】通用的 CRUD，而是 5 个具体的业务问题。</b> 这是有意维持的 —— 同
  * {@code AuthUserClient} 的规矩：内部接口一旦变成「万能查询」，
  * 它就成了一个绕过服务边界的后门（那样还不如不拆）。
  * <p>★ 加方法之前先问一句：<b>「这个问题是 content 该回答的吗」</b>，
  * 以及「我是不是只是想省一层」。
  *
- * <h3>★★ 这是 M2 里最大的一条接缝：9 条跨服务边里有 8 条在这里</h3>
+ * <h3>★★ 这是 M2 里最大的一条接缝：15 条跨服务边里有 8 条曾经在这里</h3>
  *
  * <p>改造前这 8 件事都是同进程 DI 注入（{@code NovelService} /
  * {@code NovelAccessGuard} / {@code ChapterService} / {@code AuditLogService}），
@@ -36,6 +34,12 @@ import java.util.Map;
  * 但「换成 HTTP」带来了一件本地调用没有的事：<b>失败可以被静默忽略</b>。
  * 所以真正调用它们的是 {@link ContentGateway}，不是业务代码直接注入本接口。
  * 理由（以及漏掉它的后果）写在那里，<b>改这个接口之前先读那一段</b>。
+ * <p>★★ <b>M3 把其中的 3 件事（收藏数写回、评分写回、评论审核流水）
+ * 整条搬走了 —— 那三件是【写】，现在是两条消息。</b>
+ * 注意上面那句「失败可以被静默忽略」<b>只对留下来的 5 个【读】方法成立</b>：
+ * 消息的失败语义完全不同（发送失败只记 WARN、消费失败有重试与死信），
+ * 对应的论证在 {@code NovelStatProducer} / {@code AuditRecordMessage} 的类注释里。
+ * <b>别拿这一段的结论去套那两条链路。</b>
  *
  * <h3>★ 为什么它们住 {@code /internal} 而不是 {@code /api}</h3>
  *
@@ -132,50 +136,49 @@ public interface ContentClient {
     @GetMapping("/novels/{id}/chapter-ids")
     Result<List<Long>> chapterIdsOfNovel(@PathVariable("id") Long id);
 
-    /* ==================== 写回（重算出来的绝对值） ==================== */
+    /* ==================== 对账扫描（M3） ==================== */
 
     /**
-     * 写回收藏数。<b>绝对值覆盖</b>，不是 +1 / -1。
+     * 【对账专用】按 id 升序取「收藏数非 0 的作品」的一页。
      *
-     * <p>★ 第二参是 <b>{@code long}</b>（基本类型）而不是 {@code Long} ——
-     * 别顺手改：收藏数不可能是 null，用包装类型等于凭空多一个要处理的空态。
-     * <p>★ 因为写的是绝对值，重试是幂等的；但 {@code Retryer.NEVER_RETRY}
-     * 仍然必要（见 {@link FeignIdentityConfig}）—— <b>那是运气好，不是可以依赖的性质。</b>
+     * <p><b>★★ 它和上面四个不是一类东西：上面那些是「渲染页面要用」，
+     * 它是「给定时任务摊账本」。</b>调用点只有一个 ——
+     * {@code NovelStatReconcileJob}。加别的调用点之前先问：
+     * 「你要的是不是 {@link #novelBriefs}」（那边带书名封面、能查收藏数为 0 的书）。
+     *
+     * <p><b>★★ 这个接口的 {@code size} 上限是 100，而且调用方【必须】知道这件事。</b>
+     * 对端的分页插件（{@code PaginationInnerInterceptor.setMaxLimit(100)}）
+     * 会把更大的请求<b>静默压到 100</b>，而调用方判断「扫到底了」的依据是
+     * 「返回条数 &lt; 请求条数」—— 请求 500 拿回 100 的话，
+     * 循环会认为已经扫完，<b>后面的书全部漏掉且不报错</b>。
+     * 所以那边把页大小写死成 100（{@code NovelStatReconcileJob.SCAN_PAGE_SIZE}）。
+     *
+     * <p>★ {@code afterId} 可以为 {@code null}（= 从头开始）：Feign 默认会
+     * <b>省略值为 null 的 query 参数</b>，所以第一页的 URL 里根本没有 afterId，
+     * 对端的 {@code required = false} 正好接住。★ 这也是为什么这里用
+     * {@code @RequestParam} 而不是塞进 {@code @PathVariable}。
+     *
+     * <p>★ 同其它「替调用方查一次数据」的接口：失败只可能是兄弟服务不可用，
+     * 不是业务码 —— 所以它归 {@code ContentGateway#collectCountsAfter} 的
+     * {@code unwrap} 那一类，不是 {@code unwrapBusiness}。
      */
-    @PutMapping("/novels/{id}/collect-count")
-    Result<Void> refreshCollectCount(@PathVariable("id") Long id,
-                                     @RequestParam("count") long count);
+    @GetMapping("/novels/collect-counts")
+    Result<List<NovelCollectCountDTO>> collectCounts(@RequestParam("afterId") Long afterId,
+                                                     @RequestParam("size") int size);
 
-    /**
-     * 写回作品评分。<b>绝对值覆盖</b>，且只在书评上做。
+    /*
+     * ==================== ★★ M3：三个【写】端点全部从这里删掉了 ====================
      *
-     * <p>★ 第二参是 <b>{@code BigDecimal}</b> 而不是 {@code double}：
-     * {@code novel.score} 是 {@code DECIMAL}，用 double 会留下
-     * 「算出来 7.3、存进去 7.299999999999999」这种永远对不平的尾差。
-     * <p><b>★ 这个方法的调用点在【事务里】</b>（评论审核）。
-     * Feign 的 read-timeout 是 5000ms，所以 content 慢一次，
-     * 评论审核的数据库事务就会被挂住最长 5 秒 ——
-     * <b>M2 接受这个代价，它正是 M3 要做 MQ 的动机之一</b>。
+     * 原来是 PUT /novels/{id}/collect-count、PUT /novels/{id}/score、
+     * POST /comment-audit-logs —— 对端（content）那三个 /internal 端点也一起删了。
+     * 它们现在走两条消息：NOVEL_STAT 与 AUDIT_RECORD，
+     * 见 interaction/mq/producer/NovelStatProducer 与 CommentAuditProducer。
+     *
+     * ★★ 本接口从此【只读】。这个性质值得单独说一句，因为它是 M3 之后
+     *   「interaction → content」这条边的全部内容：**读**。
+     *   一条只读的依赖依然是一条依赖，所以服务级环 #2（content ⇄ interaction）
+     *   **没有解开** —— content 反过来还要读 interaction 一次
+     *   （管理端审核日志要显示评论正文，见 CommentTextLookup）。
+     *   那条是同步读，消息解不了，可能活到 M5。**别以为 M3 顺手把它解掉了。**
      */
-    @PutMapping("/novels/{id}/score")
-    Result<Void> refreshScore(@PathVariable("id") Long id,
-                              @RequestParam("score") BigDecimal score);
-
-    /* ==================== 写流水 ==================== */
-
-    /**
-     * 记一条「评论审核」流水。
-     *
-     * <p><b>★ 请求体里刻意没有操作人</b>：操作人由 content 从
-     * {@code UserContext} 取，而那个 {@code UserContext} 是
-     * {@link FeignIdentityConfig} 把当前身份写成 {@code X-User-*} 头带过去的。
-     * <b>拦截器一漏，症状不是报错，是流水里操作人是空的</b>
-     * （content 侧会记一条 error 日志，见 {@code InternalAuditLogController}）。
-     *
-     * <p>★ 对端路径是 {@code /internal/comment-audit-logs}，
-     * 和 {@code /author-apply-audit-logs} 是<b>两个各自收窄的入口</b> ——
-     * 那边只收作者申请，这边只收评论，没有通用入口。
-     */
-    @PostMapping("/comment-audit-logs")
-    Result<Void> recordCommentAudit(@RequestBody CommentAuditLogDTO dto);
 }

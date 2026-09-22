@@ -35,21 +35,24 @@ server:
 
 spring:
   application:
-    # ★★ 这个名字有三处硬绑定，改它必须同时改：
+    # ★★ 这个名字有四处硬绑定，改它必须同时改：
     #      ① 网关 application.yml 的 lb://novel-content
     #      ② 本模块 pom 的 artifactId / finalName（jar 名）
     #      ③ package.json 的 dev:content
-    #    ★ 还有一个【出站】方向的绑定：novel-auth 的 ContentAuditClient
-    #      按服务名找对端。漏改的症状最隐蔽：审核作者申请时 Nacos 找不到实例
-    #      → 审计流水写不进去 → 前端 500，而「作者申请审核」是个低频操作，
-    #      回归里很容易被跳过。
+    #      ④ novel-interaction 的 ContentClient 的 @FeignClient(name=...)
+    #    漏改④的症状最隐蔽：interaction 调本服务时 Nacos 找不到实例
+    #    → 收藏/历史/评论列表 500，而这几个页面的报错信息里
+    #    完全看不到「服务名写错了」这件事。
     #
     #    ★★ M2 之前这个名字是 novel-backend —— 也就是说
-    #       novel-auth 的那个 Feign 客户端当时指的是【那个单体】。
+    #       novel-auth 那个（现已删除的）Feign 客户端当时指的是【那个单体】。
     #       服务一拆，它指的对象从「装着全部业务的单体」变成了
     #       「只管内容域的服务」，所以客户端也改了名（BackendAuditClient
-    #       → ContentAuditClient）。名字不改的话，「给 backend 发审计」
-    #       在 M2 之后就是一句假话。
+    #       → ContentAuditClient）。
+    #    ★★ M3 把那个客户端【整个删掉了】（审核流水改走事务消息，环 #1 断开），
+    #       于是「出站方向的绑定」从 auth 换成了 interaction 的 ContentClient ——
+    #       **绑定少了一条，不是没了**。改服务名前仍然要 grep 一遍：
+    #         grep -rn "novel-content" backend/*/src/
     name: novel-content
 
   profiles:
@@ -191,6 +194,25 @@ novel:
     # ★ 这个值调大调小只影响观感，不影响任何逻辑。
     #   接真实模型后这一项完全无用（节奏由模型决定）。
     mock-delay-ms: 15
+
+# ============================================================
+# RocketMQ（M3 新增）
+# ============================================================
+rocketmq:
+  # ★★ 生产【故意不写默认值】—— 和 novel.internal.token / novel.jwt.secret 同一条规矩：
+  #    不配就启动失败，而不是悄悄连到开发机的 192.168.127.137。
+  #    开发环境的实际值写在 application-dev.yml（那边有完整的条件说明）。
+  #
+  # ★ 为什么留这个占位符、而不是整段删掉：删掉的话 producer bean 根本不会创建
+  #    （条件见 application-dev.yml 里那段），启动时只报
+  #    「no bean of type 'RocketMQTemplate'」—— 一句看不出根因的错。
+  #    留着它，报错会直接点名 ROCKETMQ_NAME_SERVER。
+  name-server: ${ROCKETMQ_NAME_SERVER}
+
+  # 生产者组：和 dev 一致 —— 它不是环境相关的配置。
+  # ★ novel-auth 那边取值不同（novel-tx-audit），因为事务回查按事务组做身份。
+  producer:
+    group: novel-producer
 
 # ============================================================
 # MyBatis-Plus

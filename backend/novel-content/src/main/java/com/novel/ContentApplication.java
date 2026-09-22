@@ -39,8 +39,12 @@ import org.springframework.core.env.Environment;
  * 客户端所在的 {@code com.novel.modules.content.client} 在范围内。
  *
  * <p><b>★★ 为什么这个类上【没有】{@code @EnableScheduling}，而阅读量落库却照跑：</b>
- * {@code NovelViewCounter} 用 Redis 的 {@code NOVEL_VIEWS} + {@code NOVEL_VIEW_DIRTY}
- * 两个 key 攒阅读量，靠一个 {@code @Scheduled} 任务把脏集里的增量回写数据库。
+ * {@code NovelViewAggregator} 在<b>本进程的堆内存</b>里攒阅读量
+ * （消息由 {@code ViewReportConsumer} 收下来交进去），
+ * 靠一个 {@code @Scheduled} 任务把积压的增量批量回写数据库。
+ * ★ M3 之前这件事是 {@code NovelViewCounter} 干的（计数攒在 Redis 的
+ * {@code NOVEL_VIEWS} + {@code NOVEL_VIEW_DIRTY} 里）—— 那个类已经删掉了，
+ * 但「谁在提供 {@code @EnableScheduling}」这个问题一个字都没变。
  * 按直觉，这个注解应该挂在启动类上 —— <b>但它不在这儿，而在
  * {@code com.novel.common.config.SchedulingConfig} 上</b>，
  * 那是个会被<b>每个服务</b>扫到的 {@code @Configuration}。
@@ -53,8 +57,15 @@ import org.springframework.core.env.Environment;
  *       {@code @EnableScheduling}，也全都建了一个 {@code ThreadPoolTaskScheduler}。
  *       M2 之后只有 content 里真的有 {@code @Scheduled} 方法，
  *       所以「多实例下定时任务会重复执行」这条风险（见 SchedulingConfig 的长注释）
- *       目前只落在本服务头上 —— 起两个 content 实例，阅读量就会被回写两次。
- *       ★ 单机开发环境<b>完全测不出来</b>。</li>
+ *       目前只落在本服务头上。
+ *       <p>★★ <b>但 M3 之后阅读量这一条【不再是那个风险的例子了】</b> ——
+ *       改造前它确实是：计数在 Redis（共享），起两个 content 实例，
+ *       两边都会看见同一个脏集，回写就会重（这正是老代码要 {@code SREM} 认领的原因）。
+ *       M3 把计数换成了<b>每实例私有的堆内存</b>，一条消息也只投给一个实例，
+ *       于是「多实例重复执行」在这里<b>不再是一个问题</b>。
+ *       ★ 所以这段话留下的教训不是「阅读量很危险」，
+ *       而是<b>「共享状态才是那个风险源」</b>—— 换成私有状态，风险自己就没了。
+ *       <p>★ 单机开发环境仍然<b>完全测不出</b>多实例相关的任何差异。</li>
  * </ul>
  *
  * @author MickeyChen

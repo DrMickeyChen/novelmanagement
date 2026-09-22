@@ -61,6 +61,35 @@
         </dependency>
 
         <!--
+          ==================== 消息队列（M3 新增） ====================
+          ★ 版本在父 pom 的 dependencyManagement 里，见那边为什么叫
+            rocketmq-spring.version 而不是 rocketmq.version。
+
+          ★★ auth 在 M3 里【只发不收】，而且只发一条：AUDIT_RECORD（审核流水）。
+
+          ★★★ 这一条依赖的意义不是「加了个发消息的能力」，是【断掉一个环】：
+            M2 之后 novel-auth → novel-content 有且只有一条出站边，
+            就是 ContentAuditClient 那一次 Feign 写（审核流水）。
+            M3 把它改成发消息之后，grep 一下
+                grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/
+            必须是 0 命中 —— 环 #1（novel-auth ⇄ novel-content）就此断开。
+            ★ 顺带把 openfeign / loadbalancer 两个依赖也删了（见下面那一段），
+              于是这条保证从「记得复核」升级成了「编译期就写不出来」。
+
+          ★ 为什么这里【必须】用事务消息而不是普通消息：
+            审核流水是在一个 @Transactional 的 audit() 里面写的，
+            而 Feign 不参与调用方的事务 —— M2 之后 auth 一旦回滚，
+            content 里就留下一条【不会有人删的孤儿流水】。
+            事务消息是这条接缝唯一能恢复原子性的机制。
+            ★ 但写法有讲究（在外层事务里直接返回 COMMIT 是错的），
+              见 AuthorApplyAuditProducer 上的注释（判断 C′）。
+        -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!--
           ==================== 注册中心 ====================
           ★ 网关的路由写的是 lb://novel-auth —— 没有这个依赖，
             它会去 Nacos 找 novel-auth，然后「找不到实例」。
@@ -161,44 +190,50 @@
             <artifactId>jjwt-api</artifactId>
         </dependency>
 
-        <!-- ==================== 服务间调用（M1） ==================== -->
+        <!-- ==================== 服务间调用：★ M3 起【一个都没有】 ====================
 
-        <!--
-          ★★ 本服务为什么也需要 Feign —— 这一条容易让人意外，
-             因为直觉上「auth 是被别人调的那个，它自己不该调别人」。
+          ★★★ 这里原来是 spring-cloud-starter-openfeign 与
+              spring-cloud-starter-loadbalancer 两个依赖，M3 全部删掉了。
 
-             事实是有【一条反向的边】：审核作者申请要记一条审核流水
-             （audit_log 表），而那张表和 AuditLogService 都在
-             novel-content 里（它属于 content 模块）。所以：
+              它们只为一条边存在：审核作者申请后让 novel-content 写审核流水
                  审完 → ContentAuditClient.recordAuthorApplyAudit(...)
                       → POST novel-content:/internal/author-apply-audit-logs
 
-             ★ 这条边是铁律 1 原文里【明确列出的那个例外】
-               （AuthorApplyAuditRecorder：system 读 content，实现在 content），
-               不是 M1 新开的口子。
+              M3 把那条边换成了事务消息（见上面的 rocketmq 那一段），
+              于是 ContentAuditClient / AuthorApplyAuditRecorder / 它的实现
+              三个类一起删了，@EnableFeignClients 也从启动类上摘了。
 
-             ★★ 它在服务级上造出了一个环：novel-auth ⇄ novel-content
-                （content → auth 拿作者昵称，auth → content 写审核流水）。
-                同进程 DI 时这只是两个 bean 互相注入，换成 HTTP 之后才成为环。
-                解药是大纲 §M3 的 MQ（审核事件异步化 → 环断掉）。
-                ★ M1 接受它，并记在 docs/M1-摘出auth.md 里，
-                  不留给后人去发现。
-        -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-openfeign</artifactId>
-        </dependency>
+          ★★ 为什么连依赖一起删，而不是「反正留着也不占地方」：
+              这两个依赖留着，本服务就【随时可以】再写一个 @FeignClient 出去，
+              而那条边当初是环的一半。删掉之后，
+              「novel-auth 不再依赖 novel-content」这件事
+              从一条需要靠 grep 复核的纪律，变成了一个编译期事实 ——
+              没有 Feign 的 API，写不出跨服务调用。
+              ★ 同 novel-gateway 那条「spring-boot-starter-web 一进 classpath
+                就起不来」的红线，是同一类做法：把纪律变成结构。
 
-        <!--
-          ★★ loadbalancer 必须显式加：@FeignClient(name = "novel-content")
-             里的 name 是服务名，要靠它去 Nacos 解析成实例地址。
-             漏了的症状：启动失败，报 No Feign Client for loadBalancing defined
-             （同 novel-interaction 那条注释）。
+          ★ 复核命令（M3 的验收项之一，两条都要符合预期）：
+                ls backend/novel-auth/src/main/java/com/novel/auth/client/   → 目录不存在
+                mvn -f backend/pom.xml -pl novel-auth -am dependency:tree \
+                  | sed -n '/com.novel:novel-auth:jar/,$p' | grep -iE "feign|loadbalancer" → 0
+            ★ 阳性对照：第二条换成 -pl novel-interaction 立刻 8 命中（那边还在用 Feign）——
+              没有它，「0 命中」和「命令写错了」长得一样。
+
+          ★★ M3 订正：这里原来写的是
+                grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/
+                grep -rn "openfeign\|loadbalancer" backend/novel-auth/pom.xml
+             两条【都永远不可能 0 命中】，而且命中全是注释 ——
+             实测第一条 33 命中（讲历史的注释、讲三份 yml 的值要一致的话），
+             第二条 3 命中（★ 其中一条就是上面这段注释自己写的那个词）。
+             ★ 判据钉在一个【词】上就是这个下场：噪音把它淹没，然后没人再看它。
+               钉在「有没有这条边」上才对 —— 包、依赖树，
+               这两样是结构性的，注释里提多少次都不影响它们。
+
+          ★★ 要说清楚的是：本服务仍然【被】别人调用
+              （content → auth 读用户昵称，见 InternalUserController），
+              所以 /internal/** 那一套（白名单 + 内部令牌闸门）一个字都不能动。
+              「没有出站」和「没有入站」是两件事。
         -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
-        </dependency>
 
         <!-- ==================== 测试 ==================== -->
         <dependency>

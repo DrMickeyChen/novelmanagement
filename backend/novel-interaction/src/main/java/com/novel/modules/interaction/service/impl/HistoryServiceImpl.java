@@ -11,6 +11,7 @@ import com.novel.common.security.UserContext;
 import com.novel.common.vo.NovelBriefVO;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.interaction.client.ContentGateway;
+import com.novel.interaction.mq.producer.ProgressReportProducer;
 import com.novel.modules.interaction.dto.HistoryReportDTO;
 import com.novel.modules.interaction.entity.ReadHistory;
 import com.novel.modules.interaction.mapper.ReadHistoryMapper;
@@ -21,7 +22,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +56,17 @@ public class HistoryServiceImpl implements HistoryService {
      * 完整论证写在 {@code ContentGateway} 的类注释里。
      */
     private final ContentGateway contentGateway;
+
+    /**
+     * ★★ M3 新增：进度上报的写路径从「本地 upsert」换成「投递一条顺序消息」。
+     *
+     * <p>于是本方法里<b>最后一次本地写</b>也移出了请求路径，
+     * 剩下的两次 {@code contentGateway} 调用是<b>刻意保留</b>的（见 {@link #report}）。
+     * <p>★ 别把注入换成 {@code RocketMQTemplate} 直接发：hashKey 取哪个字段、
+     * 同步还是异步、失败怎么处置，三条判断都在 producer 的注释里论证过，
+     * 绕过它就等于把那些结论重新猜一遍。
+     */
+    private final ProgressReportProducer progressReportProducer;
 
     @Override
     public void report(HistoryReportDTO dto) {
@@ -115,19 +126,33 @@ public class HistoryServiceImpl implements HistoryService {
         int progress = clampProgress(dto.getProgress());
 
         /*
-         * ★ 时间由这里传入，不在 SQL 里写 NOW() —— 理由见 ReadHistoryMapper#upsert。
-         *   一句话：和 MybatisMetaObjectHandler 保持同一个时区口径，
-         *   并且保证「重读同一章、进度没变」时 update_time 也会往前推。
+         * ★★ M3：写从「本地 upsert」改成「投递一条顺序消息」。
+         *
+         * 改造前这里是 readHistoryMapper.upsert(..., LocalDateTime.now())：
+         * 读者「离开章节」这个动作上挂着两次跨服务读 + 一次本地写。
+         * 现在写这一半被移出请求路径，落库发生在 ProgressReportConsumer 里。
+         *
+         * ★ 时间戳不再由这里传：它由 ProgressReportMessage.of 盖在生产时刻，
+         *   随载荷走到消费端（那里调 atAsLocalDateTime()）。
+         *   ★ 为什么不能到消费端再取 now()：update_time 是阅读历史的排序依据，
+         *   取消费时刻的话，一有积压列表顺序就变成「消息处理顺序」而不是
+         *   「读者阅读顺序」。论证在 ProgressReportMessage 的类注释里。
+         *   （ReadHistoryMapper#upsert 关于「显式传时间、不写 NOW()」那两条理由
+         *   依然成立，只是传入方从本类变成了消费者。）
+         *
+         * ★★ 顺序：先校验、后发送。上面三步校验都必须留在【这一侧】——
+         *   它们是有信息量的错误码（2001 / 3001），也承担着抗探测的职责；
+         *   搬进消费者会让这个接口的所有失败都变成 200。完整论证见
+         *   ProgressReportConsumer 的类注释。
          */
-        readHistoryMapper.upsert(userId, dto.getNovelId(), dto.getChapterId(), progress,
-                LocalDateTime.now());
+        progressReportProducer.report(userId, dto.getNovelId(), dto.getChapterId(), progress);
 
         /*
          * ★ 打一条 debug 而不是 info：这是阅读器每滚一屏就会调一次的接口，
          *   info 级别会在日志里刷屏，把真正有用的日志挤掉。
          *   排查「进度没记住」时把 com.novel 调到 debug 即可看到全部上报。
          */
-        log.debug("进度已记录 | userId={} novelId={} chapterId={} progress={}",
+        log.debug("进度已上报 | userId={} novelId={} chapterId={} progress={}",
                 userId, dto.getNovelId(), dto.getChapterId(), progress);
     }
 

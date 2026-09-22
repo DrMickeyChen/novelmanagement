@@ -4,9 +4,9 @@ import com.novel.common.exception.BusinessException;
 import com.novel.common.result.PageResult;
 import com.novel.common.result.Result;
 import com.novel.common.vo.ChapterBriefVO;
+import com.novel.content.mq.producer.ViewReportProducer;
 import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelService;
-import com.novel.modules.content.service.NovelViewCounter;
 import com.novel.modules.content.vo.ChapterDetailVO;
 import com.novel.modules.content.vo.ChapterVO;
 import com.novel.modules.content.vo.NovelDetailVO;
@@ -43,11 +43,25 @@ import java.util.List;
  * 默认值终于是安全的。<b>不要把这个前缀加回路径级白名单。</b>
  *
  * <p><b>★★ 读者端不写用户数据。</b>这个前缀下没有改动任何业务表的接口 ——
- * 唯一的写是阅读量埋点 {@code POST /api/novels/{id}/view}，
- * 它<b>不落库</b>（只对一个 Redis 计数器 INCR，由定时任务异步汇总）、
- * <b>不产生用户数据</b>（无 INSERT、无唯一键、不记录调用者）、
- * <b>不放宽任何读的口径</b>（对不存在的书与未上架的书响应完全一样），
- * 因此可以匿名开放。三条里少一条，它就必须挪到需要登录的前缀下。
+ * 唯一的写是阅读量埋点 {@code POST /api/novels/{id}/view}，它
+ * <b>不落任何同步的业务写</b>、<b>不产生用户数据</b>（无 INSERT、无唯一键、
+ * 不记录调用者）、<b>不放宽任何读的口径</b>（对不存在的书与未上架的书
+ * 响应完全一样），因此可以匿名开放。三条里少一条，它就必须挪到
+ * 需要登录的前缀下。
+ *
+ * <p>★★ <b>M3 改动了一条措辞，值得单独记一笔</b>：这条注释原来写的是
+ * 「<b>不落库</b>（只对一个 Redis 计数器 INCR，由定时任务异步汇总）」。
+ * 走 MQ 之后<b>那句话是假的了</b> —— 接口确实产生了持久数据（一条消息，
+ * 在 Broker 上留 48 小时）。前提变了，但结论不变，所以换成了上面那条
+ * 仍然成立的「不落任何同步的业务写」。
+ *
+ * <p>★ <b>为什么结论真的没变</b>，值得写清楚，否则下一个人会以为
+ * 「既然现在会落数据了，那这个接口是不是该要求登录了」：
+ * 它是<b>异步</b>的（读者的响应不等它）、<b>可丢弃</b>的（阅读量是近似值）、
+ * 而且载荷里<b>不含任何调用者信息</b>（只有 novelId 和时间戳）——
+ * 也就是说，它没有因为 M3 而变成一份「用户行为日志」。
+ * ★ 反过来说：往那个载荷里加任何一个「谁点的」字段，
+ * 都会同时打破这一条和那条「不产生用户数据」——<b>那是合规问题，不是重构。</b>
  *
  * <p><b>★ 会落用户数据的写接口（评论、书架、阅读进度）仍然必须放在
  * 需要登录的 {@code /api/reader/**} 下，不要往这个已经免登录的路径下加。</b>
@@ -63,7 +77,7 @@ public class ReaderNovelController {
 
     private final NovelService novelService;
     private final ChapterService chapterService;
-    private final NovelViewCounter novelViewCounter;
+    private final ViewReportProducer viewReportProducer;
 
     @Operation(
             summary = "作品列表",
@@ -236,9 +250,13 @@ public class ReaderNovelController {
                     ★ **它永远返回成功**，即使 `id` 不存在或作品未上架 —— 详见下面的说明。
                     调用方（阅读器）不需要处理任何错误。
 
-                    ★ 阅读量**不是实时**的：这里只对一个 Redis 计数器做 `INCR`，
-                    由定时任务每 30 秒批量落库到 `novel.view_count`。
-                    所以刚点完去看榜单，数字可能还没变。
+                    ★ 阅读量**近实时**（M3 起）：这里只**发一条异步消息**就返回，
+                    不碰数据库；content 自己作为消费方把消息收下来、
+                    在内存里批量聚合，每 5 秒落库一次到 `novel.view_count`。
+                    所以刚点完去看榜单，**秒级**就能看到变化（M3 之前是 30 秒）。
+
+                    ★ 这条链路里，读者的请求路径上**一次数据库写都没有** ——
+                    这正是「写热点走 MQ 削峰」要的效果。
 
                     **无需登录。**""")
     @PostMapping("/{id}/view")
@@ -274,8 +292,19 @@ public class ReaderNovelController {
             return Result.success();
         }
 
-        // 走到这里说明书存在且已上架。record 内部自己吞异常（Redis 挂了也不影响读者）。
-        novelViewCounter.record(id);
+        /*
+         * 走到这里说明书存在且已上架。
+         *
+         * ★★ report 内部【必须】自己吞掉所有异常（见 ViewReportProducer 的类注释）——
+         *    因为 asyncSend 的名字听起来「异步所以不会抛」，其实它在提交任务之前
+         *    就会同步抛（producer 没启动、发送队列满）。
+         *    而这里只 catch 了 BusinessException，吞不掉别的东西 ——
+         *    所以那道防线在 producer 里，不在这里。
+         *
+         * ★ 也就是说：这个接口的「永远返回 200」是由【两个类一起】保证的，
+         *   改动其中任何一个都要回头看一眼另一个。
+         */
+        viewReportProducer.report(id);
         return Result.success();
     }
 }

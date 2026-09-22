@@ -5,6 +5,8 @@ import com.novel.common.enums.AuditTargetType;
 import com.novel.common.result.PageResult;
 import com.novel.modules.content.vo.AuditLogVO;
 
+import java.time.LocalDateTime;
+
 /**
  * 审核流水服务。
  *
@@ -24,6 +26,20 @@ import com.novel.modules.content.vo.AuditLogVO;
  * <b>到那时再加一个显式传 operatorId 的重载</b>，
  * 并在注释里写明「只给无请求上下文的场景用」——
  * 现在没有这个场景，就不要预留一个能被误用的口子。
+ *
+ * <p><b>★★ M3：那个场景到了，但来的不是定时任务，是 MQ 消费者。</b>
+ * 上面那段预判的机制说对了、场景说错了，所以这里补记一笔：
+ * {@link #record(AuditTargetType, Long, AuditAction, String, Long, LocalDateTime)}
+ * 就是那个重载。<b>消费者线程上永远没有 {@code UserContext}</b> ——
+ * 它是 {@code OncePerRequestFilter} 填的，而 MQ 线程背后根本没有请求。
+ *
+ * <p>★ 所以那个「能被误用的口子」现在真实存在了，处置办法是把它<b>钉在注释里</b>：
+ * 两个重载各自的适用场景写死，且新的那个<b>只在 {@code AuditRecordConsumer} 里调</b>。
+ * <p>★ <b>还有一条更硬的约束：绝不要在消费者里伪造一个 {@code UserContext}</b>
+ * （{@code set()} 一个假的 {@code LoginUser}）来让老方法「照常工作」。
+ * 那样 {@code requireUserId()} 会<b>开始返回一个编出来的值</b>，
+ * 把「这里根本没有调用方」这件事藏起来 —— 比抛异常更坏。
+ * 完整论证见 {@code AuditRecordConsumer} 的类注释。
  *
  * @author MickeyChen
  */
@@ -49,6 +65,38 @@ public interface AuditLogService {
      * @param remark     备注，驳回时是理由，可为 {@code null}
      */
     void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark);
+
+    /**
+     * 记一条审核流水，<b>操作人与发生时刻都由调用方显式给出</b>（M3 新增）。
+     *
+     * <p><b>★★ 只给「没有请求上下文」的场景用，目前唯一的调用方是
+     * {@code AuditRecordConsumer}（MQ 消费者）。</b>
+     * 别在 HTTP 路径上调它 —— 那边有一个真的登录态，
+     * 用显式传参的版本等于主动把「操作人不可伪造」这条不变量换成自觉。
+     * <p>上面那个重载的注释花了很大篇幅论证「为什么不要 operatorId 参数」，
+     * 那些理由对这个重载<b>依然成立</b>，只是这里没有第二条路可走：
+     * 消费者线程上 {@code UserContext} 永远是空的（见类注释最后一段）。
+     * <b>两个重载各自诚实，比一个两头都凑合的强。</b>
+     *
+     * <p><b>★ 为什么 {@code createTime} 也要显式传：</b>
+     * 它是 {@code audit_log} 在管理端日志页上显示的时间，必须回答
+     * 「管理员什么时候审的」，而不是「这条消息什么时候轮到被处理」。
+     * 一有积压这两者就差得很远（积压十分钟，日志页上所有操作的时间都晚十分钟，
+     * 而没人能从页面上看出这件事）。值是随消息带来的生产时刻
+     * （{@code AuditRecordMessage#atAsLocalDateTime}）。
+     * <p>★ {@code null} 表示「交给 {@code MybatisMetaObjectHandler} 填当前时间」——
+     * 只有老的那个重载会传 null（HTTP 路径上「现在」就是发生时刻）。
+     *
+     * @param targetType 审核对象类型
+     * @param targetId   对象 id
+     * @param action     动作
+     * @param remark     备注，可为 {@code null}
+     * @param operatorId ★ 操作人 id。消费者从<b>消息载荷</b>里取，
+     *                   而载荷里的那个值是生产方从它自己那侧的登录态取的
+     * @param createTime 事件真正发生的时刻；{@code null} = 用当前时间
+     */
+    void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark,
+                Long operatorId, LocalDateTime createTime);
 
     /**
      * 管理端流水查询，按时间倒序分页。

@@ -4,7 +4,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.core.env.Environment;
 
 /**
@@ -39,22 +38,35 @@ import org.springframework.core.env.Environment;
  * 读那些头，重建 {@code SecurityContext} 与 {@code UserContext}。
  * 所以 {@code AuthSecurityConfig} 里配的仍然全是「URL 闸」，一行业务鉴权代码都没改。
  *
- * <p><b>★ {@code @EnableFeignClients} 为什么需要它：</b>
- * 本服务有一个出站调用 —— 审完作者申请要回头让 novel-content 写审核流水
- * （{@code com.novel.auth.client.ContentAuditClient}）。
- * 不加这个注解，{@code @FeignClient} 接口<b>不会被注册成 Bean</b>，
- * 而错误只会在启动时冒出来：{@code AuthorApplyAuditRecorderImpl} 找不到
- * 可注入的 {@code ContentAuditClient}。
- * <p>★ 它的默认扫描范围是<b>启动类所在包</b>（{@code com.novel}），
- * 所以 {@code com.novel.auth.client} 在范围内，不用写 {@code basePackages}。
- * <p>★ <b>网关绝对不要加这个注解</b> —— 它不做任何出站业务调用，
+ * <p><b>★★★ M3 起这个服务【没有任何出站边】，而这件事是结构性的 ——
+ * 不再依赖任何人记得住。</b>
+ * M1/M2 期间这里挂着 {@code @EnableFeignClients}，只为了一件事：审完作者申请
+ * 回头让 novel-content 写审核流水（{@code com.novel.auth.client.ContentAuditClient}）。
+ * M3 把那一步换成了 {@link com.novel.auth.mq.producer.AuthorApplyAuditProducer}
+ * 的一条<b>事务消息</b>，于是：
+ * <pre>
+ *   {@code @EnableFeignClients}        删掉了
+ *   {@code spring-cloud-starter-openfeign}    从 pom 里删掉了
+ *   {@code spring-cloud-starter-loadbalancer} 也删掉了（它只为解析 {@code name="novel-content"} 而存在）
+ *   {@code com.novel.auth.client} 这个包        整个消失了
+ * </pre>
+ * ★ <b>这才是「环 #1 断了」的机械证据</b>，比一句「我们改用 MQ 了」硬：
+ * 一个没有 Feign、没有 LoadBalancer、没有 {@code @FeignClient} 的服务，
+ * <b>在编译期就发不出跨服务调用</b>。同 {@code novel-gateway} 那条
+ * 「{@code spring-boot-starter-web} 一进 classpath 就起不来」的红线
+ * 是同一类做法：把纪律变成结构。
+ * <p>★ 顺带说清一件事：本服务仍然<b>被</b>别人调用
+ * （{@code content → auth} 读用户昵称，见 {@code InternalUserController}），
+ * 所以 {@code /internal/**} 那一套（白名单 + 内部令牌闸门）<b>一个字都不能动</b>。
+ * 「没有出站」和「没有入站」是两件事。
+ *
+ * <p>★ <b>网关绝对不要加 {@code @EnableFeignClients}</b> —— 它不做任何出站业务调用，
  * 加了只会把 Feign 拖进 WebFlux 的 classpath（见 M0 留下的那道防线）。
  *
  * @author MickeyChen
  */
 @Slf4j
 @SpringBootApplication
-@EnableFeignClients
 @MapperScan("com.novel.modules.**.mapper")
 public class AuthApplication {
 

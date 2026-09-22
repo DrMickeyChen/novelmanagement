@@ -89,21 +89,32 @@ spring:
         #    日志是「Unable to find instance for novel-auth」，看起来像路由配错了。
         ip: 127.0.0.1
 
-    # ---------------- Feign 超时（M1 新增） ----------------
-    # ★ 和 novel-content / novel-interaction 那两份同样的理由（读超时缺失会让请求永久挂住、
-    #   把 Tomcat 线程占满），不重复 —— 见 novel-interaction/application-dev.yml。
+    # ---------------- Feign 超时：★ M3 起本服务没有这一节了 ----------------
+    # 这里原来有一段 openfeign.client.config.default（connect 2000 / read 3000），
+    # 唯一的用途是给「审完 → 等 novel-content 写审核流水」那次同步调用设超时，
+    # 读超时还特意比 content 那份短（3000 vs 5000），因为管理员正盯着按钮等。
     #
-    # ★ 本服务的读超时比 novel-content 那一份【更短】（3000ms，那边是 5000ms），
-    #   因为这条边是【同步等待】的：
-    #       管理员点「审核」→ 本服务 → 等 novel-content 写审核流水 → 才返回
-    #   用户是盯着这个按钮等的，不能在写流水这一步卡 5 秒。
-    #   而写一条流水正常只要几毫秒，3 秒没回就是真出事了。
-    openfeign:
-      client:
-        config:
-          default:
-            connect-timeout: 2000
-            read-timeout: 3000
+    # ★★ M3 把那条边换成了事务消息（AuthorApplyAuditProducer），
+    #    于是 openfeign 的依赖、配置、@EnableFeignClients、【整段一起】删掉了。
+    #    留着这一节比删掉更糟：Spring Boot 对未知前缀不报错，
+    #    它会安安静静地生效于「一个不存在的 Feign 客户端」——
+    #    下一个人看见这段会以为本服务还在往外调，而去 novel-content 里找一个不存在的接口。
+    #
+    # ★ 要复核的话，别 grep 关键词 —— 判据钉在「有没有这条边」上：
+    #       ls backend/novel-auth/src/main/java/com/novel/auth/client/   → 目录不存在
+    #       mvn -f backend/pom.xml -pl novel-auth -am dependency:tree \
+    #         | sed -n '/com.novel:novel-auth:jar/,$p' | grep -iE "feign|loadbalancer"  → 0
+    #   （阳性对照：换成 -pl novel-interaction 是 8 命中 —— 那条管道会失败。）
+    #   ★★ M3 订正：这里原来写的是
+    #       grep -rn "openfeign\|feign" backend/novel-auth/src/main/resources/
+    #   「必须是 0 命中」——而它实测 3 命中，全在注释里（含这一行自己）。
+    #   凡是「讲这里以前有什么」的注释都必然写着那个词，
+    #   于是这条判据永远失败、且失败得毫无信息量，最后被当成噪音忽略。
+    #
+    # ★ 审核接口现在的超时语义完全变了，值得记一笔：
+    #    改造前 = 「管理员等 content 写流水」（同步，最坏 3 秒后报错）
+    #    改造后 = 「等 Broker 收下半消息」（一次网络往返，然后立刻返回）
+    #    流水本身在事务提交后才可见，管理员不等它 —— 也【不该】等它。
 
 # ---------------- 文件上传路径 ----------------
 # ★★ 这个值【必须和 novel-content / novel-interaction 的完全一样】。
@@ -155,6 +166,52 @@ novel:
   #    数据看着是对的就没人会发现。
   internal:
     token: ${INTERNAL_TOKEN:novel-dev-only-internal-token-please-change-in-production-2026}
+
+# ---------------- RocketMQ（M3 新增） ----------------
+#
+# ★★ 顶层键，不在 spring: 下面（前缀是 rocketmq）。写成 spring.rocketmq.* 会被
+#    静默忽略、退回 localhost:9876 —— 完整说明见 novel-content 的 application-dev.yml，
+#    这里只记本服务【特有】的部分。
+#
+# ★ name-server 必须和 content / interaction 逐字相同（同一个 broker）。
+rocketmq:
+  name-server: 192.168.127.137:9876
+
+  # ★★ 本服务的生产者组【和另外两个不一样】，这不是随手写的：
+  #
+  #    auth 发的是【事务消息】（审核流水，用来断掉 auth ⇄ content 那个环）。
+  #    事务消息的半消息挂在生产者组下，Broker 回查时按
+  #    (生产者组, 事务 id) 找回对应的 TransactionListener 来裁决。
+  #
+  #    ★ 所以「一组实例 = 一个事务身份」。如果和 content 共用 novel-producer，
+  #      两边的半消息就混在同一个组里，回查语义会被搅在一起 ——
+  #      而且症状是「回查偶尔找不到对应的事务」，很难查。
+  #      MqConstant.PRODUCER_GROUP_AUTH_TX 就是这个值。
+  producer:
+    group: novel-tx-audit
+
+  # ★★ 这里【不需要】任何一行「开启事务」的配置 —— 已对着 2.3.6 的字节码核过：
+  #      RocketMQUtil.createDefaultMQProducer(...) 的两个分支（带 ACL / 不带）
+  #      拿到的都是 new TransactionMQProducer(...)。
+  #    也就是说 rocketMQTemplate 背后【本来就是】一个事务生产者，
+  #    只要存在一个 @RocketMQTransactionListener bean，事务消息就能发。
+  #    RocketMQTransactionConfiguration 在启动时会把那个 listener 注册到
+  #    template 的 producer 上，成功时打一行
+  #    「RocketMQLocalTransactionListener {} register to {} success」——
+  #    ★ 这行日志是排查事务消息时【第一个】该 grep 的东西（grep 不到就说明
+  #      listener 没注册上，半消息会永远悬着、消费者永远看不到）。
+  #    ★ 它注册失败时抛的错也要认：producer 不是 TransactionMQProducer 时
+  #      抛 "xxx is not instance of TransactionMQProducer"，
+  #      同一模板上挂两个 listener 时抛 "already exists RocketMQLocalTransactionListener"。
+  #
+  # ★★ 绑定方式是【模板 bean 名】，不是 txProducerGroup：
+  #    @RocketMQTransactionListener 的属性只有 corePoolSize / maximumPoolSize /
+  #    keepAliveTime / keepAliveTimeUnit / blockingQueueSize / rocketMQTemplateBeanName
+  #    ——【没有 txProducerGroup 这个属性】，写了编译不过。
+  #    默认 bean 名就是 "rocketMQTemplate"，本服务用它，不用配。
+  #
+  # ★ 同样【没有】rocketmq.consumer.* 段（max-reconsume-times 那个属性不存在，
+  #   写了会被静默忽略；重试次数只能写在注解上）。见 content 那份的注释。
 
 # ---------------- 接口文档显示开关 ----------------
 springdoc:

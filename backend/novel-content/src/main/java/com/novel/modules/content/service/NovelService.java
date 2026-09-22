@@ -1,6 +1,7 @@
 package com.novel.modules.content.service;
 
 import com.novel.common.enums.NovelStatus;
+import com.novel.common.internal.NovelCollectCountDTO;
 import com.novel.common.result.PageResult;
 import com.novel.common.vo.NovelBriefVO;
 import com.novel.common.vo.ChapterBriefVO;
@@ -426,4 +427,57 @@ public interface NovelService {
      * 「0 分」和「暂无评分」，语义是「0 就是还没人评」。
      */
     void refreshScore(Long novelId, BigDecimal score);
+
+    /* ==================== 供 interaction 的对账任务调用（M3） ==================== */
+
+    /**
+     * 【对账专用】按 id 升序取「收藏数非 0 的作品」的一页，每行只有 id 和收藏数。
+     *
+     * <p><b>★★ 这不是一个业务查询，它是「把 content 这边的账本摊开给 interaction 看」。</b>
+     * 调用方只有一个：{@code interaction} 的 {@code NovelStatReconcileJob}
+     * （每 10 分钟一次的对账任务）。它拿这边报出来的值和自己的
+     * {@code COUNT(*)} 真值比对，不一致的重推一条 {@code NOVEL_STAT} 消息。
+     *
+     * <p><b>★★ 为什么是「翻页取全集」而不是「给我这几个 id 的值」：</b>
+     * 对账要解决的是「那条消息丢了，所以这边停在旧值」——
+     * 而<b>丢消息的现场不会留下任何痕迹</b>，没有任何 id 列表能圈出它。
+     * 唯一能发现漂移的办法是把两边的全量摊开比一遍。
+     * 反过来说：如果对账只需要回答「这几个 id 对不对」，
+     * 那它就已经知道该查谁了 —— 而那正是它不知道的事。
+     *
+     * <p><b>★★ 为什么只报非 0 的，以及调用方【必须】把「不在这一页里」当成 0：</b>
+     * <pre>
+     *   这边不报 novelId=7  →  两种可能，调用方不必分辨：
+     *     ① 第 7 本书的 collect_count 本来就是 0  → 值就是 0，没分歧
+     *     ② 第 7 本书不存在 / 已逻辑删除          → 值推过去也没用（★ 见下）
+     *   两种情况的处置一样：拿 0 去比。
+     * </pre>
+     * ★ 第 ② 种的代价要如实记一笔：一本被逻辑删除、而书架上还留着读者的书，
+     * 会<b>每一轮都对不上</b>（调用方真值 &gt; 0，这边报不出它）——
+     * 于是每 10 分钟重推一次，而消费端的 {@code UPDATE} 因为 {@code @TableLogic}
+     * 影响 0 行。<b>这是刻意不处理的</b>：要消掉它就得让这边把已删除的书也报出来，
+     * 那等于把一个「统计口径」悄悄改成「含墓碑的行集」，
+     * 而这条噪声本身有信息量（有人在删一本有人收藏的书）。论证在
+     * {@code NovelStatReconcileJob} 那边。
+     *
+     * <p><b>★★ 游标分页（{@code afterId}）而不是 {@code page}/{@code size}：</b>
+     * 这是一次<b>全表扫描</b>，而 offset 分页在扫描过程中一旦有行插入，
+     * 后面的页会整体错位 —— 漏掉一行或者重复一行。
+     * 对账漏掉一行的后果不是「少修一个」，是<b>那个漂移永远修不回来</b>
+     * （它不在任何一页里），而日志上看不出任何异常。
+     * 游标分页对插入免疫：它只认「id 比上一页最后一个大」。
+     * <p>★ 顺带：游标分页不需要 {@code COUNT(*)}，调用方也就不必先问「总共有多少页」。
+     *
+     * <p><b>★ 分页的上下界都不在这里夹</b>，由 {@code buildPage} +
+     * {@code PaginationInnerInterceptor.setMaxLimit(100)} 那两层管（同 {@code rank}）。
+     * ★ <b>但调用方必须知道 100 这个上限</b>：请求 {@code size &gt; 100} 时
+     * 拿回来的是被截断到 100 的一页，而「返回条数 &lt; 请求条数」正是调用方
+     * 判断「扫到底了」的依据 —— 于是循环会<b>提前结束、静默漏掉后面的书</b>。
+     * 所以 {@code NovelStatReconcileJob} 里的页大小写死成 100（不是「随便取个大点的」）。
+     *
+     * @param afterId 游标：只返回 id <b>严格大于</b>它的行。第一页传 {@code null}（或 0）
+     * @param size    这一页最多几行。★ ≤ 100，理由见上；{@code null} / 小于 1 走默认值
+     * @return 按 id 升序的一页，可能为空列表（扫到底了）
+     */
+    List<NovelCollectCountDTO> collectCountsAfter(Long afterId, Integer size);
 }

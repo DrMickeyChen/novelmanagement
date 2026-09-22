@@ -34,7 +34,9 @@
           server.port              → 8083（大纲 §四目录结构定的）
           finalName                → jar 名
           网关的 lb://novel-interaction
-          novel-auth 的 ContentAuditClient（它按服务名找对端）
+          ★ M3 起是本模块自己的 AuthNicknameClient —— 这里原来写的是
+            「novel-auth 的 ContentAuditClient」，那个客户端 M3 已随环 #1 删除，
+            但「有别人按服务名找本模块」这件事没变，只是换成了自己人。
           package.json 的 dev:interaction、日志文件名、README/部署文档
 
       ★ 与大纲 §四 目录结构的【已知偏差】：大纲写的是
@@ -63,6 +65,23 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 消息队列（M3 新增） ====================
+          ★ 版本在父 pom 的 dependencyManagement 里，见那边为什么叫
+            rocketmq-spring.version 而不是 rocketmq.version。
+
+          ★★ interaction 在 M3 里【自发自消两条】+【往外发一条】：
+              PROGRESS_REPORT  自发自消 —— 阅读进度，★ 全项目唯一一条 ORDERLY
+              NOVEL_STAT       发       —— 收藏数 / 评分，发给 content
+            之所以进度这条能自发自消，是因为 read_history 是 interaction 自己的表 ——
+            正是这一点让它成为唯一敢用 ORDERLY 的那条（消费者不调任何远程，
+            不会因为下游一挂就把队列永久堵死）。
+        -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
         </dependency>
 
         <!--
