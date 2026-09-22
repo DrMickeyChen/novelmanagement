@@ -2,7 +2,7 @@ package com.novel.config;
 
 import com.novel.common.security.RestAccessDeniedHandler;
 import com.novel.common.security.RestAuthenticationEntryPoint;
-import com.novel.common.security.filter.JwtAuthenticationFilter;
+import com.novel.common.security.filter.HeaderAuthenticationFilter;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
@@ -14,18 +14,15 @@ import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Spring Security 配置。
+ * <b>novel-backend 的 Spring Security 配置。</b>
  *
  * <p><b>★ 这个类必须和 pom 里的 spring-boot-starter-security 同时存在。</b>
- * 只加依赖不写放行规则，启动后<b>所有接口</b>（包括 {@code /api/ping}
- * 和 Knife4j 的 {@code /doc.html}）都会 401 —— 这是 P0 阶段一直把
- * 那个依赖注释掉的原因。
+ * 只加依赖不写放行规则，启动后<b>所有接口</b>（包括 Knife4j 的
+ * {@code /doc.html}）都会 401 —— 这是 P0 阶段一直把那个依赖注释掉的原因。
  *
  * <p><b>两条安全规则分别管什么（别混）：</b>
  * <ul>
@@ -34,6 +31,29 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  *   <li>{@code @PreAuthorize} —— 管「<b>这个身份能不能干这事</b>」，
  *       是大纲 §177 里说的「服务做鉴权」，第二期拆分时原地不动。</li>
  * </ul>
+ *
+ * <h3>★★ M1 改了什么</h3>
+ *
+ * <p>只有三处，<b>一行业务鉴权规则都没动</b>：
+ * <ol>
+ *   <li><b>换了认证过滤器</b>：{@code JwtAuthenticationFilter}（自己验签 JWT）
+ *       → {@link HeaderAuthenticationFilter}（读网关写下的 {@code X-User-*}
+ *       头）。这是 M1 的核心 —— <b>本服务从"自己认人"变成"信网关说的"</b>。</li>
+ *   <li><b>白名单做了减法</b>：{@code /api/ping/**}、{@code POST /api/auth/login}、
+ *       {@code POST /api/auth/register}、{@code GET /api/notices} 四条<b>删掉</b>了 ——
+ *       那四个接口已经<b>不在本服务里</b>了（跟着 {@code modules/system}
+ *       搬进了 novel-auth）。留着它们不报错，但会让后来的人以为本服务还有登录接口。</li>
+ *   <li><b>白名单加了 {@code /internal/**}</b>：M1 新增的服务间调用面。
+ *       见下面 {@link #INTERNAL_PATHS} 的注释 —— 那条必须和网关的共享密钥
+ *       一起看，只改一处就是一个洞。</li>
+ * </ol>
+ *
+ * <p><b>★★ 这个类为什么不搬进 novel-common、也不和 novel-auth 共用一份：</b>
+ * 它的全部内容就是「<b>本服务的</b>白名单 + URL 闸」，天然是 per-service 的 ——
+ * 本服务一条 {@code /api/auth/login} 都没有，而 auth 那边一条
+ * {@code /api/novels/**} 都没有。合并成一份 = 取并集 = 把两边的公开面互相对开。
+ * <p>novel-auth 有它自己的 {@code com.novel.auth.config.AuthSecurityConfig}，
+ * <b>类名和包名都不同</b>，不会出现「同 FQN 两个类、谁赢看 classpath 顺序」的鬼故事。
  *
  * @author MickeyChen
  */
@@ -45,7 +65,7 @@ public class SecurityConfig {
 
     private final RestAuthenticationEntryPoint authenticationEntryPoint;
     private final RestAccessDeniedHandler accessDeniedHandler;
-    private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final HeaderAuthenticationFilter headerAuthenticationFilter;
 
     /**
      * 允许<b>匿名</b>访问的路径。
@@ -54,12 +74,16 @@ public class SecurityConfig {
      * 白名单里的接口如果还需要权限，照样要在方法上写 {@code @PreAuthorize}。
      */
     public static final String[] WHITELIST = {
-            /* 健康检查：P0 验收用的三个探针，必须一直能匿名访问，否则监控没法用 */
-            "/api/ping/**",
-
-            /* 登录 / 注册：还没登录当然要能调 */
-            "/api/auth/login",
-            "/api/auth/register",
+            /*
+             * ★★ M1 起这里【没有】/api/ping/** 和 /api/auth/login|register 了。
+             *
+             * 它们跟着 modules/system 搬进了 novel-auth（PingController、
+             * AuthController 现在住在那边），本服务里已经没有这几个接口。
+             * 留着不会报错，但会让人以为本服务还有登录接口 ——
+             * 而真正危险的是：将来本服务若新增一个别的 /api/ping/**，
+             * 它会因为这些陈旧条目【静默匿名放行】。
+             * ★ 每个服务的白名单必须只描述它自己有的接口。
+             */
 
             /* Knife4j / OpenAPI 文档页。少一个都会让 /doc.html 打不开，
                而且报的是 401 不是 404，很容易误以为「文档没配好」。 */
@@ -110,24 +134,53 @@ public class SecurityConfig {
     };
 
     /**
-     * 密码编码器。
+     * ★★ <b>内部接口（M1 新增）。</b>本服务给兄弟服务 novel-auth 调的那几个端点。
      *
-     * <p><b>为什么必须有这个 bean：</b>
-     * <ul>
-     *   <li>密码<b>绝对不能存明文</b>，数据库里存的是 BCrypt 哈希</li>
-     *   <li>BCrypt 是<b>单向</b>的，只能「拿明文算一遍看和库里的是不是一样」，
-     *       不存在「解密」</li>
-     *   <li>它每次加密结果都不同（自带随机盐），所以<b>不能用
-     *       {@code equals} 比较两个哈希</b>，必须用
-     *       {@code passwordEncoder.matches(明文, 库里的哈希)}</li>
-     * </ul>
-     * 种子管理员 {@code admin / admin123} 在 {@code docs/sql/seed.sql} 里
-     * 存的就是 cost=10 的 BCrypt 哈希（{@code $2a$10$Jwayv0o7...}）。
+     * <p>目前只有一个：{@code POST /internal/author-apply-audit-logs}
+     * （novel-auth 审完一条作者申请，回头调本服务写审核流水）。
+     * 它是铁律 1 原文里明确列出的那个反向接缝，
+     * 见 {@code InternalAuditLogController} 的类注释。
+     *
+     * <p><b>它为什么必须 {@code permitAll()}：</b>
+     * 调它的 novel-auth 手里<b>没有</b>登录用户的 token —— 它有的是
+     * 「当前请求的登录态」（靠 Feign 的出站拦截器转成 {@code X-User-*} 头带过来）。
+     * 而它自己<b>不验签</b>，所以这一层没法做认证，只能放行。
+     *
+     * <p><b>那它凭什么不能被人随便调？把关的是 {@link HeaderAuthenticationFilter}：</b>
+     * 请求必须带服务间共享密钥（{@code X-Internal-Token}），
+     * 缺了或者对不上<b>直接 403</b>，根本走不到这里。
+     *
+     * <p><b>★★ 两处必须一起改，改一处就是一个洞：</b>
+     * <pre>
+     *   删掉这一条 / 忘了加  → 合法的服务调用被自己的 anyRequest() 拦下 → 审核作者申请直接 500
+     *   删掉过滤器里的那道闸 → /internal/** 对全世界开放，且【没有任何症状】
+     * </pre>
+     * 第二条尤其危险：不报错、不影响功能、测试全过。唯一的发现方式是
+     * 「知道这里本来有一道闸」—— 所以这段注释和 auth 那边那一段都不能删。
+     *
+     * <p>★ 另一层结构保证：{@code /internal/**} <b>刻意不在 {@code /api/**} 之下</b>，
+     * 而网关的路由表只有 {@code /api/**} 和 {@code /uploads/**} ——
+     * 公网在结构上就够不到这个前缀（见 {@code IdentityHeaders} 的说明）。
+     * 验证方式很干脆：{@code curl :8080/internal/...} 必须 404。
      */
-    @Bean
-    public PasswordEncoder passwordEncoder() {
-        return new BCryptPasswordEncoder();
-    }
+    public static final String[] INTERNAL_PATHS = {
+            "/internal/**",
+    };
+
+    /*
+     * ★★ M1 起这里【没有了】passwordEncoder() 这个 bean —— 它是被搬走的，不是被删的。
+     *
+     * 它原来就在这个位置，而它唯一的使用者（AuthServiceImpl 的登录校验、
+     * AdminUserServiceImpl 的管理员重置密码）M1 跟着 modules/system
+     * 搬进了 novel-auth，于是 bean 也跟着它唯一的消费者走，
+     * 现在住在 com.novel.auth.config.AuthSecurityConfig。
+     *
+     * 留在这里的话它就是个没人注入的死 bean，而且会让读代码的人
+     * 以为「密码哈希是在本服务做的」—— 本服务现在一条密码逻辑都没有。
+     * ★ 将来本服务若真需要 BCrypt，从 auth 那边<b>搬回来</b>，
+     *   不要在两边各留一份：两份 BCryptPasswordEncoder 一旦 cost 配得不一样，
+     *   产生的哈希互相验不过，而症状只是「某些用户登不上」。
+     */
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
@@ -172,9 +225,13 @@ public class SecurityConfig {
                          *   ① AI 流推完，SseEmitter 调 complete()
                          *   ② Spring MVC 对这个请求发起一次【ASYNC 派发】——
                          *      拿同一个 URI 再走一遍过滤器链，把响应收尾
-                         *   ③ JwtAuthenticationFilter 是 OncePerRequestFilter，
+                         *   ③ HeaderAuthenticationFilter 是 OncePerRequestFilter，
                          *      它的 shouldNotFilterAsyncDispatch() 默认返回 true，
                          *      所以这次派发【不跑认证】→ SecurityContext 是空的
+                         *      （★ M1 前这里是 JwtAuthenticationFilter。换了过滤器
+                         *        之后这一步的行为【一个字没变】—— 两者都是
+                         *        OncePerRequestFilter，默认值一样。别以为换了
+                         *        过滤器这条就自动失效了。）
                          *   ④ 而 Spring Security 6 的 AuthorizationFilter 默认
                          *      filterAsyncDispatch = true（5.x 是 false，这是 6 的
                          *      行为变更）→ 这次派发被当成【匿名请求】重新鉴权
@@ -208,10 +265,11 @@ public class SecurityConfig {
                          *   ASYNC，ERROR 派发仍然按 /error 那条白名单走 ——
                          *   宁可少放开一点。
                          *
-                         * ★ 被否决的备选方案：让 JwtAuthenticationFilter 在 ASYNC
+                         * ★ 被否决的备选方案：让认证过滤器在 ASYNC
                          *   派发上也跑（shouldNotFilterAsyncDispatch() 返回 false）。
-                         *   那会在每次流收尾时再查一次 Redis 校验 token，而它本来就是
-                         *   同一个已认证的请求 —— 多一次网络往返，换不来任何东西。
+                         *   改造前那会在每次流收尾时再查一次 Redis 校验 token；
+                         *   M1 之后则是再读一次请求头 —— 但两者都是同一个已认证的
+                         *   请求，多跑一遍换不来任何东西。
                          */
                         .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
 
@@ -260,27 +318,30 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/api/novels/*/view").permitAll()
 
                         /*
-                         * ==================== 公告（P5 · S15） ====================
-                         * ★ 读者端首页的公告横幅。**只有这一条** ——
-                         *   管理端的 /api/admin/notices 什么都不用加，见下面角色闸那段。
+                         * ==================== 公告（P5 · S15）→ M1 搬走了 ====================
+                         * 原来这里有一条 GET /api/notices 的匿名放行。
+                         * M1 把公告整个模块（ReaderNoticeController +
+                         * AdminNoticeController）搬进了 novel-auth，
+                         * 所以本服务一条公告接口都没有了。
                          *
-                         * ★★ 三个坑，一个都不能少：
-                         *   ① 【必须带 HttpMethod.GET】。白名单条目默认是
-                         *      「方法无关」的，只写路径就等于把将来任何
-                         *      POST /api/notices（发公告）一起匿名放行了 ——
-                         *      这一条 P2 已经有白名单条目踩过，见上面 WHITELIST 的注释。
-                         *   ② 【路径是精确的，不带通配符】。写成 /api/notices 加双星号
-                         *      会顺带放行将来新增的 GET /api/notices/{id}，
-                         *      而那需要单独判断一次（单条公告将来可能带草稿）。
-                         *   ③ 【必须排在这一行】—— 在 .anyRequest().authenticated() 之前。
-                         *      顺序错了规则不生效，而且没有任何报错。
+                         * ★ 那条规则的完整论证（为什么必须带 HttpMethod.GET、
+                         *   为什么路径不带通配符、为什么敢匿名开放）
+                         *   已经<b>整段搬到</b> AuthSecurityConfig 里 ——
+                         *   去那边读，不要在这里留一份副本：
+                         *   两份会漂移，而漂移的症状是「某个公告接口莫名 401」。
                          *
-                         * ★ 它敢匿名开放，是因为只读、且只读 status = 1 的公告：
-                         *   过滤写在 SQL 的 WHERE 里（NoticeServiceImpl#listPublished），
-                         *   不是查出来再 if —— 所以「未发布的公告泄露给所有人」
-                         *   这条唯一的风险路径不存在。
+                         * ★ 注意 /api/admin/notices/** 走的是下面那条
+                         *   hasRole("ADMIN") 角色闸 —— 但 M1 之后它其实会被网关
+                         *   转发到 novel-auth，由那边的 AuthSecurityConfig 判定。
                          */
-                        .requestMatchers(HttpMethod.GET, "/api/notices").permitAll()
+
+                        /*
+                         * ==================== 内部接口（M1） ====================
+                         * ★★ 见上面 INTERNAL_PATHS 的注释：这一条【必须】排在
+                         *    anyRequest() 之前，且把关的是 HeaderAuthenticationFilter。
+                         *    顺序错了 → 审核作者申请直接 500（合法的服务调用被自己拦下）。
+                         */
+                        .requestMatchers(INTERNAL_PATHS).permitAll()
 
                         /*
                          * ==================== 角色闸（P2） ====================
@@ -354,11 +415,11 @@ public class SecurityConfig {
                  * 当成未登录。
                  *
                  * 为什么是「之前」而不是「之后」：UsernamePasswordAuthenticationFilter
-                 * 是表单登录用的，我们完全禁用了它；把 JWT 过滤器放在它前面，
+                 * 是表单登录用的，我们完全禁用了它；把身份过滤器放在它前面，
                  * 是 Spring Security 里最不容易出错的位置 —— 它在所有
                  * 「需要已认证身份」的过滤器之前，又在安全链的入口之后。
                  */
-                .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(headerAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
@@ -368,7 +429,7 @@ public class SecurityConfig {
      *
      * <p><b>不加会怎样：</b>任何 {@code Filter} 类型的 Bean，Spring Boot 都会
      * 自动注册到 Servlet 容器的过滤器链上（这是「约定优于配置」的一部分）。
-     * 于是 {@link JwtAuthenticationFilter} 会同时存在于<b>两个地方</b>：
+     * 于是 {@link HeaderAuthenticationFilter} 会同时存在于<b>两个地方</b>：
      * <pre>
      *   ① Servlet 容器链（自动注册的）      ← 我们不想要的那个
      *   ② Security 过滤器链（上面 addFilterBefore 加的）← 我们要的那个
@@ -380,12 +441,17 @@ public class SecurityConfig {
      * 或者把 {@code OncePerRequestFilter} 改成普通 {@code Filter}，
      * 就会变成「认证跑两遍」，而且完全不报错。
      *
-     * <p>所以这里显式关掉自动注册，让它的入口<b>只有一个</b>。
+     * <p>★★ <b>M1 之后关掉自动注册多了一个更硬的理由：</b>
+     * 这个过滤器里带着一道 {@code /internal/**} 的 403 闸（缺共享密钥就拒）。
+     * 如果它跑在 Security 链<b>之外</b>（也就是容器链上），那道 403 就发生在
+     * Security 判定之前 —— 本服务「哪些路径需要密钥」的语义会变得
+     * 依赖 Servlet 容器的注册顺序，而那是没人会去读的地方。
+     * 显式关掉，让它的入口<b>只有一个</b>。
      */
     @Bean
-    public FilterRegistrationBean<JwtAuthenticationFilter> jwtFilterRegistration(
-            JwtAuthenticationFilter filter) {
-        FilterRegistrationBean<JwtAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
+    public FilterRegistrationBean<HeaderAuthenticationFilter> headerFilterRegistration(
+            HeaderAuthenticationFilter filter) {
+        FilterRegistrationBean<HeaderAuthenticationFilter> registration = new FilterRegistrationBean<>(filter);
         registration.setEnabled(false);
         return registration;
     }

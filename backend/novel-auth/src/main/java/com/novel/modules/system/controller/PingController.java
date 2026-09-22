@@ -10,6 +10,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,8 +36,15 @@ import java.util.concurrent.TimeUnit;
  *   <li>两个都通、{@code /api/ping/redis} 不通 → Redis 配置问题</li>
  * </ul>
  *
- * <p><b>它们不需要登录就能访问</b>，所以将来加 Spring Security 时，
- * 记得把 {@code /api/ping/**} 放进白名单。
+ * <p><b>它们不需要登录就能访问</b>，所以 {@code /api/ping/**} 在
+ * {@code AuthSecurityConfig} 的白名单里（P1 加 Spring Security 时加上的）。
+ *
+ * <p><b>★ M1：这个类跟着 {@code modules/system} 搬进了 novel-auth（:8081）。</b>
+ * 它测的东西因此也变了 —— 现在回答的是「<b>auth 服务</b>能不能连上
+ * MySQL / Redis」，不再是「单体能不能」。两个服务连的是同一台 MySQL、
+ * 同一个 Redis database，所以正常情况下两边结论一致；
+ * 但排障时<b>要看清是在哪个端口上打的</b>，:8081 和 :8090 是两个进程。
+ * 返回体里的 {@code application} 字段就是给这件事用的（见下面那个字段的注释）。
  *
  * @author MickeyChen
  */
@@ -49,6 +57,27 @@ public class PingController {
 
     private final SysUserMapper sysUserMapper;
     private final RedisTemplate<String, Object> redisTemplate;
+
+    /**
+     * 本服务的名字（{@code novel-auth} 之类），从配置里读，<b>不写死</b>。
+     *
+     * <p>★★ 这一处是 M1 顺手根治的一个「会说谎的常量」：
+     * 这个类原来住在单体的 {@code com.novel.modules.system} 里，
+     * 两个返回体里硬编码了 {@code "novel-backend"}。M1 把整个
+     * {@code modules/system} 搬进 novel-auth 之后，那两个字面量就成了假话 ——
+     * 打印出来是「novel-backend」，而这个进程叫 novel-auth。
+     *
+     * <p>★ 这类错误的恶心之处在于<b>它不报错、也不影响功能</b>，
+     * 只在排障时误导人：网关日志里看到 {@code from=novel-backend}
+     * 会让人去翻 <b>novel-backend</b> 的日志，而那个进程压根没参与。
+     *
+     * <p>★ 所以修法不是「把 novel-backend 改成 novel-auth」——
+     * 那只是把一个会漂移的常量换个值，下次再搬还得记得改。
+     * 改成读 {@code spring.application.name} 之后，
+     * 它<b>永远等于注册到 Nacos 上的那个名字</b>，结构上不可能再对不上。
+     */
+    @Value("${spring.application.name}")
+    private String applicationName;
 
     /**
      * 探针用的 Redis key。用固定的、带业务前缀的名字，
@@ -67,7 +96,7 @@ public class PingController {
     public Result<Map<String, Object>> ping() {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", "UP");
-        data.put("application", "novel-backend");
+        data.put("application", applicationName);
         data.put("time", LocalDateTime.now());
         data.put("message", "后端服务正常运行");
 
@@ -157,7 +186,7 @@ public class PingController {
     public ResponseEntity<Result<Map<String, Object>>> pingRedis() {
         try {
             Map<String, Object> probe = new LinkedHashMap<>();
-            probe.put("from", "novel-backend");
+            probe.put("from", applicationName);
             probe.put("at", LocalDateTime.now().toString());
             probe.put("roundTrip", true);
 

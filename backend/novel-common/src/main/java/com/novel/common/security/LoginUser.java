@@ -64,8 +64,19 @@ public class LoginUser implements Serializable {
      * ★ P6 没做，因为 {@code api/auth.js} 里的 {@code getMe()} 三端都零调用点，
      * 这个陈旧值浮不到界面上；界面上的头像走的是下面这条不会过期的路。
      *
-     * <p>★ 界面上要立刻生效，靠的是接口返回的新 {@link com.novel.modules.system.vo.UserVO}：
+     * <p>★ 界面上要立刻生效，靠的是接口返回的新 UserVO（{@code modules/system/vo/UserVO}）：
      * 前端拿它调 {@code stores/user.js} 已有的 {@code setLoginInfo} 覆盖 localStorage。
+     *
+     * <p><b>★★ M1：上面那个 {@code @link} 被【刻意降级成了纯文本】。</b>
+     * 它原来是 {@code {@link com.novel.modules.system.vo.UserVO}} —— 那是
+     * {@code novel-common} 对整个项目里【唯一一处】指向业务模块的引用。
+     * M1 把 {@code modules/system} 搬进 novel-auth 之后，novel-common 的
+     * classpath 上再也没有那个类了（common 是个库，它依赖不了任何服务）。
+     * <p>Javadoc 的 {@code @link} 指不到类<b>不会让编译失败</b>，只会在生成文档时
+     * 报一句警告 —— 也就是说，如果留着它，这件事会以「一条没人看的警告」的形式
+     * 潜伏下去。而改掉之后，<b>novel-common 对业务模块的引用数就是零</b>，
+     * 「common 里不会混进业务类」从此是一条可以被 grep 验证的硬事实：
+     * <pre>grep -rn "com\.novel\.modules" backend/novel-common/   # 期望：零命中</pre>
      *
      * <p>★ 加字段对 Redis 里的<b>老缓存是安全的</b>（Jackson 读到缺字段的 JSON 得到
      * {@code null}）；但<b>不要删字段或改名字</b> —— 老缓存的 JSON 里有它、新类里没有，
@@ -90,7 +101,7 @@ public class LoginUser implements Serializable {
      * <p>值来自 {@code sys_role.role_code}，是<b>不带 {@code ROLE_} 前缀</b>
      * 的裸码（与数据库的数据契约一致，不要改）。
      * 前缀在构建 Spring Security 的权限时现拼，见
-     * {@code JwtAuthenticationFilter}。
+     * {@code HeaderAuthenticationFilter}（M1 前叫 {@code JwtAuthenticationFilter}）。
      *
      * <p>一个用户可能有多个角色（{@code sys_user_role} 是多对多），
      * 所以这里是 List 而不是单个 String。

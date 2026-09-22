@@ -155,6 +155,41 @@
             <artifactId>jjwt-api</artifactId>
         </dependency>
 
+        <!-- ==================== 服务间调用（M1） ==================== -->
+
+        <!--
+          ★★ OpenFeign：M1 起 content 要拿作者昵称，而去查 sys_user 的那段 SQL
+             已经跟着 modules/system 搬进了 novel-auth。跨进程了，只能走 HTTP。
+
+          ★ 版本由父 pom import 的 spring-cloud-dependencies BOM 给
+            （spring-cloud-starter-openfeign 在那个 BOM 里），所以这里不写 <version>。
+            ★★ 父 pom 里那两个 BOM 的 import 顺序【不能反】：
+               先 spring-cloud（它锁 openfeign / loadbalancer / gateway 的版本），
+               后 spring-cloud-alibaba（只补它独有的 nacos-client）。
+               import 是「先到先得」，反过来会让 SCA 的旧版本盖住 spring-cloud 的。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!--
+          ★★ loadbalancer 必须【显式】加，它不是 openfeign 的传递依赖。
+             漏了它的症状：启动就失败，报
+               「No Feign Client for loadBalancing defined.
+                 Did you forget to include spring-cloud-starter-loadbalancer?」
+             —— 这句话本身已经把答案写出来了，所以还算好查；
+             真正难查的是「以为注册中心能自己兜住」而不加。
+
+          ★ 为什么 Feign 需要它：@FeignClient(name = "novel-auth") 里的
+            name 是【服务名】不是主机名，Feign 得靠 loadbalancer 去 Nacos
+            把服务名解析成实例地址。没有它，Feign 不知道 novel-auth 在哪台机器上。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
         <!-- ==================== 测试 ==================== -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

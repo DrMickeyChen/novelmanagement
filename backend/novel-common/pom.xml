@@ -123,6 +123,35 @@
             <optional>true</optional>
         </dependency>
 
+        <!--
+          ★★ M1 新增：PaginationInnerInterceptor / BlockAttackInnerInterceptor
+
+          这两个类【不在】上面的 starter 里。MyBatis-Plus 3.5.9 把依赖
+          JSqlParser 的那几个 InnerInterceptor 单独拆到了这个 artifact，
+          starter 只传递 mybatis-plus-extension（不含它们）。
+
+          ★ 为什么 M1 才需要它：分页配置 MybatisPlusConfig 原来住在
+            novel-backend 里，而 novel-backend 的 pom 已经引了这个依赖。
+            M1 把那个配置类搬进了 novel-common —— 于是「common 自己
+            也得能编译它」，编译期依赖必须跟着搬过来。
+
+          ★ 漏了它的症状（在 novel-backend 里已经写过的同款坑）：
+            分页接口第一次调用报 NoClassDefFoundError: net/sf/jsqlparser/...，
+            报错完全看不出和分页有关。
+
+          ★★ 这个依赖【必须一起搬到这里，而不是只在各个服务的 pom 里各写一份】
+            —— 判据是「谁编译需要它」：编译 MybatisPlusConfig 的是 novel-common，
+            所以它归 novel-common。各服务再写一份只是重复。
+
+          ★ 仍然是 optional：它只服务于 common 自己的编译，不该顺着
+            依赖树爬到网关去（网关不碰数据库，多一个 JSqlParser 是噪音）。
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <optional>true</optional>
+        </dependency>
+
         <!-- Result / DTO 上的 @Schema（接口文档的字段说明） -->
         <dependency>
             <groupId>com.github.xiaoymin</groupId>

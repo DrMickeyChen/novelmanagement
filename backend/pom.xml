@@ -34,21 +34,34 @@
           永远分不清谁是谁。父模块让出这个名字，代价是零。
 
       ★ M0 拆出来的三个模块（业务代码一行没拆，只是物理分层）：
-          novel-common    库   —— 被所有服务共用的 Result / 异常 / JWT / 上传
-          novel-backend   应用 —— 第一期那个单体，原样搬过来
-          novel-gateway   应用 —— 新加的网关，8080，路由到单体
+          novel-common    库   —— 被所有服务共用的 Result / 异常 / JWT / 上传 / 技术配置
+          novel-backend   应用 —— 第一期那个单体
+          novel-gateway   应用 —— 网关，8080，唯一入口
+
+      ★ M1 新增第四个模块（第一个真正摘出去的服务）：
+          novel-auth      应用 —— 8081，com.novel.modules.system 整体搬过去
+
+          M1 之后 novel-backend 只剩 content + interaction + ai，
+          所以上面那行「第一期那个单体」到 M1 就不准了 —— 它现在
+          是「除了 auth 之外的那些模块」。
 
       ★ 为什么不让网关直接依赖 novel-common：
           gateway 是 WebFlux 的，classpath 上只要出现 spring-webmvc 就
           启动失败。novel-common 为了编译需要 webmvc，所以它的 Spring
           依赖全部标了 optional（见 novel-common/pom.xml 里那段长注释）。
-          M0 的网关根本不用 common 的类，索性不依赖，少一个变量。
+
+          M0 的网关用不上 common 的类，索性不依赖；★★ M1 的网关【必须】
+          用 JwtUtil / TokenStore 了，那一枪在这里兑现 —— 靠的就是那组
+          optional：common 的类能进网关，webmvc 传不过来。
+          M1 的网关仍然【不扫描】common（扫进去会把 servlet 类也拉进来），
+          改成在 GatewayApplication 上 @Import 那三个类，见那边的注释。
     -->
 
     <modules>
         <module>novel-common</module>
         <module>novel-backend</module>
         <module>novel-gateway</module>
+        <module>novel-auth</module>
     </modules>
 
     <properties>

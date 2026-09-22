@@ -1,4 +1,4 @@
-package com.novel.config;
+package com.novel.common.config;
 
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;

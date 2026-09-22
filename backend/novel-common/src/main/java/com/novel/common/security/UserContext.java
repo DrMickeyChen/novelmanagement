@@ -23,17 +23,27 @@ import com.novel.common.result.ResultCode;
  * 而是被复用去处理 B 的请求。如果不清，B 的请求读到的还是 A 的身份，
  * 也就是「张三登录着，李四的请求却以张三的身份执行」。这类串号问题
  * 极难复现（本地压测时很容易碰不到），而且一旦发生就是严重的越权。
- * 所以 {@link filter.JwtAuthenticationFilter} 在 {@code finally} 里无条件调用
+ * 所以 {@link filter.HeaderAuthenticationFilter} 在 {@code finally} 里无条件调用
  * {@link #clear()}。
+ * <p>★ M1 之前那个过滤器叫 {@code JwtAuthenticationFilter} —— 换的只是
+ * 「身份从哪儿来」（JWT claims → 网关写下的请求头），
+ * <b>「用完必须 clear」这条规矩一个字没变</b>，
+ * 因为线程池复用这个前提没变。
  *
  * <p><b>为什么是静态方法而不是 Spring Bean：</b>
  * ThreadLocal 本身就得是静态的（每个线程一份，跟谁注入无关）。
  * 做成 Bean 反而要求每个使用点都注入一次，纯属噪音。
  *
- * <p><b>第二期怎么办：</b>认证搬到网关后，网关校验完 JWT 会把
- * {@code X-User-Id} / {@code X-User-Role} 写进请求头（见
- * {@code CommonConstant.HEADER_USER_ID}），服务侧改成从请求头填充本类，
+ * <p><b>第二期怎么办（M1 已兑现，此段留作对照）：</b>认证搬到网关后，
+ * 网关校验完 JWT 会把身份写进请求头，服务侧从请求头填充本类，
  * <b>下面的所有用法一行都不用改</b>。
+ * <p>★ 兑现的结果比这段预告更彻底：头不是 {@code X-User-Id} /
+ * {@code X-User-Role} 两个，而是 7 个（多一个 {@code X-Jti} 就少一处静默故障，
+ * 见 {@link IdentityHeaders} 的说明）；头的名字与编解码也<b>不</b>在
+ * {@code CommonConstant} 里，而是收进了 {@link IdentityHeaders} ——
+ * 因为读写两端必须用同一份实现，放在两个类里迟早会漂移。
+ * <p>★ 唯一没兑现的是「网关」这个词的粒度：M1 里网关只负责<b>填头</b>，
+ * 真正把身份装进本类的是 {@link filter.HeaderAuthenticationFilter}。
  *
  * @author MickeyChen
  */

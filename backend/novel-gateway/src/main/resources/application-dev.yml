@@ -1,0 +1,102 @@
+# ============================================================
+# 开发环境配置 —— 网关（novel-gateway）
+# ============================================================
+# ★★★ 这个文件里的 IP 要改成你自己的虚拟机 IP ★★★
+#
+# 怎么查：在虚拟机上执行 hostname -I，取输出的第一个 IP（形如 192.168.127.137）。
+# 本文件里【一处】：spring.data.redis.host。
+# （Nacos 的地址在 application.yml 里 —— 见下面「为什么拆两个文件」。）
+# ★★ 这个值必须和 novel-auth / novel-backend 的 application-dev.yml 里
+#    那个 redis.host 完全一样：三个进程连的是同一台 Redis 的同一个 database。
+# ============================================================
+#
+# 【为什么 M1 才拆出这个文件】
+# M0 时网关只有一个 application.yml，因为那一层【没有任何真实口令】——
+# 只有 Nacos 的固定演示账号（nacos/nacos）和中间件地址。
+# M1 起网关要连 Redis 了，于是它有了和另外两个服务一样的东西：
+# 一个 Redis 口令、一份 JWT 密钥、一个服务间共享令牌。
+# 那三样必须和另外两个服务【同款】，所以这里照抄它们的组织方式。
+#
+# ★ M1 之后的分工（有一点不对称，是刻意的）：
+#     application.yml       —— 端口、Nacos 地址、路由表、actuator、日志
+#                              （M0 留下的，没有真实口令）
+#     application-dev.yml   —— Redis 口令、JWT 密钥、共享令牌
+#                              （M1 新增的，有真实口令 + 必须有 dev 默认值）
+#   ★ 为什么那三样【必须】有 dev 默认值：application.yml 里它们写的是
+#     ${JWT_SECRET} / ${INTERNAL_TOKEN}，【故意不给默认值】——
+#     生产没配就起不来（理由见 application.yml）。而开发机上没人会去
+#     设这两个环境变量，所以默认值只能放在这个 profile 文件里。
+#   ★ M5 做生产部署时把两边一起收拾（用 Nacos Config 或环境变量注入），
+#     现在这个不对称只是「M0 的遗留 + M1 的新增」并排放着，不是设计。
+# ============================================================
+
+spring:
+
+  # ---------------- Redis ----------------
+  # ★ Spring Boot 3 里路径是 spring.data.redis，不是 spring.redis
+  #   （老教程写的 spring.redis 会被【静默忽略】，连接直接走默认的 localhost）
+  #
+  # ★★ 网关连 Redis 只为一件事：每请求查一次
+  #    novel:auth:token:{userId}:{jti} 这把 key 在不在。
+  #    在 → 这个 token 还有效；不在 → 已登出 / 已被踢下线 / 已过期。
+  #
+  # ★★★ 两个必须和第别的服务一致的点，错一个就是全站故障：
+  #     ① 【host/port/password】必须连同一个 Redis 实例
+  #     ② 【database】必须相同（这里 0）
+  #        ★ 不一致的症状是：novel-auth 把登录态写进 db 0，
+  #          网关去 db 1 查 → 什么都查不到 → 所有已登录用户都被当成匿名
+  #          → 全站 401 → 前端清 localStorage 跳登录页。
+  #          而 Redis 里明明「有」那些 key，排错时会怀疑人生。
+  data:
+    redis:
+      host: 192.168.127.137
+      port: 6379
+      password: redis123456
+      database: 0
+      # ★ 超时不能设太长：网关是每个请求都要查一次的，
+      #   Redis 慢一点会直接放大成整站变慢。
+      #   ★ 但也不能太短到误杀 —— 5000ms 是「宁可让这个请求 500，
+      #     也不要让它挂在那儿占着 Netty 的 event loop 线程」。
+      timeout: 5000ms
+      lettuce:
+        pool:
+          # ★ 网关的连接池要比另外两个服务【大】：
+          #   它们是按请求用连接（一个请求里查几次），
+          #   而网关是【每个请求都查一次】—— 并发量高一个数量级。
+          max-active: 32
+          max-idle: 16
+          min-idle: 4
+          max-wait: 3000ms
+
+# ---------------- JWT ----------------
+novel:
+  jwt:
+    # ★★★ 必须和 novel-auth（签 token 的那个）完全一致 ★★★
+    #
+    # 网关【只验签、不签发】，所以它只需要 secret。
+    #
+    # ★ 不一致的症状：登录成功、拿得到 token，但下一个请求就 401 ——
+    #   看起来像「登录态没存住」，于是会去查 Redis、查 cookie，
+    #   唯独不像密钥。排错时先 grep：
+    #     grep -rn "secret:" backend/*/src/main/resources/application*.yml
+    #
+    # ★ 长度必须 ≥ 32 字节，否则 JwtUtil 构造时直接抛 WeakKeyException 并说明原因。
+    # ★ 只用于本地开发，明文写在提交到 git 的文件里；生产靠环境变量 JWT_SECRET 覆盖。
+    secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
+
+    # ★ 网关不签发 token，本来用不到这个值 —— 但 JwtUtil 的构造器要求它存在
+    #   （见 application.yml 里那段），所以必须配，且必须和 auth 一致。
+    expire-days: 7
+
+  # ---------------- 内部令牌（M1 新增） ----------------
+  internal:
+    # ★★ 必须和 novel-auth / novel-backend 的 application-dev.yml 里那个值
+    #    完全一致。完整说明（它防什么、为什么不能给默认值、剩余边界是什么）
+    #    写在 novel-backend/application-dev.yml 的同一个键上，这里不重复。
+    #
+    # ★ 网关在这里有两个动作，都是围绕它：
+    #     ① 转发前【剥掉】客户端自带的 X-Internal-Token（先剥后写）
+    #     ② 然后写上自己的那个值
+    #   漏了 ① 的症状是「任何人都能靠 curl 带上这个头伪造身份」——
+    #   而它不报错，只是防线不存在。
+    token: ${INTERNAL_TOKEN:novel-dev-only-internal-token-please-change-in-production-2026}

@@ -39,8 +39,15 @@ spring:
     # 因为它【只对 java.util.Date 有效】，而项目里用的是 java.time.LocalDateTime，
     # 走的是 Jackson 的 JavaTimeModule，根本不看这一项。而且不报错、不警告。
     #
-    # 真正生效的配置在 com.novel.config.JacksonConfig（给 LocalDateTime
+    # 真正生效的配置在 com.novel.common.config.JacksonConfig（给 LocalDateTime
     # 这个类型注册了序列化器）。那边改一处，全项目的时间格式都跟着变。
+    #
+    # ★★ M1 提醒：下面三行是【手抄的】，和 novel-auth 的 application.yml 里
+    #    那三行必须逐字一致。JacksonConfig 管的是「LocalDateTime 怎么序列化」，
+    #    而「null 要不要返回」「时区是什么」只有 yml 能配，它没有代码形态。
+    #    ★ 漏改一边的症状：同一个字段在这个接口有、在那个接口没有，
+    #      前端得写两套解析 —— 不报错，只是「怪怪的」。
+    #    找齐两处：grep -n "★ 镜像" backend/novel-*/src/main/resources/application.yml
     time-zone: GMT+8
     default-property-inclusion: non_null   # 值为 null 的字段直接不返回，前端少判断
     serialization:
@@ -86,6 +93,25 @@ novel:
     # token 有效期（天）。7 天是因为 P1 还没有 refresh token，
     # 时间短了用户就得反复登录。等做了刷新机制再调短。
     expire-days: 7
+
+  # ============================================================
+  # 内部令牌（M1）
+  # ============================================================
+  internal:
+    # ★★★ 和上面 jwt.secret 同一个写法：【故意不给默认值】★★★
+    #
+    # 它是网关到下游、以及服务与服务之间的共享密钥，防的是
+    # 「绕开网关直连 :8090 / :8081，自己伪造 X-User-Id: 1 + X-Roles: ADMIN
+    #   把自己变成管理员」（决策 4）。
+    #
+    # ★ 为什么不能给默认值：和 jwt.secret 一模一样的道理 ——
+    #   给了默认值，生产环境忘配时会静默用一个【写在 git 里、全世界都知道】
+    #   的字符串当密钥。而那等于这道闸不存在，且没有任何症状。
+    #   ★ 更糟的是这个值比 jwt.secret 更少被想起来：它不是「登录」的一部分，
+    #     平时完全无感，只有在有人真的直连端口时才有区别。
+    #
+    # 开发环境的默认值放在 application-dev.yml。
+    token: ${INTERNAL_TOKEN}
 
   # ============================================================
   # AI 写作助手（P4）

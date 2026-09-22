@@ -16,20 +16,83 @@
 
     <!--
       ============================================================
-      M0 的网关只做一件事：转发
+      M1 的网关：转发 + 【验 JWT】
       ============================================================
-      ★ M0【不做】JWT 鉴权 —— 那是 M1。现在网关是一个纯粹的
-        「按路径找服务」的路由器，一个字节的业务判断都没有。
+      ★ M1 起网关多了一件事：每个请求都要解析 Authorization 头里的 JWT、
+        去 Redis 查这把 token 还在不在，然后把身份写进 X-User-* 请求头
+        交给下游。见 gateway/filter/JwtAuthGlobalFilter。
 
-      ★ M0【不依赖 novel-common】。原因有两层：
-          ① 用不上：M0 的网关不解析 JWT、不返回统一的 Result
-          ② 危险：novel-common 为了编译需要 spring-webmvc，
-             而网关一旦沾上 spring-webmvc 就启动不了（见下）
-        M1 网关要开始用 JwtUtil 时再引 —— 那时靠的是
-        novel-common 里那组 optional 依赖，webmvc 传不过来。
+      ★★ 它【仍然不做】的两件事（这是刻意的设计，不是没做完）：
+          ① 不返回 401 —— token 无效就【原样放行为匿名】，
+             让请求继续走到下游，由下游的 SecurityConfig 拦下并输出统一信封。
+             这样对外的行为一个字节都没变。
+          ② 不维护匿名路径白名单 —— 那等于把下游的 SecurityConfig
+             复制一份到网关，加一个公开接口忘了同步就是一个 401。
+        详见 JwtAuthGlobalFilter 的类注释。
+
+      ★★ M1 起它【开始依赖 novel-common】了（JwtUtil / TokenStore / LoginUser /
+         IdentityHeaders / RedisConfig 都在那边）。这是 M0 埋的那一枪的兑现时刻：
+
+             novel-common 里所有 Spring starter 都是 <optional>true</optional>，
+             为的就是让 spring-webmvc 传不过来 —— 网关一旦沾上 spring-webmvc
+             就启动不了（见下面 gateway 本体那条注释）。
+
+         ★ 所以引 novel-common 这件事【必须】配合一条验证命令（见 README / docs/M1）：
+             mvn -f backend/novel-gateway/pom.xml dependency:tree \
+               | grep -E "spring-boot-starter-web:jar|spring-webmvc|tomcat-embed-core"
+           期望：零输出。
+           ★ 正则必须【锚定到 starter-web:jar】—— 松散地 grep
+             "spring-boot-starter-web" 会误命中 spring-boot-starter-webflux
+             （那是网关自己要的），于是永远「验证失败」，最后被人忽略掉。
     -->
 
     <dependencies>
+
+        <!--
+          ==================== 共用类库（M1 新增） ====================
+          ★ 只用到其中几样：JwtUtil（验签）、TokenStore（查 Redis）、
+            LoginUser（承载身份）、IdentityHeaders（怎么把身份写成头）、
+            RedisConfig（那个序列化白名单 —— 必须和 novel-auth 是同一份）。
+
+          ★★ 绝对不能改成「扫描 novel-common 的包」——
+            novel-common 里有一批 servlet-bound 的类
+            （GlobalExceptionHandler 收 HttpServletRequest、
+             RestAuthenticationEntryPoint 实现 spring-security-web 的接口、
+             HeaderAuthenticationFilter 继承 OncePerRequestFilter……），
+            网关的 classpath 上没有 jakarta.servlet-api，扫到就是启动失败，
+            而且报错指向「缺某个类」，完全不指向「你扫多了」。
+            所以 GatewayApplication 里用的是 @Import 逐个点名，
+            而不是给 @SpringBootApplication 加扫描范围。
+        -->
+        <dependency>
+            <groupId>com.novel</groupId>
+            <artifactId>novel-common</artifactId>
+        </dependency>
+
+        <!--
+          ==================== Redis（M1 新增） ====================
+          ★ 网关为什么要连 Redis：token 的【有效性】不在 JWT 自己身上。
+
+             JWT 只证明「这个 token 是我们签的、还没到期」，它证明不了
+             「这个人还没登出、没被踢下线、角色没被改」——
+             那三件事全靠 Redis 里有没有这把 key
+             （novel:auth:token:{userId}:{jti}）。
+
+          ★★ 少了它 / 配错了，症状是【全站静默登出】：
+             网关读不到登录态 → 当成匿名 → 下游 401 →
+             前端 request.js 的 handleUnauthorized → 清 localStorage → 跳登录页。
+             见 RedisConfig 的类注释（它为什么必须单源、不能复制一份）。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Lettuce 连接池：不加它每次操作都新建连接（同另外两个服务） -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
 
         <!--
           ==================== 网关本体 ====================
@@ -109,6 +172,35 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+          ==================== Lombok（M1 新增） ====================
+
+          ★★ 这个依赖是「M0 那套 optional 设计确实生效了」的第一个实证：
+
+             M0 时本模块一个 Java 类都没有（网关的全部行为都由 yml 决定），
+             所以从来没有遇到过「注解处理器不在 classpath 上」这件事。
+             M1 写了 JwtAuthGlobalFilter，一上来就报
+                 「程序包 lombok 不存在」「找不到符号: 类 Slf4j」
+
+             ★ 而 novel-common 明明是带 lombok 的 —— 它传不过来，
+               因为那边写的是 <optional>true</optional>：
+               optional 的依赖【不会】传递给下游模块。
+               这正是 M0 想要的效果（否则 spring-webmvc 早就跟着爬过来了），
+               只不过它的第一个副作用落到了 lombok 头上。
+
+             ★ 所以规则的完整形态是：
+               「你在本模块的 .java 文件里用到的注解，就要在本模块的 pom 里声明」——
+               不能指望从 novel-common 顺过来，一个字节都不会顺过来。
+
+          ★ 同样是 optional：本模块用 lombok 只是编译期的事，
+            不该顺着依赖树爬到别的模块去。
+        -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
         </dependency>
 
     </dependencies>

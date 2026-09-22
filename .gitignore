@@ -81,13 +81,22 @@ docs/docker/.env
 #      漏了这里。少写一行的后果是：以后按 docs/部署.md 建的生产配置
 #      （里面有真实数据库密码）**不会被忽略**，`git add -A` 一下就直接进仓库了，
 #      而且不会有任何报错或提示。忽略规则这种东西，失效是静默的。
+#
+#    ★★ M1 又踩了同一个坑，而且踩得更彻底：M0 修的时候是【逐条枚举】模块路径，
+#       所以 M1 一加 backend/novel-auth/，它的生产配置就【又一次】不被忽略。
+#       实测（git check-ignore）：
+#         backend/novel-gateway/.../application-prod.yml  → 已忽略
+#         backend/novel-backend/.../application-prod.yml  → 已忽略
+#         backend/novel-auth/.../application-prod.yml     → ★ 未忽略
+#      只要还是枚举，每加一个模块就得记得回来补一行 —— 而「记得」不是机制。
+#    ★ 所以这里改成【通配 backend 下的任意子模块】，覆盖已有的
+#      auth / backend / gateway，也覆盖 M2/M3 将来拆出来的任何服务。
+#      这样「新增模块忘了加忽略规则」在结构上不会再发生第三次。
+backend/*/src/main/resources/application-prod.yml
+backend/*/src/main/resources/application-prod.yaml
+# 下面两条是 M0 之前的老路径，留着以防有人从旧版本升上来
 backend/src/main/resources/application-prod.yml
 backend/src/main/resources/application-prod.yaml
-backend/novel-backend/src/main/resources/application-prod.yml
-backend/novel-backend/src/main/resources/application-prod.yaml
-# 网关将来拆 profile 时也会有生产配置（M5），先按同上规则留好
-backend/novel-gateway/src/main/resources/application-prod.yml
-backend/novel-gateway/src/main/resources/application-prod.yaml
 
 # AI 的 API Key
 # ★ 数据库 ai_config 表里的 key 是加密存储的，解密用的密钥在环境变量里，

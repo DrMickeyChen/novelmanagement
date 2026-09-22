@@ -22,18 +22,22 @@
 
 ```
 novelManagement/
-├── backend/                 # Maven 多模块（M0 起）。业务代码仍全在 novel-backend 里，还没拆服务
+├── backend/                 # Maven 多模块（M0 起）。后端 M1 起是三个进程（网关 + auth + 内容）
 │   ├── pom.xml              # 聚合 POM（novel-parent）★ 打包打的是它，不是子模块
-│   ├── novel-common/        # 公共设施：Result / 异常 / 安全 / 上传（库，不是可执行 jar）
-│   ├── novel-backend/       # ★ 单体，第二期逐个摘模块就是从这里摘
+│   ├── novel-common/        # 公共设施：Result / 异常 / 安全 / 上传 / config（库，不是可执行 jar）
+│   │                        #   ★ M1 起 config/ 里的技术配置（Redis/MyBatis/Jackson…）住这里，
+│   │                        #     两个服务共用一份 —— 复制第二份就是序列化漂移的开始
+│   ├── novel-auth/          # ★ M1 新增，:8081，整个 modules/system（登录/用户/角色菜单/公告/作者申请）
+│   ├── novel-backend/       # :8090，content（作品章节）/ interaction（评论书架历史）/ ai
 │   │   └── src/main/
 │   │       ├── java/com/novel/
-│   │       │   ├── config/      # SecurityConfig / WebMvcConfig / RedisConfig ...
-│   │       │   └── modules/     # system（用户角色权限）/ content（作品章节）/ interaction（评论书架历史）
+│   │       │   ├── config/      # ★ M1 后只剩 SecurityConfig（白名单天然是 per-service 的）
+│   │       │   └── modules/     # content / interaction / ai（system 已搬走）
 │   │       └── resources/
 │   │           ├── application.yml        # 所有环境共用的配置
 │   │           └── application-dev.yml    # ★ 开发环境，唯一需要你改的文件（见下）
-│   └── novel-gateway/       # Spring Cloud Gateway，:8080 的唯一入口，路由到 novel-backend
+│   └── novel-gateway/       # Spring Cloud Gateway，:8080 的唯一入口
+│                            #   ★ M1 起它【还要验 JWT】：验签 + 查 Redis → 写身份头 → 转发
 │
 ├── reader-web/              # 阅读端   → 挂 /reader/   dev :5173
 ├── author-web/              # 创作中心 → 挂 /author/   dev :5174
@@ -43,6 +47,7 @@ novelManagement/
 ├── docs/
 │   ├── P1-认证权限.md ~ P6-书架评论.md   # ★ 第一期的完整设计论证（含踩过的坑）
 │   ├── M0-骨架搭建.md                    # ★ 第二期 M0：多模块 + 网关 + Nacos 注册
+│   ├── M1-摘出auth.md                    # ★ 第二期 M1：摘出 auth 服务 + 网关接管 JWT
 │   ├── 部署.md                          # 生产部署（Nginx / jar / 环境变量）
 │   ├── 环境配置.md                       # 虚拟机与 Docker 中间件搭建
 │   ├── mq-notes.md                      # 消息队列笔记（第二期配套）
@@ -100,30 +105,37 @@ mysql -uroot -p < seed.sql
 > 重复执行只会打印一堆 `Duplicate entry` 警告，不影响结果。`seed.sql` 结尾自带断言，会打印
 > `novels_should_be_12 / chapters_should_be_47 / contents_should_be_47` 和 `finished_should_be_2` —— 对得上就说明数据是好的。
 
-### 3. 改配置 + 打包 + 起网关和后端
+### 3. 改配置 + 打包 + 起三个进程
 
-先把 `backend/novel-backend/src/main/resources/application-dev.yml` 里**三处 `192.168.127.137`** 改成你的虚拟机 IP
-（`spring.datasource.url`、`spring.data.redis.host`、`spring.cloud.nacos.discovery.server-addr`），然后：
+★ **M1 起有三个 `application-dev.yml`**（`novel-gateway` / `novel-auth` / `novel-backend`），
+**每一个**里面的 `192.168.127.137` 都要改成你的虚拟机 IP
+（`spring.datasource.url`、`spring.data.redis.host`、`spring.cloud.nacos.discovery.server-addr`）。
+漏改一个的症状是那个服务起不来或注册不上 —— 网关那个漏了就是全站 503。然后：
 
 ```bash
 # ---------- 在【仓库根目录】打包 ----------
 mvn -f backend/pom.xml package
 
 # ★ 必须在后端【停掉】的时候打包 —— jar 正在运行时 repackage 会失败并留下一个瘦 jar。
-# ★ 打的是聚合 POM backend/pom.xml（一次编出 novel-common + novel-backend + novel-gateway）。
+# ★ 打的是聚合 POM backend/pom.xml（一次编出 novel-common + novel-auth + novel-backend + novel-gateway）。
 #   不要进子目录单独 package：那样 novel-common 会用仓库里的旧 jar，「改了没生效」且不报错。
 # ★ 如果 Maven 的本地仓库不在默认的 ~/.m2 下（本项目的机器就是），要显式指定：
 #     mvn -Dmaven.repo.local=D:/你的仓库路径 -f backend/pom.xml package
 #   不确定的话先跑一次不带这个参数的，报「找不到依赖」就说明得加上。
 
-# ---------- 进 backend/ 启动【两个】进程（★ 顺序：先网关后后端，无所谓；两个都要起）----------
+# ---------- 进 backend/ 启动【三个】进程（★ 顺序无所谓，但三个都要起）----------
 cd backend
-java -jar novel-gateway/target/novel-gateway.jar      # :8080 唯一入口
-java -jar novel-backend/target/novel-backend.jar      # :8090，不直接对外
+java -jar novel-gateway/target/novel-gateway.jar      # :8080 唯一入口（验 JWT）
+java -jar novel-auth/target/novel-auth.jar            # :8081，不直接对外（登录/用户/角色）
+java -jar novel-backend/target/novel-backend.jar      # :8090，不直接对外（内容/评论/书架/AI）
 ```
 
-> ★ 为什么非得 `cd` 进 `backend/`：两个服务里日志文件写的都是**相对路径**
-> `logs/novel-backend.log` / `logs/novel-gateway.log`，相对的是**进程的工作目录**。
+> ★ **少起一个会怎样**：少 `novel-gateway` → 全站连不上（:8080 没人监听）；
+> 少 `novel-auth` → **登录全挂**（登录接口在 auth 里），而且匿名首页也会 500
+> （它要调 auth 取作者昵称）；少 `novel-backend` → 内容和评论全 503，登录本身还是好的。
+
+> ★ 为什么非得 `cd` 进 `backend/`：三个服务里日志文件写的都是**相对路径**
+> （`logs/novel-backend.log` / `logs/novel-gateway.log` / `logs/novel-auth.log`），相对的是**进程的工作目录**。
 > 在仓库根目录跑 `java -jar backend/novel-backend/target/...` 也不会报错，
 > 只是日志会落到根目录的 `./logs/` 下 —— 于是「照文档去 backend/logs/ 找日志」的人会扑空。
 > ★★ **注意 `cd` 的是 `backend/` 而不是 `backend/novel-backend/`** —— 后者同样不报错，只是日志
@@ -132,11 +144,14 @@ java -jar novel-backend/target/novel-backend.jar      # :8090，不直接对外
 >
 > ★ 改了 `application-*.yml` **必须重新打包才生效** —— 配置是打进 jar 里的。
 >
-> ★ 起不来先看日志：`backend/logs/novel-backend.log` / `backend/logs/novel-gateway.log`
+> ★ 起不来先看日志：`backend/logs/` 下的
+> `novel-gateway.log` / `novel-auth.log` / `novel-backend.log`（**按进程分开**，先确认该看哪一个）
 > （★ **SQL 不在这个文件里** —— MyBatis 的 SQL 走 stdout，要抓 SQL 得在启动时额外重定向 stdout）。
 
-后端起来后，**走网关**：`http://localhost:8080/api/ping` 返回 200。
-接口文档是**唯一不走网关**的开发入口，直连 `http://localhost:8090/doc.html`。
+后端起来后，**走网关**：`http://localhost:8080/api/ping` 返回 200
+（返回体里的 `application` 字段会告诉你是**哪个服务**答的 —— `/api/ping*` 归 auth，所以是 `novel-auth`）。
+接口文档是**不走网关**的开发入口，现在有**两个**：`http://localhost:8081/doc.html`（auth）和
+`http://localhost:8090/doc.html`（内容服务）。
 
 ### 4. 起前端
 
@@ -178,8 +193,12 @@ npm run dev             # concurrently 同时起 reader / author / admin / proxy
 | 5173 | 阅读端 | 302 → `/reader/` |
 | 5174 | 创作中心 | 302 → `/author/` |
 | 5175 | 管理端 | 302 → `/admin/` |
-| 8080 | **网关**（第二期 M0 起的唯一入口） | `/api/ping` → 200 |
-| 8090 | 后端单体（不直接对外） | `/doc.html` → 接口文档 ★ 唯一不走网关的入口 |
+| 8080 | **网关**（第二期 M0 起的唯一入口，M1 起还负责验 JWT） | `/api/ping` → 200 |
+| 8081 | **auth 服务**（M1 新增，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
+| 8090 | 内容服务（M1 起只剩 content/interaction/ai，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
+
+> ★★ **直连 8081 / 8090 要带内部令牌**（`X-Internal-Token`），否则身份头一律被忽略、当**匿名**。
+> 这是有意的：那两个端口在生产上只对内网开放，直连只是排错手段。令牌值见各自的 `application-dev.yml`。
 
 ★ 四个端口都设了 `strictPort: true` —— 端口被占时**直接启动失败**，不会静默换到 3001。
 少了这个，打开 `:3000` 看到的会是**上一个还活着的进程**转发出来的旧内容，页面能开、接口能通，
@@ -243,8 +262,9 @@ curl -X POST http://localhost:8080/api/auth/register \
 | P5 | 管理后台：审核工作流、菜单权限、公告、数据大盘 | [docs/P5-管理后台.md](docs/P5-管理后台.md) |
 | P6 | 书架、阅读历史、书评与章评、点赞、移动端适配、README/部署文档 | [docs/P6-书架评论.md](docs/P6-书架评论.md) |
 | **M0** | **骨架搭建：父 POM 改多模块、抽出 `novel-common`、gateway 起来并配好路由、服务注册进 Nacos** | [docs/M0-骨架搭建.md](docs/M0-骨架搭建.md) |
+| **M1** | **摘出 auth：`modules/system` 搬进独立进程 `:8081`、网关接管 JWT 校验、下游只读身份头、两条跨服务边改走 Feign** | [docs/M1-摘出auth.md](docs/M1-摘出auth.md) |
 
-**第二期**（M1~M5）继续按服务拆分：认证 / 内容 / 交互 / 搜索，引入 RocketMQ + ES，最后做治理。
+**第二期**（M2~M5）继续按服务拆分：内容 / 交互 / 搜索，引入 RocketMQ + ES，最后做治理。
 **第三期**（E1~E3）AI 能力、限流熔断、移动端 App。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和
@@ -275,9 +295,17 @@ npm run install:all    # 装全部依赖
 
 # 后端打包（★ 打聚合 POM，打包前后端必须是停的）
 mvn -Dmaven.repo.local=<你的本地仓库> -f backend/pom.xml package
-mvn -f backend/novel-backend/pom.xml spring-boot:run   # 开发期直接 run 单体（= npm run dev:backend）
-mvn -f backend/novel-gateway/pom.xml spring-boot:run   # 开发期直接 run 网关（= npm run dev:gateway）
+npm run dev:gateway    # 网关   （= 打包 + cd backend + java -jar）
+npm run dev:auth       # auth
+npm run dev:backend    # 内容服务
 ```
+
+> ★★ **不要用 `mvn -f backend/novel-auth/pom.xml spring-boot:run` 单独跑子模块** ——
+> 它会报 `Could not find artifact com.novel:novel-common:jar:1.0.0`。
+> 因为 `novel-common` 是**同一 reactor 里的模块**，从没被 `install` 进本地仓库，
+> 只有 `-f backend/pom.xml`（聚合 POM）才解析得到它。
+> `npm run dev:*` 三个脚本因此都是「打整个 reactor 的对应模块 + 跑 jar」两步，
+> 不是 `spring-boot:run`。★ 加了 `-pl <模块> -am` 也不行 —— CLI 的 goal 会先落到聚合 POM 上，报「没有主类」。
 
 ★ 用 `concurrently` 起的进程，**按 Ctrl+C 不一定能杀干净子进程**；端口还被占着的话，按端口找 PID 再杀：
 

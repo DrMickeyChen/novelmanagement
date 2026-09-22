@@ -1,24 +1,28 @@
 # ============================================================
 # 小说管理系统 · 网关配置
 # ============================================================
-# 第二期 M0：网关只做「按路径转发到服务」，没有任何业务判断。
-# JWT 鉴权是 M1，限流是 M5。
+# 第二期 M0：网关只做「按路径转发到服务」。
+# 第二期 M1：网关【多了一件正事】—— 验 JWT、查 Redis、把身份写进请求头
+#            交给下游（见 gateway/filter/JwtAuthGlobalFilter）。
+#            限流是 M5。
 #
 # ★ 路由为什么写在【本地】而不是 Nacos Config：
 #    M0 要证明的是「路由能通」。引入 Nacos Config 会多出一层
 #    「配置没拉到时静默用兜底值」的失败模式 —— 而那种失败看起来
-#    和「路由配错了」一模一样，会把 M0 的排错时间翻倍。
+#    和「路由配错了」一模一样，会把排错时间翻倍。
 #    配置真的多到需要集中管理时再接，不是现在。
 #
-# ★ 网关只有这一个 profile，不拆 dev/prod：
-#    它这一层没有任何真实密码（nacos/nacos 是中间件自带的固定演示值，
-#    和 application-dev.yml 里的 root123456 同一性质）。
-#    等 M5 做生产部署时再拆。
+# ★★ M1 起这个文件【拆出了 application-dev.yml】，理由和另外两个服务一样：
+#    M0 时网关这一层没有任何真实口令（nacos/nacos 是中间件自带的固定演示值），
+#    所以一个文件就够；M1 起它要连 Redis、要验 JWT，
+#    于是有了「Redis 口令 / JWT 密钥 / 服务间令牌」三样需要 dev 默认值的东西。
+#    本文件保留 M0 那些【不含真实口令】的配置（端口 / Nacos / 路由 / actuator / 日志），
+#    那三样放在 application-dev.yml。
 # ============================================================
 
 server:
   # ★★ 8080 是【唯一入口】，从单体手里接过来的。
-  #    单体退到 8090，不再对外（见 novel-backend 的 application.yml）。
+  #    单体退到 8090、auth 在 8081，都不再对外。
   #
   #    ★ dev-proxy/vite.config.js 和三个前端的 request.js 都写着 8080
   #      —— 它们【一行都不用改】，因为 8080 上确实还有东西在接。
@@ -28,6 +32,10 @@ server:
 spring:
   application:
     name: novel-gateway
+
+  # ★ 和另外两个服务一致：dev 默认值放 profile 文件（同 novel-backend 的注释）
+  profiles:
+    active: dev
 
   cloud:
 
@@ -73,20 +81,143 @@ spring:
         ip: 127.0.0.1
 
     gateway:
+      # ============================================================
+      # 路由表（M1 起是 12 条，不是 1 条）
+      # ============================================================
+      #
+      # ★★★ 为什么 M1 要从 1 条变成 12 条：
+      #
+      #   `/api/admin/**` 和 `/api/reader/**` 这两个前缀【横跨两个服务】：
+      #       /api/admin/users/**          → novel-auth（用户管理）
+      #       /api/admin/author-applies/** → novel-auth（作者申请审核）
+      #       /api/admin/dashboard         → novel-backend（数据大盘，读作品表）
+      #       /api/reader/profile/**       → novel-auth（个人资料、头像）
+      #       /api/reader/bookshelf        → novel-backend（书架）
+      #   所以【不能】按 /api/admin/** 一刀切，必须拆到「具体前缀」这一层。
+      #   下表是 grep 完两个服务的所有 @RequestMapping 之后核对的，
+      #   漏一条的症状是：那个接口 404（像路径写错了）或打到了错的服务。
+      #
+      # ★★ order 必须【显式写死】，不依赖 YAML 里的书写顺序：
+      #     路由按 order 升序匹配，取【第一个命中】的。
+      #     RouteDefinition 不写 order 时默认是 0 —— 于是只要有一条忘了写，
+      #     它会排在所有显式 order 的路由【前面】，把流量抢走。
+      #     这里 auth 一律 1、backend 一律 10，兜底那条永远在最后。
+      #
+      # ★★ 每条前缀都写【裸路径 + /**】两种形状，这不是冗余：
+      #     Spring 的 PathPattern 里 `/api/notices/**` 匹配
+      #     `/api/notices/1`，但【不匹配】`/api/notices` 本身。
+      #     而本项目的 Controller 写法不统一：
+      #         ReaderNoticeController 是【方法级】@GetMapping("/api/notices")
+      #            —— 没有类级前缀，路径就是裸的
+      #         ReaderProfileController 是【类级】/api/reader/profile +
+      #            方法级 /avatar、/password
+      #            —— 于是 `GET /api/reader/profile` 是裸路径，
+      #               `PUT /api/reader/profile` 也是裸路径
+      #     只写 `/**` 那一种的话，这两个接口会【掉进兜底路由】被转发给
+      #     novel-backend —— 而那边没有它们，结果是 404。
+      #     ★ 症状是「改昵称 404、传头像却正常」，看起来像接口没实现。
+      #
+      # ★ uri 用 lb:// 而不是 http://localhost:8090：
+      #   写死地址的话，M1 把 auth 摘出去、M2 把 content 摘出去之后，
+      #   每摘一个服务都要回来改一次网关配置 —— 那正是这一期要避免的事。
+      #   用服务名，网关去 Nacos 问「novel-auth 现在在哪」，
+      #   服务拆几个实例、部署在哪台机器，这里都不用动。
       routes:
-        # ------------------------------------------------------------
-        # 后端接口
-        # ------------------------------------------------------------
-        # ★ uri 用 lb:// 而不是 http://localhost:8090：
-        #    写死地址的话，M1 把 auth 摘出去、M2 把 content 摘出去之后，
-        #    每摘一个服务都要回来改一次网关配置。
-        #    用服务名，网关去 Nacos 问「novel-backend 现在在哪」——
-        #    服务怎么拆、拆几个实例，这里都不用动。
+
+        # ============================================================
+        # novel-auth（:8081）—— order: 1，必须排在下面那条 /api/** 之前
+        # ============================================================
+        # ★ 这 10 条是「M1 从单体里摘走的那部分」的全部对外路径。
+        #   核对方法（加接口时照着做一遍）：
+        #     grep -rn "@RequestMapping\|@GetMapping\|@PostMapping\|@PutMapping\|@DeleteMapping" \
+        #       backend/novel-auth/src/main/java/com/novel/modules/system/controller/
+
+        # --- 登录 / 注册 / 登出 / 当前用户 ---
+        - id: auth-auth
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/auth,/api/auth/**
+
+        # --- 健康检查（PingController：/、/db、/redis）---
+        - id: auth-ping
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/ping,/api/ping/**
+
+        # --- 读者端公告横幅（★ 方法级映射，路径是裸的）---
+        - id: auth-notices
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/notices,/api/notices/**
+
+        # --- 读者端个人资料：GET/PUT 裸路径 + POST /avatar、PUT /password ---
+        - id: auth-reader-profile
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/reader/profile,/api/reader/profile/**
+
+        # --- 读者端「申请成为作者」：POST 裸路径 + GET /mine ---
+        - id: auth-reader-author-apply
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/reader/author-apply,/api/reader/author-apply/**
+
+        # --- 管理端：用户管理 ---
+        - id: auth-admin-users
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/admin/users,/api/admin/users/**
+
+        # --- 管理端：角色 + 赋权 ---
+        - id: auth-admin-roles
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/admin/roles,/api/admin/roles/**
+
+        # --- 管理端：菜单树 ---
+        - id: auth-admin-menus
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/admin/menus,/api/admin/menus/**
+
+        # --- 管理端：公告增删改查 ---
+        - id: auth-admin-notices
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/admin/notices,/api/admin/notices/**
+
+        # --- 管理端：作者申请审核 ---
+        - id: auth-admin-author-applies
+          uri: lb://novel-auth
+          order: 1
+          predicates:
+            - Path=/api/admin/author-applies,/api/admin/author-applies/**
+
+        # ============================================================
+        # novel-backend（:8090）—— order: 10，兜底
+        # ============================================================
+        # ★★ 这两条【必须排在最后】。上面 10 条没命中的 /api/** 全部落到这里，
+        #    所以任何「本该属于 auth 但前缀没列全」的接口都会被静默转发到
+        #    novel-backend，然后在那边 404 ——
+        #    看起来像「接口不存在」，而不是「网关路由漏了一条」。
         #
-        # ★ M0 阶段 novel-backend 只有一个实例（就是那个单体），
-        #   所以转发目标最终仍是 :8090 —— 但路径是经过服务发现的。
-        - id: novel-backend-api
+        # ★ 判定性验证（比逐条 curl 更能说明问题）：
+        #    停掉 novel-backend → auth 的路径【仍然活着】、backend 的路径 503。
+        #    两条同时成立，才证明这 12 条路由真的分开了。
+
+        # --- 内容 / 互动 / AI / 搜索（作品、章节、评论、书架、AI、大盘）---
+        - id: backend-api
           uri: lb://novel-backend
+          order: 10
           predicates:
             - Path=/api/**
 
@@ -97,8 +228,19 @@ spring:
         #   但它同样由 novel-backend 提供（WebMvcConfig 把它们映射到磁盘目录）。
         #   漏了这条的症状是「接口全好，只有图片 404」——
         #   而 404 又是「图片不存在」的常见表现，很容易往错的方向查。
-        - id: novel-backend-uploads
+        #
+        # ★★ M1 的一条已知债：头像文件其实是 novel-auth 写的
+        #    （POST /api/reader/profile/avatar），但读由 novel-backend 服。
+        #    开发期两个服务在同一台机器、用同一条绝对路径
+        #    （novel.upload.path），所以成立。
+        #    生产上两个容器各有文件系统 → 头像写进了 auth 的盘、
+        #    backend 去找 → 404。解法在 M5（接 MinIO/OSS）。
+        #    ★ 不给 auth 也加一条 /uploads/** 路由 —— 那只会掩盖问题：
+        #      两个服务各自服自己盘上的文件，看起来「有时能显示有时不能」，
+        #      比一直 404 更难查。
+        - id: backend-uploads
           uri: lb://novel-backend
+          order: 10
           predicates:
             - Path=/uploads/**
 
@@ -114,6 +256,34 @@ spring:
         # 会把 M0 拖长的活，而且和 M0 的验收标准（路由通 + Nacos 可见）无关。
         #
         # 记在「按需」里。这是开发期唯一一个不走 :3000 的入口。
+
+# ============================================================
+# JWT / 内部令牌（M1 新增）
+# ============================================================
+# ★★ 这两个键【故意不给默认值】，和 novel-auth / novel-backend 的
+#    application.yml 里那两处是同一个写法：
+#    生产环境没配 JWT_SECRET / INTERNAL_TOKEN 就【起不来】，
+#    而不是静默用一个写死在 git 里的弱值跑起来。
+#
+# ★ 为什么网关这一侧尤其不能给默认值：
+#    jwt.secret 错了 → 它验不出任何 token → 全站被当成匿名 → 全站 401。
+#    这个症状【非常响亮】，一定会被发现。
+#    而 internal.token 错了 → 下游 HeaderAuthenticationFilter 认为
+#    「这些身份头是有人伪造的」，把整个请求按匿名处理 ——
+#    症状同样是全站 401，但它看起来会像「网关没把身份头写过去」，
+#    排错方向会跑到 JwtAuthGlobalFilter 上去，而真正的原因是配置。
+#
+# 开发环境的默认值在 application-dev.yml。
+novel:
+  jwt:
+    secret: ${JWT_SECRET}
+    # ★ 本服务【不签发】token，这个值只被 JwtUtil 的构造器要求存在。
+    #   配错不会导致任何功能异常（网关只读 secret 去验签），
+    #   但和 auth 不一致会让读配置的人困惑，所以照抄同一个值。
+    expire-days: 7
+
+  internal:
+    token: ${INTERNAL_TOKEN}
 
 # ============================================================
 # 健康检查 / 路由自检
@@ -160,7 +330,11 @@ logging:
   #   改成 backend/novel-gateway/ 的话日志会静默换地方。
   #
   # ★ 单体把这一段放在 application-dev.yml（生产走 stdout 交给采集器）。
-  #   网关 M0 只有一个 profile，暂时放这里；M5 做生产部署时再拆。
+  #   网关这里【暂时】还放在 application.yml，所以网关在生产会往工作目录写日志文件。
+  #   ★ M1 起网关已经有 application-dev.yml 了（装 Redis 口令 / JWT 密钥 / 共享令牌），
+  #     所以当初「只有一个 profile、没地方放」的理由已经不成立 ——
+  #     现在留在原地的唯一理由是「挪它 = 改生产行为」，而那件事归 M5 做生产部署时一并处理。
+  #     看到这一段别以为是漏搬：它是有意留的，`docs/部署.md` 里也写了。
   file:
     name: logs/novel-gateway.log
 

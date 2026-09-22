@@ -1,4 +1,4 @@
-package com.novel.config;
+package com.novel.common.config;
 
 // ★ UploadProperties 在 M0 搬去了 com.novel.common.upload（和其它被共用的东西放一起），
 //   而这个类留在单体 —— 于是它从「同包」变成了「跨包」，得显式 import。

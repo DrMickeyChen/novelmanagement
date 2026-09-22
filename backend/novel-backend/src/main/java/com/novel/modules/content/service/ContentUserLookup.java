@@ -1,11 +1,10 @@
 package com.novel.modules.content.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.novel.modules.system.entity.AuthorApply;
-import com.novel.modules.system.entity.SysUser;
-import com.novel.modules.system.mapper.AuthorApplyMapper;
-import com.novel.modules.system.mapper.SysUserMapper;
+import com.novel.common.internal.AuthorApplyBriefDTO;
+import com.novel.common.internal.InternalResults;
+import com.novel.modules.content.client.AuthUserClient;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -17,68 +16,76 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * <b>content 模块望向 system 模块的那【唯一一个窗口】。</b>
+ * <b>content 模块望向 system 模块的那【唯一一个窗口】—— M1 起它变成了一条 HTTP 接缝。</b>
  *
  * <p>它主要做「按 userId 取昵称」，但不止于此 —— S11 起它也负责
  * 「按作者申请 id 取一句可读的标题」（见 {@link #authorApplyTitlesOf}）。
  * <b>★ 类名因此变得不够准确，这是有意接受的</b>：准确的命名应该是
- * {@code SystemModuleFacade} 之类，但那要改 5 个调用点换不来任何功能，
- * 而且会让人以为这里是个新概念。真正的规矩写在下面这段和
- * {@code AuthorApplyAuditRecorder} 的类注释里：<b>跨模块的耦合只能有一个出入口，
- * 出入口在消费方那一侧。</b>
+ * {@code SystemModuleFacade} 之类，但那要改 5 个调用点换不来任何功能。
+ * <b>真正的规矩是：跨模块的耦合只能有一个出入口，出入口在消费方那一侧。</b>
  *
- * <p><b>★ 为什么单独抽一个类，而不是在 Service 里直接注入 {@code SysUserMapper}：</b>
+ * <h3>★★ M1 改了什么：只改了「怎么拿到数据」，没改「拿到什么」</h3>
  *
- * <p>大纲 §178 定下的规矩是「<b>服务之间不共享数据库表</b>，跨服务取数据只能走 Feign 或 MQ」，
- * 而本项目的包结构就是按二期要拆的服务划的（{@code modules/content} ↔ 二期 {@code novel-content}，
- * {@code modules/system} ↔ 二期 {@code novel-auth}）。
- * <p>现在两个包在同一个进程、同一个库里，一句 {@code sysUserMapper.selectBatchIds(...)}
- * 就能拿到作者昵称 —— 但那正是二期拆分时最贵的一笔债：如果这个依赖散落在
- * NovelService、ChapterService、AuditLogService、各个 VO 转换里，
- * M2 拆服务时就得翻遍整个包去改。
+ * <table border="1">
+ *   <caption>改造前后对照</caption>
+ *   <tr><th></th><th>改造前（P2~P6）</th><th>M1 之后</th></tr>
+ *   <tr>
+ *     <td>数据怎么来</td>
+ *     <td>注入 {@code SysUserMapper}，<b>直接查库</b></td>
+ *     <td>注入 {@link AuthUserClient}，<b>Feign 调 novel-auth</b></td>
+ *   </tr>
+ *   <tr>
+ *     <td>四个方法签名</td>
+ *     <td colspan="2"><b>一字未改</b> —— 调用方一行都没动</td>
+ *   </tr>
+ *   <tr><td>SQL 写在哪</td>
+ *       <td>这个类里</td>
+ *       <td>novel-auth 的 {@code InternalUserQueryService}</td></tr>
+ * </table>
  *
- * <p>所以这里把跨模块的耦合<b>收进一个类</b>：调用方只认
- * {@link #nicknameOf} / {@link #nicknamesOf}，不认 {@code SysUserMapper}。
- * 二期 M2 时只需要把这一个文件内部从「查库」改成「Feign 调 auth 服务」，
- * <b>调用方一行都不用动</b>。
+ * <p><b>★ 为什么 SQL 必须跟着表走：</b>M1 把 {@code modules/system} 搬进
+ * novel-auth 之后，{@code SysUserMapper} 就不在 novel-backend 的 classpath
+ * 上了 —— 编译期直接报「找不到符号」（这是好事：错误当场可见，
+ * 而不是等到运行时才 500）。于是那些查询只能搬到 auth 那一侧去。
+ * <b>数据在谁那儿，查询就归谁写。</b>
  *
- * <p>大纲 §1277 把「详情页跨服务取到作者信息」列为 M2 的验收标准之一，
- * 说明这个需求是真实存在、且本来就要在 M2 变成跨服务调用的 —— 与其那时再补，
- * 不如现在就把接缝留好。
+ * <p><b>★★ 这个类存在的意义，在 M1 之后反而更大了。</b>
+ * 改造前它挡的是「M2 拆服务时要翻遍整个 content 包去改散落的 Mapper 调用」；
+ * 现在它挡的是「content 直接去调 auth 的 HTTP 接口」。两者是同一件事：
+ * <b>把跨模块的耦合收进一个类</b>，这样 M2 摘 content 时，
+ * 需要检查的跨服务调用点仍然只有这几处。
  *
  * <p><b>依赖方向提醒：</b>只能 content → system，绝不能反过来。
  * system 模块（认证/用户）不该知道小说的存在，否则二期的 auth 服务
  * 就反向依赖 content 了，拆分顺序（M1 先拆 auth、M2 再拆 content）直接作废。
+ * <p>★ M1 之后这条规矩多了一个例外，但它不在这里 ——
+ * 见 {@code InternalAuditLogController} 的类注释（那是铁律 1 原文
+ * 明确列出的一个接缝，方向相反）。
+ *
+ * <h3>★ 失败时不降级，直接抛</h3>
+ *
+ * <p>逐个方法看：跨服务调用失败（auth 挂了、网络断了、超时）会抛
+ * {@code BusinessException(SYSTEM_ERROR)} → HTTP 500，
+ * <b>而不是「返回空的昵称」</b>。
+ *
+ * <p>为什么不做降级：降级的症状是「首页上所有书的作者名变成空白」，
+ * 它<b>看起来像数据坏了</b>，于是排查方向会一路跑到数据库上去，
+ * 而真正的原因是认证服务不可用。<b>宁可 500，也不要一个看起来正常
+ * 但内容是错的页面。</b>
+ * <p>★ 代价要说清楚（记录在 {@code docs/M1-摘出auth.md}）：
+ * novel-auth 不可用时，<b>连匿名首页也会 500</b>（因为首页书列表要作者昵称）。
+ * 改造前这个失败面是不存在的（本地查询不会「连不上」）。
+ * 这是共享库 + 同步调用换来的<b>可用性耦合</b>，M1 接受它、
+ * 记为 M5 治理项（缓存兜底 / 熔断降级）。
  *
  * @author MickeyChen
  */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ContentUserLookup {
 
-    /**
-     * 昵称模糊匹配的条数上限。
-     *
-     * <p>★ 100 是「够用」和「别把下游 SQL 撑爆」之间的取舍：搜到一个 100+ 人
-     * 重名的昵称时，结果会被截断，搜索页会少几本书 —— 这是<b>可以接受的降级</b>。
-     * 反过来不设上限，一次搜索可能带出几万个 id 去做 {@code IN}，
-     * 那是一次真正的故障（SQL 文本超长、解析开销大）。
-     */
-    private static final int NICKNAME_MATCH_LIMIT = 100;
-
-    private final SysUserMapper sysUserMapper;
-
-    /**
-     * ★ S11 加的第二个依赖，也是唯一一个不是「用户表」的。
-     *
-     * <p>它存在的原因见 {@link #authorApplyTitlesOf} —— 一句话：
-     * content 要补出「作者申请」的可读标题，而那张表在 system 里。
-     * <p><b>★ 为什么加在这里而不是新建一个 {@code AuthorApplyLookup}：</b>
-     * 「跨模块的耦合只能有一个出入口」—— 再加一个类就是同一个方向上
-     * 开了第二个口子，M1 拆 auth 时得找两个地方，而且以后每加一张表
-     * 就会多一个 Lookup 类。宁可让这个类的名字变得不准确。
-     */
-    private final AuthorApplyMapper authorApplyMapper;
+    private final AuthUserClient authUserClient;
 
     /**
      * 取一个用户的昵称。查不到返回 {@code null}（用户可能已被注销）。
@@ -89,100 +96,67 @@ public class ContentUserLookup {
         if (userId == null) {
             return null;
         }
-        SysUser user = sysUserMapper.selectById(userId);
-        return user == null ? null : user.getNickname();
+        return InternalResults.unwrap(authUserClient.nicknameOf(userId), "取用户昵称 userId=" + userId);
     }
 
     /**
      * 批量取昵称，返回 {@code userId → nickname}。
      *
      * <p><b>★ 列表接口必须用这个，不要循环调 {@link #nicknameOf}：</b>
-     * 一页 20 本小说就是 20 次查询，这是典型的 N+1。
-     * 这里一次 {@code IN} 查询就够，而且 {@code sys_user.id} 是主键，
-     * 20 个 id 走主键索引可以忽略不计。
+     * 一页 20 本小说就是 20 次调用 —— 而 M1 之后每次调用是<b>一次跨进程
+     * HTTP 请求</b>，N+1 的代价从「20 次 SQL」变成了「20 次网络往返」。
+     * 这个类改造前的那条注释就写着「这是典型的 N+1」，现在更成立。
      *
-     * <p>返回 {@code Map} 而不是 {@code List}，是为了让调用方按 id 直接取 ——
-     * 用 List 的话调用方得自己写个循环去配对，那种代码很容易在多角色、
-     * 有重复 id 的情况下出错。
+     * <p>★ 下面这两段本地短路（空集合 / 全是 null）在 M1 之后<b>更值钱</b>了：
+     * 它们省下的从「一次无用 SQL」变成了「一次无用 HTTP」。
+     * <b>不要因为「反正对端也会判空」就把它们删掉</b> —— 对端判空省的是它的
+     * SQL，这里判空省的是这次往返本身。
      *
-     * @param userIds 用户 id 集合，允许为空（空集合直接返回空 Map，
-     *                <b>不能拿空集合去查库</b> —— 那会生成 {@code WHERE id IN ()} 语法错误）
+     * @param userIds 用户 id 集合，允许为空
      */
     public Map<Long, String> nicknamesOf(Collection<Long> userIds) {
         if (userIds == null || userIds.isEmpty()) {
             return Collections.emptyMap();
         }
-        // 去重：同一页里好几本书是同一个作者很常见，重复 id 没必要重复查
+        // 去重：同一页里好几本书是同一个作者很常见，重复 id 没必要重复传
         List<Long> ids = userIds.stream().filter(Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) {
             return Collections.emptyMap();
         }
 
-        Map<Long, String> result = new LinkedHashMap<>();
+        Map<Long, String> result =
+                InternalResults.unwrap(authUserClient.nicknamesOf(ids), "批量取用户昵称 count=" + ids.size());
+
         /*
-         * ★ 用 selectByIds 而不是 selectBatchIds：后者在 MP 3.5.9 已经是
-         * @Deprecated 的 default 方法（内部转调 selectByIds），编译只报一句
-         * 「使用了已过时的 API」不报错，但它是【要被删掉】的那个 ——
-         * 留着，下一次升 MP 就是编译不过。
+         * ★ 对端返回 null 时兜成空 Map，而不是把 null 透给调用方：
+         *   调用方（AuditLogServiceImpl、NovelServiceImpl、CommentServiceImpl）
+         *   直接 .get(id) 用，透 null 过去就是三个 NPE 现场。
+         *   HTTP 这一层多了一个「可能什么都没返回」的状态，是本地调用没有的
+         *   —— 这一类兜底正是接缝类该吸收掉的东西。
          */
-        for (SysUser user : sysUserMapper.selectByIds(ids)) {
-            result.put(user.getId(), user.getNickname());
-        }
-        return result;
+        return result == null ? Collections.emptyMap() : result;
     }
 
     /**
      * 反查：昵称模糊匹配 → 用户 id 列表。<b>给「按作者名搜索作品」用。</b>
      *
-     * <p><b>★★ 这个方法是 {@link #nicknamesOf} 的逆向，而逆向的代价高得多。</b>
-     * 正向是主键查（百万行也是一次 B+ 树下降），反向是
-     * {@code nickname LIKE '%关键词%'} —— {@code sys_user.nickname}
-     * <b>没有索引，而且前导通配符让任何索引都用不上</b>，这是一次全表扫描。
-     * 所以：
-     * <ul>
-     *   <li>条数必须有 {@link #NICKNAME_MATCH_LIMIT} 上限，不能把全表扫出来的 id
-     *       一股脑带回去做 {@code IN} —— 那会让下游的 SQL 变成巨长的 IN 列表；</li>
-     *   <li>这是 P3 用 MySQL 做搜索的已知短板，二期 M4 上 ES 正是要解决它
-     *       （连同 {@code novel.title} 那个 LIKE）。</li>
-     * </ul>
+     * <p><b>★★ 真正的查询（以及它为什么是一次全表扫描、为什么有条数上限）
+     * 现在写在 novel-auth 的 {@code InternalUserQueryService#userIdsByNickname}
+     * —— 请去那里读。</b>这里只留一句结论：这是 P3 用 MySQL 做搜索的已知短板，
+     * 二期 M4 上 ES 正是要解决它。
      *
-     * <p>★ <b>用 {@code LambdaQueryWrapper} 而不是手写 {@code @Select}</b>，
-     * 理由和 {@code NovelMapper} 保持空接口一样：wrapper 让 {@code @TableLogic}
-     * 自动补上 {@code deleted = 0}。手写就得自己记得写 ——
-     * 忘了的话，<b>已注销用户的作品会混进搜索结果</b>，而且不报错。
-     *
-     * <p>★ 用 {@code .select(SysUser::getId)} 只取 id 一列，两个好处：
-     * ① 不把 {@code password}（BCrypt 哈希）捞进内存 —— 泄露哈希等于
-     * 把离线爆破的门槛降到「拖库」以下；② 少读几列，全表扫描时差别明显。
-     *
-     * <p>★ 单列投影在这里【安全】：主键永远不为 NULL，MyBatis 就不会把整行丢成
-     * {@code null} 塞进 List。<b>但这是「碰巧安全」，不是「有保证」</b> ——
-     * 选到可空列上会 500，实例见 {@code AdminRoleServiceImpl#permsOfMenus}。
-     *
-     * @param keyword 昵称关键词。调用方必须先判空 —— 空关键词会匹配所有人
+     * @param keyword 昵称关键词。★ 仍然在本地判空：
+     *                <b>空关键词会匹配所有人</b>，对端虽然也判了，
+     *                但这里挡住能省下一次「注定要丢弃结果」的往返
      * @return 命中的用户 id，<b>可能为空列表</b>（调用方要短路，不能拿空集合去 {@code IN}）
      */
     public List<Long> userIdsByNickname(String keyword) {
         if (!StringUtils.hasText(keyword)) {
             return List.of();
         }
-
-        /*
-         * ★ 这里的 .last("LIMIT 100") 和「绝不拼 SQL」那条规矩【不冲突】：
-         * 拼进去的是一个编译期常量，不含任何来自请求的字符。
-         *
-         * 对照 NovelServiceImpl 里拒绝写的 .last("LIMIT " + limit) ——
-         * 那里的 limit 来自请求参数，拼进去就是一个注入口。
-         * 两者的区别是「值从哪来」，不是「用不用 .last」。
-         * 写这个注释是因为后来人看到 .last 很容易以为是漏网的拼接，
-         * 顺手「修」成参数化 —— 而 .last 恰恰是参数化不了的（它进的是 SQL 尾巴）。
-         */
-        List<SysUser> users = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
-                .select(SysUser::getId)
-                .like(SysUser::getNickname, keyword.trim())
-                .last("LIMIT " + NICKNAME_MATCH_LIMIT));
-
-        return users.stream().map(SysUser::getId).toList();
+        List<Long> ids = InternalResults.unwrap(
+                authUserClient.userIdsByNickname(keyword), "按昵称反查用户 keyword=" + keyword);
+        return ids == null ? List.of() : ids;
     }
 
     /**
@@ -196,11 +170,25 @@ public class ContentUserLookup {
      * 而那多半是<b>另一个真实存在的人</b>，于是日志页上显示的是
      * 「别人的申请」。两份申请都真实存在，从流水上根本看不出记错了。
      * <p>所以必须走 {@code apply_id → user_id → nickname} 两跳。
+     * <b>★ M1 之后这个坑的形状变了一点，但危险性没变</b>：
+     * 现在是「对端返回的 DTO 里同时带着两个 id」，照旧不能混用 ——
+     * 这也是 {@link AuthorApplyBriefDTO} 必须同时给
+     * {@code id} 和 {@code userId} 的原因。
      *
      * <p><b>★ 标题为什么是「笔名（昵称）」而不是只有昵称：</b>
      * 昵称可以重复、可以随时改，而审核员在日志页要找的是「哪一份申请」。
      * 笔名是那份申请自己的内容，昵称说明了是谁 —— 两个都给才够定位。
      * （同一页里同一个人申请了两次、笔名不同，只有这样才分得开。）
+     *
+     * <p><b>★★ 这个方法是 M1 里唯一一个「一次页面渲染打两次跨服务调用」的地方</b>
+     * （先取申请、再取昵称），而这是<b>改造前就有的形状</b>——
+     * 原来也是两次 SQL。M1 没有把它变好也没有变坏，只是把「两次查询」
+     * 变成了「两次往返」。
+     * <p>★ 想优化的话有一个现成的方向：<b>让 {@code /internal/author-applies/briefs}
+     * 直接返回笔名加昵称</b>，一次往返解决。M1 没做，因为那会把
+     * 「标题怎么拼」这个展示决策挪进 auth 服务（见 {@code InternalUserQueryService#briefsOf}
+     * 的注释：那边只给<b>事实</b>，怎么呈现由消费方决定）。
+     * <b>这是一个可以商量的取舍，不是遗漏。</b>
      *
      * <p><b>★ 查不到的 id 不会出现在 Map 里</b>：申请被逻辑删除、
      * 或者申请还在但申请人已注销导致笔名取不到任何佐证 ——
@@ -212,8 +200,7 @@ public class ContentUserLookup {
      * 申请本身没有消失，不该因为作者走人就显示成「已删除」。
      *
      * @param applyIds 申请 id 集合，允许为空
-     *                （<b>空集合直接返回空 Map，不能拿它去查库</b> ——
-     *                那会生成 {@code WHERE id IN ()}，是语法错误）
+     *                （<b>空集合直接返回空 Map，不发这次请求</b>）
      */
     public Map<Long, String> authorApplyTitlesOf(Collection<Long> applyIds) {
         if (applyIds == null || applyIds.isEmpty()) {
@@ -224,23 +211,23 @@ public class ContentUserLookup {
             return Collections.emptyMap();
         }
 
-        List<AuthorApply> applies = authorApplyMapper.selectByIds(ids);
-        if (applies.isEmpty()) {
+        List<AuthorApplyBriefDTO> applies = InternalResults.unwrap(
+                authUserClient.briefsOf(ids), "取作者申请摘要 count=" + ids.size());
+        if (applies == null || applies.isEmpty()) {
             return Collections.emptyMap();
         }
 
         /*
-         * ★ 第二次查询：申请人昵称。同样是一次 IN，不是循环 ——
-         *   一页 20 条日志最多 20 个申请人，逐个查就是 20 次。
-         * ★ 用 nicknamesOf（本类自己的方法）而不是再写一遍 selectByIds：
-         *   昵称的取法只能有一处实现，将来它改成调 auth 服务时，
-         *   这条路径自动跟着走。
+         * ★ 第二次调用：申请人昵称。同样是一次批量，不是循环 ——
+         *   一页 20 条日志最多 20 个申请人，逐个查就是 20 次往返。
+         * ★ 用 nicknamesOf（本类自己的方法）而不是绕开它：
+         *   昵称的取法只能有一处实现。
          */
         Map<Long, String> nicknames = nicknamesOf(
-                applies.stream().map(AuthorApply::getUserId).toList());
+                applies.stream().map(AuthorApplyBriefDTO::getUserId).toList());
 
         Map<Long, String> result = new LinkedHashMap<>();
-        for (AuthorApply apply : applies) {
+        for (AuthorApplyBriefDTO apply : applies) {
             String penName = apply.getPenName();
             String nickname = nicknames.get(apply.getUserId());
 

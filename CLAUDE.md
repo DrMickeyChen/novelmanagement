@@ -5,21 +5,23 @@
 > **加内容之前先问自己：删掉这段，下次会不会做错？** 不会就别加。
 >
 > 每期的完整设计论证：第一期在 `docs/Pn-*.md`（P1 认证权限 / P2 内容主干 / P3 读者端 / P4 创作中心 / P5 管理后台），
-> 第二期在 `docs/Mn-*.md`（M0 骨架搭建）。
+> 第二期在 `docs/Mn-*.md`（M0 骨架搭建 / M1 摘出 auth）。
 
 ## 项目
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
-第二期 **M0 骨架搭建（已完成）** → M1 摘 auth+网关接管 JWT → M2 摘 content+Feign → M3 摘 interaction+MQ 阅读量 → M4 摘 search+ES → M5 治理。第三期 E1 AI。
+第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT（均已完成）** → M2 摘 content+Feign → M3 摘 interaction+MQ 阅读量 → M4 摘 search+ES → M5 治理。第三期 E1 AI。
 **★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
 
 三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
 开发入口一律用 **`http://localhost:3000/...`** —— localStorage 按 origin 隔离，直连 5175 读不到另外两端的登录态。
 
-★ **M0 起后端分成两个进程**：**网关 `:8080`（唯一入口）** → `lb://novel-backend` → **单体 `:8090`**（不再对外）。
-所以 `localhost:8080` 现在是网关、不是后端；排错要绕过网关时直连 `:8090`。
-★ **开发期唯一不走 `:3000` 的入口是接口文档**：`http://localhost:8090/doc.html`（网关【故意】不透传 knife4j，理由见 `docs/M0-骨架搭建.md`）。
+★ **M1 起后端分成三个进程**：**网关 `:8080`（唯一入口，也是唯一验 JWT 的地方）** → `lb://novel-auth` → **auth `:8081`**（`modules/system` 全部：登录/用户/角色菜单/公告/作者申请/ping）／ `lb://novel-backend` → **单体 `:8090`**（content / interaction / ai，**不再验签，只读身份头**）。
+所以 `localhost:8080` 是网关、不是后端；排错要绕过网关时直连 `:8081` 或 `:8090`。
+★★ **直连 `:8081`/`:8090` 必须带 `novel.internal.token`（走 `X-Internal-Token`）**，否则身份头一律被忽略、当**匿名**处理 —— 这是刻意的（决策 4），不是 bug。
+★ **开发期不走 `:3000` 的入口只有接口文档，且现在有两个**：`http://localhost:8090/doc.html` 和 `http://localhost:8081/doc.html`（网关【故意】不透传 knife4j，理由见 `docs/M0-骨架搭建.md`）。
+★ **`:8081`/`:8090` 在生产上必须只对内网开放** —— 共享密钥只是第二道锁，第一道永远是网络隔离（见 `docs/M1-摘出auth.md` R9）。
 
 ## ★★ 铁律
 
@@ -27,8 +29,13 @@
    二期先摘 auth（system）再摘 content，反了就有双向依赖拆不开。
    跨模块读数据只能走接缝，接口定义在**消费方**那一侧：`ContentUserLookup`（content 读 system）、
    `CommentTextLookup`（content 读 interaction）、`AuthorApplyAuditRecorder`（system 读 content，实现在 content）。
+   ★ **M1 之后这条要按 HTTP 重新表述**：接口**实现**住在消费方（就是「发一次 Feign 调用」），
+   提供方只暴露 URL、不暴露类型 —— 否则那是个能编译、能被扫描、**永远不会被调用**的死 bean。
+   ★ **M1 造出了一个【服务级】临时环** `novel-auth ⇄ novel-backend`（内容要作者昵称 + 审核要写审计日志）。
+   它符合铁律原文（那个接缝本就是受认可的例外），但服务级上确实是环 —— **M3 的 MQ 解掉**，别在 M2 顺手发明新解法。
 2. **12 个文件逐字节锁定，任何一期都不许改**：三端各自的 `src/utils/request.js`、`src/utils/auth.js`、`src/stores/user.js`、`src/styles/index.css`。
-   改完要复验 md5（基线值见 `docs/P1-认证权限.md`）。`utils/` 下**其它**文件（format/status/confirm/echarts）不在锁内。
+   改完要复验 md5（基线值见 `docs/P4-创作中心.md` —— `request.js` = `2047681401d85ed69cebbd069f4ee7dd`，
+   三端四个文件各自逐字节相同）。`utils/` 下**其它**文件（format/status/confirm/echarts）不在锁内。
 3. **业务码一律返 HTTP 200**，只有 `400~599` 段一一对应真实状态码（见 `ResultHttpStatus`）。验收脚本**别用状态码判断业务成败**。
    三态要分清：匿名 → **401**；身份不足 → **403**；业务失败 → **200 + code**。
 4. **前端模块校验要看 `content-type`**，不是状态码 —— 模块 URL 必须带 `base` 前缀（`/admin/src/...`），且**不存在的模块也返回 200**（SPA 回落 HTML），看到 `text/html` 等于什么都没验。
@@ -72,8 +79,13 @@
 D:/MickeyChen/usefultool/apachemaven/download/apache-maven-3.9.9/bin/mvn.cmd \
   -Dmaven.repo.local=D:/MickeyChen/usefultool/apachemaven/download/apache-maven-3.9.9/mvn_repo \
   -f backend/pom.xml package
-# ★ 必须打整个 reactor（backend/pom.xml 是聚合 POM），不要在子目录单独 package ——
-#   那样 novel-common 会用仓库里的旧 jar，「改了没生效」且不报错。
+# ★ 必须打整个 reactor（backend/pom.xml 是聚合 POM）。在子目录单独跑【任何】goal 都不行：
+#   novel-common 从没被 install 进本地仓库，只有聚合 POM 才在 reactor 内解析得到它 ——
+#   实测是硬报错 `Could not find artifact com.novel:novel-common:jar:1.0.0`。
+#   ★ 加 -pl <模块> -am 也救不了直接点名的 goal（会先落到聚合 POM 上报「没有主类」），
+#     只对 package 这类【生命周期阶段】有效。所以 npm run dev:gateway/auth/backend
+#     都是「-pl <模块> -am package + java -jar」两步，不是 spring-boot:run（docs/M1 踩坑 7）。
+# ★ -Dmaven.repo.local 可省：settings.xml 里的 <localRepository> 已指向同一个 mvn_repo。
 # ★ 必须在后端停掉的时候打包（jar 正在运行时 repackage 会失败并留下瘦 jar）
 # 启动（用 Bash 工具，不要用 PowerShell 跑 mvn）
 Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
@@ -82,7 +94,10 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 # ★★ -WorkingDirectory 必须是 backend/【不是 backend/novel-backend/】：
 #    logging.file.name 是相对路径，跟着工作目录走 —— 改了就静默换目录，
 #    所有「日志在 backend/logs/」的文档同时变假话，且没有任何报错。
-# 网关同理：novel-gateway/target/novel-gateway.jar（日志落在 backend/logs/novel-gateway.log）
+# ★ M1 起【三个】jar 都要起（少一个就是全站 401 或全站 500）：
+#   novel-gateway/target/novel-gateway.jar（:8080，logs/novel-gateway.log）
+#   novel-auth/target/novel-auth.jar      （:8081，logs/novel-auth.log）
+#   novel-backend/target/novel-backend.jar（:8090，logs/novel-backend.log）
 # SQL 日志在 stdout —— 要 grep SQL 得额外加 -RedirectStandardOutput
 
 # 前端：根目录 npm run dev（concurrently 起四端）；npm 装包要 --cache $env:TEMP\novel-npm-cache

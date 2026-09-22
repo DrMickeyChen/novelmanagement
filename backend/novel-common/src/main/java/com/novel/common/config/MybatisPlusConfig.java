@@ -1,4 +1,4 @@
-package com.novel.config;
+package com.novel.common.config;
 
 import com.baomidou.mybatisplus.annotation.DbType;
 import com.baomidou.mybatisplus.extension.plugins.MybatisPlusInterceptor;

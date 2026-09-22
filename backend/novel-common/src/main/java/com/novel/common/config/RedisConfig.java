@@ -1,4 +1,4 @@
-package com.novel.config;
+package com.novel.common.config;
 
 import com.fasterxml.jackson.annotation.JsonAutoDetect;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;

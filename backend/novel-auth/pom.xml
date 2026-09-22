@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-auth</artifactId>
+    <name>novel-auth</name>
+    <description>小说管理系统 · 认证服务（M1 从单体里摘出来的第一个服务，8081）</description>
+
+    <!--
+      ============================================================
+      M1：第一个被摘出来的服务
+      ============================================================
+      这个模块 = 第一期的 com.novel.modules.system 整个包（58 个类 / 7 张表）：
+          登录注册、用户、角色权限、作者申请、公告、ping
+
+      ★ 为什么先摘它（大纲 §九 的原话）：
+          边界最清晰、被依赖最多。整个包对外只有 2 个文件 5 行 import
+          （都在 content 里，见 ContentUserLookup 与那条审计接缝），
+          而且它自己不 import 任何别的业务模块 —— 切面是干净的。
+
+      ★ 为什么它【不对外暴露】：M1 起 8080 网关是唯一入口，
+        novel-auth 和 novel-backend 都退到内网端口。生产靠网络隔离
+        （docs/部署.md 里 Nginx 是唯一入口），开发期直连 8081/8090
+        仅供排错 —— 见 application-dev.yml 顶上那段。
+
+      ★ 依赖清单为什么和 novel-backend 几乎一样：
+        它是个【完整的 servlet 服务】，不是个库 —— 有自己的 Controller、
+        Service、Mapper、Security 过滤链、Redis 登录态、上传头像。
+        唯一少的是 AI 那部分（那是 content 的）。
+
+      ★ 下面那两个 Feign 依赖是 M1 后半段才加的（先建骨架、再搬代码、最后接线），
+        它们的注释在 dependencies 里。
+    -->
+
+    <dependencies>
+
+        <!-- 共用的 Result / 异常 / JwtUtil / TokenStore / LoginUser / 技术配置（M1 起） -->
+        <dependency>
+            <groupId>com.novel</groupId>
+            <artifactId>novel-common</artifactId>
+        </dependency>
+
+        <!-- ==================== Web ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- 参数校验：@NotNull / @Size / @Email 这些注解靠它 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 注册中心 ====================
+          ★ 网关的路由写的是 lb://novel-auth —— 没有这个依赖，
+            它会去 Nacos 找 novel-auth，然后「找不到实例」。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!-- ==================== 持久层 ==================== -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+
+        <!--
+          ★ 分页插件 PaginationInnerInterceptor 要靠它拼 LIMIT。
+            缺了第一次调分页接口就报 NoClassDefFoundError: net/sf/jsqlparser/...
+            报错完全看不出和分页有关（同 novel-backend 那条注释）。
+            用户列表 / 角色列表 / 公告列表 / 作者申请列表都是分页的，必需。
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== 缓存 / 登录态 ==================== -->
+        <!--
+          ★★ 这个依赖是 M1 的【命门】之一，别当成普通依赖看：
+             登录态（LoginUser）存在 Redis 里，网关每个请求都要去读一次
+             才能判断「这个 token 还有效吗」。所以 Redis 的序列化配置
+             必须是【同一份】—— 见 novel-common 的 com.novel.common.config.RedisConfig，
+             那个类在 M1 从 novel-backend 搬到了 novel-common，就是为了
+             让网关能 @Import 同一个类，而不是复制一份（复制 = 全站静默登出）。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- ==================== 接口文档 ==================== -->
+        <!--
+          ★ M1 之后接口文档有【两个】入口（M0 决定网关不透传 knife4j）：
+              :8081/doc.html —— 本服务的（登录/用户/角色/菜单/公告/作者申请）
+              :8090/doc.html —— novel-backend 的（作品/章节/评论/搜索/AI）
+            这是开发期唯二不走 :3000 的入口，见 docs/M1-摘出auth.md。
+        -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ==================== 工具 ==================== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ==================== 认证授权 ==================== -->
+        <!--
+          ★★ spring-boot-starter-security 一旦引入就【自动拦截所有接口】，
+             放行规则写在 com.novel.auth.config.AuthSecurityConfig。
+             两者必须同时存在，单独加依赖 = 全站 401。
+
+          ★ M1 之后这个服务的鉴权方式变了：它【不再自己验签 JWT】，
+            改成读网关写下的 X-User-Id 等请求头（见 novel-common 的
+            HeaderAuthenticationFilter）。所以这里要的只是 Spring Security
+            的 URL 闸能力（hasRole / authenticated），不是它的认证能力。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          ★ jjwt-impl / jjwt-jackson 不在这里声明：novel-common 已经用
+            runtime scope 引了，会传递过来。JWT 相关依赖统一由 novel-common
+            负责 —— 因为 JwtUtil 在那边。
+
+          ★ M1 说明：novel-auth 【签】token（登录），网关【验】token。
+            两边用的 JwtUtil 是同一个类、同一份密钥配置，所以这里需要 jjwt-api。
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+
+        <!-- ==================== 服务间调用（M1） ==================== -->
+
+        <!--
+          ★★ 本服务为什么也需要 Feign —— 这一条容易让人意外，
+             因为直觉上「auth 是被别人调的那个，它自己不该调别人」。
+
+             事实是有【一条反向的边】：审核作者申请要记一条审核流水
+             （audit_log 表），而那张表和 AuditLogService 都在
+             novel-backend 里（它属于 content 模块）。所以：
+                 审完 → BackendAuditClient.recordAuthorApplyAudit(...)
+                      → POST novel-backend:/internal/author-apply-audit-logs
+
+             ★ 这条边是铁律 1 原文里【明确列出的那个例外】
+               （AuthorApplyAuditRecorder：system 读 content，实现在 content），
+               不是 M1 新开的口子。
+
+             ★★ 它在服务级上造出了一个环：novel-auth ⇄ novel-backend
+                （backend → auth 拿作者昵称，auth → backend 写审核流水）。
+                同进程 DI 时这只是两个 bean 互相注入，换成 HTTP 之后才成为环。
+                解药是大纲 §M3 的 MQ（审核事件异步化 → 环断掉）。
+                ★ M1 接受它，并记在 docs/M1-摘出auth.md 里，
+                  不留给后人去发现。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!--
+          ★★ loadbalancer 必须显式加：@FeignClient(name = "novel-backend")
+             里的 name 是服务名，要靠它去 Nacos 解析成实例地址。
+             漏了的症状：启动失败，报 No Feign Client for loadBalancing defined
+             （同 novel-backend 那条注释）。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- ==================== 测试 ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <finalName>novel-auth</finalName>
+        <plugins>
+            <!-- ★ 在父 pom 的 pluginManagement 里有配置，这里声明一次来激活它 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
