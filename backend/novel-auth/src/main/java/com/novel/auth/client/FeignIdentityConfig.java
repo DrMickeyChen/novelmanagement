@@ -15,7 +15,7 @@ import java.util.Map;
 /**
  * <b>novel-auth 所有 Feign 出站请求的统一配置（M1）。</b>
  *
- * <p>和 novel-backend 的 {@code FeignIdentityConfig} 是<b>同一份东西</b>
+ * <p>和 novel-content / novel-interaction 的 {@code FeignIdentityConfig} 是<b>同一份东西</b>
  * （带密钥 + 带身份）。为什么没有抽到 novel-common 里去共用：
  * 那需要让共用的库依赖 Feign 的 API（{@code RequestInterceptor}），
  * 而 common 现在对 Spring 的依赖全部是 {@code optional}、一个字节都不传给下游
@@ -24,7 +24,7 @@ import java.util.Map;
  * {@link IdentityHeaders} 里了；剩下这五行是<b>配置</b>，不是逻辑，
  * 各服务自己声明自己的出站行为更符合「服务边界单向」那条规矩。
  *
- * <p><b>★★ 这个类【额外】做了一件 novel-backend 那边不需要做的事：
+ * <p><b>★★ 这个类【额外】做了一件 novel-content 那边不需要做的事：
  * 把重试关掉。</b>理由见下面 {@link #feignRetryer()}。
  *
  * @author MickeyChen

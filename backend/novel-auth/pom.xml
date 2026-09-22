@@ -27,11 +27,11 @@
           而且它自己不 import 任何别的业务模块 —— 切面是干净的。
 
       ★ 为什么它【不对外暴露】：M1 起 8080 网关是唯一入口，
-        novel-auth 和 novel-backend 都退到内网端口。生产靠网络隔离
-        （docs/部署.md 里 Nginx 是唯一入口），开发期直连 8081/8090
+        novel-auth 和 novel-content / novel-interaction 都退到内网端口。生产靠网络隔离
+        （docs/部署.md 里 Nginx 是唯一入口），开发期直连 8081/8082/8083
         仅供排错 —— 见 application-dev.yml 顶上那段。
 
-      ★ 依赖清单为什么和 novel-backend 几乎一样：
+      ★ 依赖清单为什么和 novel-content / novel-interaction 几乎一样：
         它是个【完整的 servlet 服务】，不是个库 —— 有自己的 Controller、
         Service、Mapper、Security 过滤链、Redis 登录态、上传头像。
         唯一少的是 AI 那部分（那是 content 的）。
@@ -79,7 +79,7 @@
         <!--
           ★ 分页插件 PaginationInnerInterceptor 要靠它拼 LIMIT。
             缺了第一次调分页接口就报 NoClassDefFoundError: net/sf/jsqlparser/...
-            报错完全看不出和分页有关（同 novel-backend 那条注释）。
+            报错完全看不出和分页有关（同 novel-interaction 那条注释）。
             用户列表 / 角色列表 / 公告列表 / 作者申请列表都是分页的，必需。
         -->
         <dependency>
@@ -114,10 +114,11 @@
 
         <!-- ==================== 接口文档 ==================== -->
         <!--
-          ★ M1 之后接口文档有【两个】入口（M0 决定网关不透传 knife4j）：
+          ★ M2 之后接口文档有【三个】入口（M0 决定网关不透传 knife4j）：
               :8081/doc.html —— 本服务的（登录/用户/角色/菜单/公告/作者申请）
-              :8090/doc.html —— novel-backend 的（作品/章节/评论/搜索/AI）
-            这是开发期唯二不走 :3000 的入口，见 docs/M1-摘出auth.md。
+              :8082/doc.html —— novel-content 的（作品/章节/搜索/AI）
+              :8083/doc.html —— novel-interaction 的（评论/书架/阅读历史）
+            这是开发期唯三不走 :3000 的入口，见 docs/M1-摘出auth.md。
         -->
         <dependency>
             <groupId>com.github.xiaoymin</groupId>
@@ -168,16 +169,16 @@
 
              事实是有【一条反向的边】：审核作者申请要记一条审核流水
              （audit_log 表），而那张表和 AuditLogService 都在
-             novel-backend 里（它属于 content 模块）。所以：
-                 审完 → BackendAuditClient.recordAuthorApplyAudit(...)
-                      → POST novel-backend:/internal/author-apply-audit-logs
+             novel-content 里（它属于 content 模块）。所以：
+                 审完 → ContentAuditClient.recordAuthorApplyAudit(...)
+                      → POST novel-content:/internal/author-apply-audit-logs
 
              ★ 这条边是铁律 1 原文里【明确列出的那个例外】
                （AuthorApplyAuditRecorder：system 读 content，实现在 content），
                不是 M1 新开的口子。
 
-             ★★ 它在服务级上造出了一个环：novel-auth ⇄ novel-backend
-                （backend → auth 拿作者昵称，auth → backend 写审核流水）。
+             ★★ 它在服务级上造出了一个环：novel-auth ⇄ novel-content
+                （content → auth 拿作者昵称，auth → content 写审核流水）。
                 同进程 DI 时这只是两个 bean 互相注入，换成 HTTP 之后才成为环。
                 解药是大纲 §M3 的 MQ（审核事件异步化 → 环断掉）。
                 ★ M1 接受它，并记在 docs/M1-摘出auth.md 里，
@@ -189,10 +190,10 @@
         </dependency>
 
         <!--
-          ★★ loadbalancer 必须显式加：@FeignClient(name = "novel-backend")
+          ★★ loadbalancer 必须显式加：@FeignClient(name = "novel-content")
              里的 name 是服务名，要靠它去 Nacos 解析成实例地址。
              漏了的症状：启动失败，报 No Feign Client for loadBalancing defined
-             （同 novel-backend 那条注释）。
+             （同 novel-interaction 那条注释）。
         -->
         <dependency>
             <groupId>org.springframework.cloud</groupId>

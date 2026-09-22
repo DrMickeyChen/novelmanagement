@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * <b>供兄弟服务（当前只有 novel-backend）读取用户信息的内部接口。</b>
+ * <b>供兄弟服务（M1 起是 content，M2 起 interaction 也来）读取用户信息的内部接口。</b>
  *
  * <p>M1 新增。它存在的原因是「数据在 auth 这儿，而 content 要用」——
  * 改造前那是一句同进程的 {@code sysUserMapper.selectById()}，
@@ -44,7 +44,7 @@ import java.util.Map;
  * <p>因为这几个接口是<b>只读的</b>，而且返回的是「谁都能看到的信息」
  * （作者昵称、笔名 —— 首页匿名访客本来就看得见）。
  * 所以它们不需要知道调用者是谁，也就没有伪造身份的问题。
- * <p>对照 {@code /internal/author-apply-audit-logs}（在 novel-backend 那边）
+ * <p>对照 {@code /internal/author-apply-audit-logs}（在 novel-content 那边）
  * ——那是个<b>写</b>接口，流水要记操作人，所以那边必须把身份传过去。
  * <b>只读内部接口不需要身份，写内部接口需要</b>，这条区别是有意的。
  *

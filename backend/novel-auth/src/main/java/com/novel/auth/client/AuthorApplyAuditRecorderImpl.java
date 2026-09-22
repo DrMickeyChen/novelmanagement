@@ -24,7 +24,7 @@ import org.springframework.stereotype.Component;
  * <pre>
  *   接口  novel-auth  modules/system/service/...Recorder      ← 消费方，没动
  *   实现  novel-auth  auth/client/...RecorderImpl             ← ★ 搬过来了
- *   连接方式：一次 HTTP 调用（Feign → novel-backend 的 /internal/...）
+ *   连接方式：一次 HTTP 调用（Feign → novel-content 的 /internal/...）
  * </pre>
  *
  * <p><b>实现为什么必须搬到消费方这一侧：</b>换成 HTTP 之后，「实现」的内容
@@ -34,7 +34,7 @@ import org.springframework.stereotype.Component;
  * 留着就是上面那个死 bean。
  *
  * <p><b>★ 为什么它这么薄（三行）：</b>因为「记流水」这件事本身在
- * novel-backend 那边已经有 {@code AuditLogService} 了，这里只做两件事 ——
+ * novel-content 那边已经有 {@code AuditLogService} 了，这里只做两件事 ——
  * 把窄接口的三个参数装进 DTO、把结果解包。<b>薄是它的特性</b>：
  * 任何往这里加业务逻辑的改动都意味着「审核流程漏到传输层来了」。
  *
@@ -49,14 +49,14 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class AuthorApplyAuditRecorderImpl implements AuthorApplyAuditRecorder {
 
-    private final BackendAuditClient backendAuditClient;
+    private final ContentAuditClient contentAuditClient;
 
     @Override
     public void record(Long applyId, AuditAction action, String remark) {
         AuthorApplyAuditDTO dto = new AuthorApplyAuditDTO();
         /*
          * ★ 三个字段原样搬运，一个都不加工 —— 尤其【不要】在这里塞操作人。
-         *   流水的 operator_id 由 novel-backend 从 UserContext 取，
+         *   流水的 operator_id 由 novel-content 从 UserContext 取，
          *   而那个 UserContext 是靠 FeignIdentityConfig 把当前身份
          *   写成 X-User-* 头带过去的。见 AuthorApplyAuditDTO 的类注释：
          *   在请求体里加一个 operatorId 字段，会把「操作人不可伪造」
@@ -72,7 +72,7 @@ public class AuthorApplyAuditRecorderImpl implements AuthorApplyAuditRecorder {
          *   （铁律 3）。不解包的话，「对端说这条申请不存在」会变成一个
          *   null，然后被当成「记好了」继续往下走。
          */
-        InternalResults.unwrap(backendAuditClient.recordAuthorApplyAudit(dto),
+        InternalResults.unwrap(contentAuditClient.recordAuthorApplyAudit(dto),
                 "记录作者申请审核流水 applyId=" + applyId);
     }
 }

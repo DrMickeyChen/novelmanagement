@@ -123,9 +123,10 @@
 
         <!--
           ==================== 注册中心 ====================
-          让网关能注册进 Nacos，并且能【发现】novel-backend 的实例。
+          让网关能注册进 Nacos，并且能【发现】三个后端服务的实例
+          （novel-auth / novel-content / novel-interaction）。
 
-          ★ 路由写的是 lb://novel-backend —— lb = load balance，
+          ★ 路由写的是 lb://novel-content 这种形式 —— lb = load balance，
             这个 scheme 靠的就是服务发现。没有这个依赖，
             lb:// 解析不出任何地址。
         -->
@@ -150,7 +151,7 @@
               【不会】自动带上它（历史上是可选的）。
 
               不引的话启动是好的、路由也注册了，但请求打进来会报：
-                  Unable to find instance for novel-backend
+                  Unable to find instance for novel-content
               或者
                   No LoadBalancerClientFilter
               ——「找不到实例」听起来像 Nacos 没注册上，会让人去查

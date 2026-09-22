@@ -1,0 +1,69 @@
+package com.novel.modules.content.client;
+
+import com.novel.common.internal.CommentBriefDTO;
+import com.novel.common.result.Result;
+import org.springframework.cloud.openfeign.FeignClient;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+
+import java.util.Collection;
+import java.util.Map;
+
+/**
+ * <b>content 侧调 novel-interaction 的 Feign 客户端（M2）—— 只为了取评论正文。</b>
+ *
+ * <p><b>★★ 这是全项目唯一一个「反向」的客户端</b>（content → interaction），
+ * 而别的跨服务调用都是 interaction → content。
+ *
+ * <p>它为什么必须存在、以及它制造的那个<b>服务级的环</b>
+ * （{@code novel-content ⇄ novel-interaction}），完整的论证写在
+ * {@code InternalAuditLogController}（本服务）和
+ * {@code InternalCommentController}（interaction）的类注释里。
+ * 这里只留一句结论：
+ * <blockquote>
+ * 铁律 1 禁的是<b>代码依赖</b>，而这个接缝是铁律 1 原文里明确列出的例外
+ * （原话：「{@code CommentTextLookup}（content 读 interaction）」）。
+ * M2 把「同进程 DI」换成了「一次 HTTP 调用」，接缝没变、
+ * 服务级却成了环 —— <b>而这个环 MQ 不一定解得掉</b>，见上面那两个类注释。
+ * </blockquote>
+ *
+ * <p><b>★ 接口住在消费方（content）</b>，理由同 {@link AuthUserClient} ——
+ * 「发一次 HTTP 请求」这件事必须住在调用发生的地方。
+ * interaction 那边<b>根本不知道这个接口存在</b>，
+ * 它只是恰好有一个路径相同的 {@code @RestController}。
+ *
+ * <p><b>★★ 它只有一个方法，这是刻意的。</b>
+ * {@code AuthUserClient} 的注释里写过那条规矩：「内部接口一旦变成
+ * 万能查询，它就成了一个绕过服务边界的后门」。这边更极端 ——
+ * content 对评论表的<b>全部</b>需求就是这一个问题
+ * （「这几十条评论分别说了什么、挂在什么对象上」），
+ * 多一个方法都是在替 interaction 决定它的表该怎么被读。
+ *
+ * <p>★ {@code name = "novel-interaction"} 交给 Nacos + LoadBalancer 解析
+ * （{@code lb://}），所以 novel-content 的 pom 里必须有
+ * {@code spring-cloud-starter-loadbalancer} —— 缺了会在第一次调用时报
+ * {@code No Feign Client for loadBalancing defined}，
+ * 报错完全看不出和「少一个依赖」有关。
+ *
+ * @author MickeyChen
+ */
+@FeignClient(name = "novel-interaction", path = "/internal")
+public interface CommentBriefClient {
+
+    /**
+     * 批量取评论素材，返回 {@code {commentId: CommentBriefDTO}}。
+     *
+     * <p>★ 用 {@code POST} 而不是 {@code GET}：一页审核日志最多 100 条评论，
+     * id 列表塞进 query string 会撞上 URL 长度限制，而那个限制在不同服务器上
+     * 不一样（症状是「日志多了就报 400」，本地还复现不了）。
+     *
+     * <p><b>★ 返回的 {@code CommentBriefDTO} 里正文是【截断过的】</b>
+     * （截断规则在 interaction 的 {@code InternalCommentQueryService} 里，
+     * 只那一处）。<b>不要拿它当完整内容用</b> —— 它是给审核日志列表
+     * 渲染一行用的。
+     * <p><b>★ 查不到的 id 不会出现在 Map 里</b>，调用方按 {@code null} 处理
+     * （那就是「已删除」，审核日志里显示成「评论 #5（已删除）」）。
+     */
+    @PostMapping("/comment-briefs")
+    Result<Map<Long, CommentBriefDTO>> commentBriefs(@RequestBody Collection<Long> commentIds);
+}

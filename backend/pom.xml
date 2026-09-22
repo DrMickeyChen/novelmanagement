@@ -45,6 +45,20 @@
           所以上面那行「第一期那个单体」到 M1 就不准了 —— 它现在
           是「除了 auth 之外的那些模块」。
 
+      ★★ M2 把剩下的三个也拆开了（第二、第三个真正摘出去的服务）：
+          novel-content     应用 —— 8082，modules/content + modules/ai 搬过去
+          novel-interaction 应用 —— 8083，即【改名的】novel-backend，
+                                     它现在只剩 modules/interaction
+
+          ★ 「novel-backend」这个名字在 M2 之后就不存在了。
+            M0/M1 的文档里凡是写 novel-backend:8090 的地方，在 M2 之后
+            都读作 novel-interaction:8083 —— 那些文档记录的是当时的事实，
+            不回头改，由 docs/M2-摘出content.md 负责写对照。
+
+          ★ 至此四个进程的形状与大纲 §四目录结构一致：
+              网关 8080 → auth 8081 / content 8082 / interaction 8083
+            M3 摘 interaction、M4 摘 search 时，这里还会继续长。
+
       ★ 为什么不让网关直接依赖 novel-common：
           gateway 是 WebFlux 的，classpath 上只要出现 spring-webmvc 就
           启动失败。novel-common 为了编译需要 webmvc，所以它的 Spring
@@ -57,9 +71,15 @@
           改成在 GatewayApplication 上 @Import 那三个类，见那边的注释。
     -->
 
+    <!--
+      ★★ 顺序即构建顺序（Maven 的 reactor 会按依赖关系再排一次，这里只是可读性）。
+          novel-common 必须最先 —— 它从没被 install 进本地仓库，
+          只有聚合 POM 在 reactor 内解析得到它（见 CLAUDE.md 的「环境」段）。
+    -->
     <modules>
         <module>novel-common</module>
-        <module>novel-backend</module>
+        <module>novel-content</module>
+        <module>novel-interaction</module>
         <module>novel-gateway</module>
         <module>novel-auth</module>
     </modules>
@@ -159,8 +179,8 @@
               ============================================================
               ★ 这些版本号本来写死在原来的单模块 pom 的每个 <dependency> 里。
                 拆成多模块后【必须】上提到这里 —— 否则 novel-common 和
-                novel-backend 各写一份，迟早出现「common 用 3.5.9、
-                backend 用 3.5.8」这种两个版本同时进 classpath 的情况
+                各个服务模块各写一份，迟早出现「common 用 3.5.9、
+                某个服务用 3.5.8」这种两个版本同时进 classpath 的情况
                 （而且是静默的，只在某些类的行为上体现出来）。
             -->
 
@@ -205,7 +225,8 @@
 
             <!--
               自己的模块也用 dependencyManagement 管起来。
-              这样 novel-backend / novel-gateway 引用 novel-common 时
+              这样四个服务模块（auth / content / interaction / gateway）
+              引用 novel-common 时
               只写 groupId + artifactId，版本跟着父 pom 走，
               不会出现「common 升了版本但 backend 还写着旧的」。
             -->
@@ -261,13 +282,14 @@
                   一个 BOOT-INF/lib 和自定义的启动类，并且把原来的 jar
                   改名成 .original。
 
-                  novel-common 是个【库】，它要被 novel-backend 当依赖读。
+                  novel-common 是个【库】，它要被各个服务模块当依赖读。
                   打成 fat jar 之后，下游拿到的 class 文件被塞进了
                   BOOT-INF/classes/ 这个非标准位置，编译期直接找不到类
                   —— 报「找不到符号」，而源码明明就在那儿。
 
-                  所以：novel-backend 和 novel-gateway 各自在
-                  <build><plugins> 里声明一次来激活它，novel-common 不声明。
+                  所以：四个服务模块（auth / content / interaction /
+                  gateway）各自在 <build><plugins> 里声明一次来激活它，
+                  novel-common 不声明。
         -->
         <pluginManagement>
             <plugins>

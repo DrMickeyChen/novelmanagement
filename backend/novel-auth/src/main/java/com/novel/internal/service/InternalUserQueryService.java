@@ -68,7 +68,8 @@ public class InternalUserQueryService {
      * 取一个用户的昵称。查不到返回 {@code null}（用户可能已被注销）。
      *
      * <p>★ M1 之后这个 {@code null} 有了一层新含义：它还可能是
-     * 「novel-backend 那边传了个不存在的 id」。但两种情况的处理是一样的
+     * 「调用方（M1 时是 novel-backend，M2 起是 content / interaction）
+     * 传了个不存在的 id」。但两种情况的处理是一样的
      * （显示为空），所以不需要区分。
      */
     public String nicknameOf(Long userId) {
@@ -172,13 +173,13 @@ public class InternalUserQueryService {
     }
 
     /**
-     * 批量取作者申请的最少信息（id / 申请人 / 笔名），给 novel-backend 拼
+     * 批量取作者申请的最少信息（id / 申请人 / 笔名），给 novel-content 拼
      * 「墨白（张三）」这样的可读标题用。
      *
      * <p><b>★★ 为什么返回的是三列而不是一个拼好的标题：</b>
      * 标题要拼成「笔名（昵称）」，而昵称在<b>另一张表</b>里。
      * 如果在这里拼好，就等于把「标题长什么样」这个展示决策放进了 auth 服务
-     * —— 而它是个展示问题，属于调用方。更要紧的是：novel-backend 那边
+     * —— 而它是个展示问题，属于调用方。更要紧的是：novel-content 那边
      * 对同一条申请可能还有别的取昵称的需求，拼死在字符串里就取不出来了。
      * <p>所以这里只给<b>事实</b>（哪个申请、谁提的、笔名叫什么），
      * 怎么呈现由消费方决定。

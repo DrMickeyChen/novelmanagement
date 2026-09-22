@@ -1,0 +1,222 @@
+# ============================================================
+# 开发环境配置
+# ============================================================
+# ★★★ 这个文件里的 IP 要改成你自己的虚拟机 IP ★★★
+#
+# 怎么查：在虚拟机上执行
+#     hostname -I
+#   取输出的第一个 IP（形如 192.168.127.137）
+#
+# 本文件里【三处】192.168.127.137 都要换成它（就是下面这三个键的值，
+# 别去数行数 —— 上面第 8 行那句 "形如 192.168.127.137" 是举例，不用改）：
+#   ① spring.datasource.url
+#   ② spring.data.redis.host
+#   ③ spring.cloud.nacos.discovery.server-addr   ← 第二期 M0 新增
+#
+# ★ ③ 是唯一一个「值里带端口」的（192.168.127.137:8848），改 IP 时
+#   把端口一起留着 —— 8848 是 Nacos 的默认 HTTP 端口，不是变量。
+#
+# 为什么不用 localhost：后端跑在你的 Windows 上，
+# MySQL/Redis/Nacos 跑在虚拟机的 Docker 里，是两个不同的机器。
+# localhost 指的是 Windows 本机，那里没有 MySQL。
+# ============================================================
+
+spring:
+
+  # ---------------- MySQL ----------------
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://192.168.127.137:3306/novel?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&allowMultiQueries=true
+    username: root
+    password: root123456
+
+    # HikariCP 连接池（Spring Boot 默认，不用额外引依赖）
+    hikari:
+      pool-name: NovelHikariPool
+      minimum-idle: 5              # 最少保持 5 个空闲连接
+      maximum-pool-size: 20        # 最多 20 个连接
+      idle-timeout: 600000         # 空闲连接超过 10 分钟回收
+      max-lifetime: 1800000        # ★ 连接最长活 30 分钟，必须小于 MySQL 的 wait_timeout
+      connection-timeout: 10000    # 拿不到连接时最多等 10 秒就报错，别无限等
+      connection-test-query: SELECT 1
+
+  # ---------------- Redis ----------------
+  # ★ Spring Boot 3 里路径是 spring.data.redis，不是 spring.redis
+  #   （老教程里写的 spring.redis 在 Boot 3 下会被静默忽略，连接直接走默认的 localhost）
+  data:
+    redis:
+      host: 192.168.127.137
+      port: 6379
+      password: redis123456
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 16           # 最多 16 个连接
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+
+  # ---------------- Nacos 注册中心（第二期 M0） ----------------
+  #
+  # 加上这一段，本服务就在 Nacos 上注册成了一个实例，
+  # 网关的 lb://novel-interaction 才找得到它。
+  #
+  # ★ 这里【只有服务发现】，没有 Nacos 配置中心。
+  #   第二期 M0 不接 Nacos Config —— 见 novel-gateway/application.yml 顶部
+  #   那段「路由为什么写在本地」。
+  cloud:
+    nacos:
+      discovery:
+        # 虚拟机的 Docker，不是 127.0.0.1（同上面 MySQL / Redis 的理由）
+        server-addr: 192.168.127.137:8848
+
+        # ★★ username / password 必须写在 discovery 下面，这两行不能省。
+        #
+        #    Nacos 客户端【注册】和【拉配置】是两条独立的鉴权路径，
+        #    分别读 spring.cloud.nacos.discovery.* 和 spring.cloud.nacos.*。
+        #    容器里的 Nacos 开了鉴权（NACOS_AUTH_ENABLE=true），
+        #    只配了后者的话症状是「配置能拉、服务注册不上」——
+        #    报 403，或者客户端直接假死在那儿不动。
+        #    ★ 而且报错信息里【完全看不到】配置项的事，
+        #      会让人往网络、往 Nacos 服务端查，方向全错。
+        #
+        #    nacos/nacos 是 Nacos 自带的固定演示账号，和上面 MySQL 的
+        #    root123456 同一性质 —— 本地搭环境用的固定值，不含真实凭据。
+        #    生产环境请改掉（docs/部署.md）。
+        username: nacos
+        password: nacos
+
+        # ★★ 这一行在 Windows 上【必须写】，M2 之后是【四个服务】都要写。
+        #
+        #    Nacos 客户端默认取「第一块非 loopback 网卡」的地址。
+        #    装了 VMware / VirtualBox / Hyper-V / WSL 之后，那个「第一块」
+        #    很可能是 192.168.56.1 这类虚拟网卡地址 —— 而本服务根本不在那儿。
+        #
+        #    症状极有迷惑性：Nacos 控制台上服务列表、实例数一切正常，
+        #    但 http://localhost:8080/api/novels 返回 503，
+        #    日志是「Unable to find instance for novel-interaction」或连接超时。
+        #    看起来【完全像是网关的路由配错了】，会让人去翻网关的 yml。
+        #
+        #    网关那边（novel-gateway/application.yml）有同样的一行。
+        ip: 127.0.0.1
+
+    # ---------------- Feign 超时（M1 新增） ----------------
+    #
+    # ★★ 不加这两行的后果，比「慢」严重得多：
+    #    Feign 默认【没有读超时】。对端 novel-auth 只要不是干脆地拒绝连接，
+    #    而是「连上了但不回」（进程假死、GC 卡住、网络半通），
+    #    这个请求就会一直挂在那儿，把 Tomcat 的工作线程一起占住。
+    #    占满之后本服务的所有接口都开始排队 ——
+    #    症状是「整个站点越来越慢直到完全打不开」，
+    #    而日志里可能干干净净，因为那些线程都还「在执行中」。
+    #
+    # ★ 2 秒 / 5 秒是【开发期】的取值，给了足够的余量：
+    #    本机到本机的调用正常在 10ms 以内，2 秒没连上就是真的有问题。
+    #    生产（跨主机、跨机房）应该放宽到 1s / 3s 左右，
+    #    并结合 M5 的熔断一起调 —— 见 docs/M1-摘出auth.md 的治理项。
+    #
+    # ★ 宁可快速失败也不要挂住：本服务现在的降级策略是「抛 500」
+    #   （见 ContentUserLookup 的类注释），这个策略只有在
+    #   「失败得够快」时才成立 —— 挂 60 秒再返回 500，用户早就走了。
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 5000
+
+# ---------------- 文件上传路径 ----------------
+# 作品封面、用户头像存这里。开发期先存本地磁盘，
+# 第二期接入对象存储（MinIO / OSS）时只改这一个配置项
+novel:
+  upload:
+    path: ${user.home}/novel-uploads/
+    url-prefix: /uploads/
+
+  # ---------------- 内部令牌（M1 新增） ----------------
+  #
+  # ★★ 这是【服务间调用】和【网关到下游】的共享密钥，两处用的是同一个值。
+  #
+  #    它防的是：有人绕过网关，直接 curl :8083 / :8082 / :8081 并自己伪造
+  #    X-User-Id / X-Roles 头，从而变成管理员。
+  #    下游的 HeaderAuthenticationFilter 看到没有这个令牌（或值不对），
+  #    就把那些身份头【整份忽略】、按匿名处理，
+  #    /internal/** 更是直接 403。
+  #
+  # ★ 所以它的值必须在【五个地方】完全一致：
+  #    网关 application.yml、novel-auth、novel-content、novel-interaction、
+  #    以及调用方手工 curl 时带的头。（M1 时是四个，M2 摘出 content 之后多一个。）
+  #    不一致的症状是「全站 401」或「/internal/** 403」——
+  #    看起来像网关没转发、像服务没注册，唯独不像密钥。
+  #    ★ 排错时先 grep 一下：grep -rn "internal" backend/*/src/main/resources/application*.yml
+  #
+  # ★★ 下面这个值是【开发专用】的明文常量（和 jwt.secret 同一性质）：
+  #    它只为了让 clone 下来不配任何环境变量就能跑，不含任何真实凭据。
+  #    生产环境必须靠环境变量 INTERNAL_TOKEN 覆盖它（见 application.yml）——
+  #    那边【故意不写默认值】，不配就启动失败，而不是悄悄用一个公开的弱密钥。
+  #
+  # ★ 剩余边界（M5 治理项）：共享密钥只能证明「调用方知道这个字符串」，
+  #   证明不了「调用方是谁」。更彻底的做法是内网隔离 + mTLS。
+  #   生产上另外还有一层：这两个端口【不对外】，只暴露网关。
+  internal:
+    token: ${INTERNAL_TOKEN:novel-dev-only-internal-token-please-change-in-production-2026}
+
+  # ---------------- JWT ----------------
+  jwt:
+    # 开发环境的默认密钥。这样 clone 下来不配任何环境变量就能直接跑。
+    #
+    # ★ 两点必须知道：
+    #   1. 长度必须 ≥ 32 字节。jjwt 用 HMAC-SHA256 签名，密钥短于 256 bit
+    #      会直接抛 WeakKeyException（HMAC 的密钥越短越容易被暴力破解，
+    #      所以它主动拒绝）。这一串是 54 个字符，绰绰有余。
+    #   2. 这个值【只用于本地开发】，明文写在提交到 git 的文件里。
+    #      生产环境靠环境变量 JWT_SECRET 覆盖它（见 application.yml）。
+    secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
+
+# ---------------- 接口文档显示开关 ----------------
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+# ---------------- 日志：开发期看详细 SQL ----------------
+logging:
+  level:
+    com.novel: debug
+    com.novel.modules: debug
+    org.springframework.jdbc: debug
+
+  # ---------------- 同时写一份文件到 backend/logs/ ----------------
+  #
+  # ★ 为什么写文件：开发期后端是通过
+  #     Start-Process java -jar target/novel-interaction.jar -WorkingDirectory backend
+  #   起的（隐藏窗口），控制台看不到；而且排障时经常需要回头翻
+  #   「刚才那次请求到底报了什么」，翻不了滚动的窗口就抓瞎。
+  #
+  # ★ 路径为什么可以写成相对路径：启动命令里 jar 本身就写成
+  #   `target/novel-interaction.jar`（相对路径），所以工作目录必然是
+  #   backend/ 这一个；`logs/` 也就必然落到 backend/logs/。
+  #   用 `${user.dir}` 或绝对路径反而不必 —— 那会让这份配置换台机器就失效。
+  #
+  # ★ 放在 dev 而不是 application.yml：生产是跑在容器里的，
+  #   日志应该走 stdout 交给采集器，落文件反而会在容器里堆着。
+  #
+  # ★ .gitignore 里已有 `logs/` 和 `*.log`，不会误提交。
+  # ★ M2：文件名跟着服务名走。M2 之前它叫 novel-backend.log ——
+  #   改名时【必须同步改这里】，否则四个进程的日志会有一份写进旧名字的文件，
+  #   而「日志在哪」是排障的第一步（docs/部署.md、docs/环境配置.md 都指着它）。
+  file:
+    name: logs/novel-interaction.log
+
+  # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+  # ★ 一定要封顶：这个后端常年开着不重启，没有滚动策略的话
+  #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7

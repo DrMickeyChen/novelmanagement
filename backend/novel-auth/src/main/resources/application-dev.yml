@@ -13,17 +13,17 @@
 #   ② spring.data.redis.host
 #   ③ spring.cloud.nacos.discovery.server-addr
 #
-# ★ 这三个值和 novel-backend 的 application-dev.yml 里【完全一样】：
-#   两个服务连的是同一台虚拟机的同一套中间件、同一个 novel 库
-#   （M1 的决定：先共用一个库，不拆库）。改 IP 时两个文件都要改。
+# ★ 这三个值和 novel-content / novel-interaction 的 application-dev.yml 里【完全一样】：
+#   三个服务连的是同一台虚拟机的同一套中间件、同一个 novel 库
+#   （M1 的决定：先共用一个库，不拆库）。改 IP 时三个文件都要改。
 # ============================================================
 
 spring:
 
   # ---------------- MySQL ----------------
-  # ★ 和 novel-backend 指向【同一个 novel 库】——
+  # ★ 和 novel-content / novel-interaction 指向【同一个 novel 库】——
   #   M1 不拆库。所以 sys_user / sys_role / author_apply 这些表
-  #   由本服务独占读写，novel-backend 只能通过 /internal/** 接口来问，
+  #   由本服务独占读写，novel-content / novel-interaction 只能通过 /internal/** 接口来问，
   #   不能再直连这些表（那一层由 M1 的 Feign 接缝保证）。
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -32,10 +32,10 @@ spring:
     password: root123456
 
     hikari:
-      # ★★ pool-name 必须和 novel-backend 不同！
-      #    两边都叫 NovelHikariPool 的话，看 Hikari 的调试日志、看线程 dump
-      #    时分不清是哪个服务在占连接 —— 而这两个服务连的是同一个 MySQL，
-      #    连接数是要合起来算的（各自 maximum-pool-size 20，加起来 40）。
+      # ★★ pool-name 必须和 novel-content / novel-interaction 都不同！
+      #    三个都叫 NovelHikariPool 的话，看 Hikari 的调试日志、看线程 dump
+      #    时分不清是哪个服务在占连接 —— 而这三个服务连的是同一个 MySQL，
+      #    连接数是要合起来算的（各自 maximum-pool-size 20，加起来 60）。
       pool-name: NovelAuthHikariPool
       minimum-idle: 5
       maximum-pool-size: 20
@@ -48,11 +48,11 @@ spring:
   # ★ Spring Boot 3 里路径是 spring.data.redis，不是 spring.redis
   #   （老教程写的 spring.redis 会被静默忽略，连接直接走默认的 localhost）
   #
-  # ★★ M1 起 Redis 里的内容是【三个服务共享】的：
+  # ★★ M1 起 Redis 里的内容是【四个进程共享】的：
   #     novel-auth   写登录态（novel:auth:token:{userId}:{jti}）
   #     novel-gateway 每请求读一次登录态 —— 它靠这个判断「token 还有效吗」
-  #     novel-backend 不直接读（它的身份来自网关的请求头）
-  #    三边必须用到【同一个 database】，否则网关查不到 auth 写的 key，
+  #     novel-content / novel-interaction 不读登录态（它们的身份来自网关的请求头）
+  #    四边必须用到【同一个 database】，否则网关查不到 auth 写的 key，
   #    症状是全站 401 —— 看起来像网关坏了。
   data:
     redis:
@@ -77,7 +77,7 @@ spring:
         # ★★ username / password 必须写在 discovery 下面，这两行不能省。
         #    Nacos 客户端【注册】和【拉配置】是两条独立的鉴权路径，
         #    只配了后者的话症状是「配置能拉、服务注册不上」—— 报 403 或客户端假死，
-        #    而且报错信息里完全看不到配置项的事（同 novel-backend 的详细注释）。
+        #    而且报错信息里完全看不到配置项的事（同 novel-interaction 的详细注释）。
         username: nacos
         password: nacos
 
@@ -90,12 +90,12 @@ spring:
         ip: 127.0.0.1
 
     # ---------------- Feign 超时（M1 新增） ----------------
-    # ★ 和 novel-backend 那份同样的理由（读超时缺失会让请求永久挂住、
-    #   把 Tomcat 线程占满），不重复 —— 见 novel-backend/application-dev.yml。
+    # ★ 和 novel-content / novel-interaction 那两份同样的理由（读超时缺失会让请求永久挂住、
+    #   把 Tomcat 线程占满），不重复 —— 见 novel-interaction/application-dev.yml。
     #
-    # ★ 本服务的读超时比 novel-backend 那一份【更短】（3000ms，那边是 5000ms），
+    # ★ 本服务的读超时比 novel-content 那一份【更短】（3000ms，那边是 5000ms），
     #   因为这条边是【同步等待】的：
-    #       管理员点「审核」→ 本服务 → 等 novel-backend 写审核流水 → 才返回
+    #       管理员点「审核」→ 本服务 → 等 novel-content 写审核流水 → 才返回
     #   用户是盯着这个按钮等的，不能在写流水这一步卡 5 秒。
     #   而写一条流水正常只要几毫秒，3 秒没回就是真出事了。
     openfeign:
@@ -106,15 +106,15 @@ spring:
             read-timeout: 3000
 
 # ---------------- 文件上传路径 ----------------
-# ★★ 这个值【必须和 novel-backend 的完全一样】。
+# ★★ 这个值【必须和 novel-content / novel-interaction 的完全一样】。
 #
 #    为什么：头像是【本服务】写的（POST /api/reader/profile/avatar），
-#    但 /uploads/** 是【novel-backend】在服（网关把那条路由指给了它）。
-#    两个服务读同一个目录，头像才显示得出来。
+#    但 /uploads/** 是【novel-interaction】在服（网关把那条路由指给了它）。
+#    三个服务读同一个目录，头像才显示得出来。
 #
-#    ★ 开发期两者跑在同一台 Windows 上，所以靠「同一条绝对路径」成立。
-#      生产上两个容器各有自己的文件系统 —— 那时头像会被写进 auth 的盘、
-#      由 backend 去找，结果 404。这是 M1 明确接受的债，
+#    ★ 开发期三者跑在同一台 Windows 上，所以靠「同一条绝对路径」成立。
+#      生产上三个容器各有自己的文件系统 —— 那时头像会被写进 auth 的盘、
+#      由 interaction 去找，结果 404。这是 M1 明确接受的债，
 #      解法在 M5（接 MinIO/OSS），见 docs/M1-摘出auth.md。
 novel:
   upload:
@@ -123,18 +123,18 @@ novel:
 
   # ---------------- JWT ----------------
   jwt:
-    # 开发环境的默认密钥（和 novel-backend、novel-gateway 三处同款）。
+    # 开发环境的默认密钥（和 novel-content、novel-interaction、novel-gateway 四处同款）。
     # ★ 长度必须 ≥ 32 字节，否则 JwtUtil 构造时直接抛异常并说明原因。
     # ★ 这个值只用于本地开发，明文写在提交到 git 的文件里；生产靠环境变量覆盖。
     #
-    # ★★ M1 起这个密钥有【三个】使用者，而它们的分工是：
+    # ★★ M2 起这个密钥有【四个】使用者，而它们的分工是：
     #      novel-auth     【签】token（登录时）—— 所以它需要 secret
     #      novel-gateway  【验】token（每个请求）—— 所以它也需要 secret
-    #      novel-backend  两边都不用（它的身份来自请求头）
-    #    novel-backend 那份配置是 M1 之后【多余的】——
+    #      novel-content / novel-interaction  两边都不用（它们的身份来自请求头）
+    #    content / interaction 那两份配置是 M1 之后【多余的】——
     #    留着是因为 JwtUtil 在 novel-common 里带 @Component，
     #    只要它在 classpath 上就会被实例化，而它的构造器要求这个配置项。
-    #    ★ 三处值不一致的症状很有迷惑性：登录成功、拿得到 token，
+    #    ★ 四处值不一致的症状很有迷惑性：登录成功、拿得到 token，
     #      但下一个请求就 401 —— 看起来像「登录态没存住」，
     #      于是会去查 Redis、查 cookie，唯独不像密钥。
     #      排错时先 grep：
@@ -143,9 +143,9 @@ novel:
 
   # ---------------- 内部令牌（M1 新增） ----------------
   #
-  # ★★ 值必须和 novel-backend / novel-gateway 的【完全一致】。
+  # ★★ 值必须和 novel-content / novel-interaction / novel-gateway 的【完全一致】。
   #    完整说明（它防什么、为什么不能用默认值、剩余边界是什么）
-  #    写在 novel-backend/application-dev.yml 的同一个键上，这里不重复。
+  #    写在 novel-interaction/application-dev.yml 的同一个键上，这里不重复。
   #
   # ★ 本服务的用法有两处，方向相反：
   #     ① 【进】HeaderAuthenticationFilter 拿它验网关/兄弟服务打进来的请求
@@ -170,11 +170,11 @@ logging:
     com.novel.modules: debug
     org.springframework.jdbc: debug
 
-  # ★★ 文件名必须是 novel-auth.log，【不能】也叫 novel-backend.log。
+  # ★★ 文件名必须是 novel-auth.log，【不能】也叫 novel-interaction.log。
   #
-  #    两个服务的工作目录都是 backend/（见 CLAUDE.md 里那条：
+  #    四个服务的工作目录都是 backend/（见 CLAUDE.md 里那条：
   #    -WorkingDirectory 必须是 backend/，因为 logs/ 是相对路径）。
-  #    如果两边都写 logs/novel-backend.log，就是【两个进程轮流写同一个文件】——
+  #    如果两边都写 logs/novel-interaction.log，就是【两个进程轮流写同一个文件】——
   #    Windows 上文件被占用时第二个进程会写不进去，而且日志会互相穿插，
   #    排错时看到的「刚才那次请求」根本不知道是哪个服务打的。
   file:

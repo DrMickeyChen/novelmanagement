@@ -1,0 +1,252 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-content</artifactId>
+    <name>novel-content</name>
+    <description>小说管理系统 · 内容域（小说 / 章节 / 分类 / 审核 / 大纲 / AI 助手），第二期 M2 起独立成服务 :8082</description>
+
+    <!--
+      ============================================================
+      这个模块的来历：M2 从 novel-backend 里摘出来的第二个服务
+      ============================================================
+      M0     ：backend/ 拆成父 POM + novel-common + novel-backend + novel-gateway，
+               业务代码一行没拆，只是物理分层。
+      M1     ：modules/system 摘走 → novel-auth:8081（第一个真正摘出去的服务）。
+      ★ M2   ：modules/content + modules/ai 摘走 → 这里，novel-content:8082。
+               同一步里 novel-backend 也改了名（→ novel-interaction:8083），
+               因为它剩下的东西已经不叫「backend」了。
+
+      ★★ 为什么 AI（modules/ai）跟着 content 走、而不是留在 interaction：
+          这是大纲写死的，共三处互相印证 ——
+            §三 约束 4（服务边界表）
+            §11.1（服务职责表）
+            §四（目录结构：content 一栏里就写着 ai）
+          三条都指向同一个答案，不是取舍问题。
+          业务上也说得通：AI 写作助手生成的是【章节正文】，与内容同域。
+
+      ★★ 与大纲 §四 目录结构的【已知偏差】：
+          大纲写的是 `.../content/modules/{novel,chapter,category,audit}/`，
+          我们保留 `modules/content/{controller,service,mapper,entity,dto,vo}/`。
+          理由与 M1 相同 —— docs/P2-内容主干.md:56 已经写过
+          「一个包对应将来要拆出去的一个服务」，保留包名就是兑现那条约定。
+          ★ 这一条在 docs/M2-摘出content.md 里有记录，别以为是漏改。
+
+      ★ 包名（com.novel.modules.content.* / com.novel.modules.ai.*）一字不改，
+        这不是偷懒，是两个具体的好处：
+          ① `mybatis-plus.type-aliases-package: com.novel.modules.**.entity`
+             在三个服务的 application.yml 里逐字不动就继续生效
+             （各自的 classpath 只装着自己的模块 —— 和 @MapperScan 同一个道理）；
+          ② `git mv` 是纯物理搬家，git 把每个文件记成 R 而不是 A 加 D
+             —— 这是 M2 「结构回归」的判定样本。
+             （★ 校验命令是 git log 带 stat 开关，写在这里会撞上
+               「XML 注释里不能出现连续两个减号」这条语法，故从略；
+               命令原文见 docs/M2-摘出content.md 的验证章节。）
+    -->
+
+    <dependencies>
+
+        <!-- 第一期的公共件（Result / 异常 / JWT / 上传 / 技术配置 / 共享枚举）。
+             版本由父 pom 的 dependencyManagement 给 -->
+        <dependency>
+            <groupId>com.novel</groupId>
+            <artifactId>novel-common</artifactId>
+        </dependency>
+
+        <!-- ==================== Web ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- 参数校验：@NotNull / @Size / @Email 这些注解靠它。
+             content 的 DTO（NovelCreateDTO / ChapterSaveDTO / ...）全都要用 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 注册中心 ====================
+          ★ 只加这一个依赖，本服务就变成 Nacos 上的一个实例，
+            网关的 lb://novel-content 才找得到它。
+
+          ★ 配置在 application-dev.yml 的 spring.cloud.nacos.discovery 下。
+
+          ★ 为什么【不加】spring-cloud-starter-loadbalancer 两次：
+            本服务既是【提供方】（被网关和 interaction 调用），
+            也是【消费方】（要调 auth 取昵称、调 interaction 取评论正文）
+            —— 所以 LB 是【要】的，见下面「服务间调用」那一段。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!-- ==================== 持久层 ==================== -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+
+        <!--
+          ★ 从 3.5.9 开始 MyBatis-Plus 把 jsqlparser 拆成了独立依赖，
+            分页插件 PaginationInnerInterceptor 内部要用它解析 SQL 拼 LIMIT。
+            漏了的症状：第一次调分页接口就报
+                NoClassDefFoundError: net/sf/jsqlparser/statement/select/Select
+            报错信息完全看不出和分页插件有关。三个服务的 pom 都要有这一条。
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== 缓存（★ 决定 A：必须是【显式】依赖） ==================== -->
+        <!--
+          ★★ 这一条看着像「别的服务要 Redis，顺手抄过来」，其实【不写就起不来】。
+
+              novel-common 的 com.novel.common.config.RedisConfig 是个
+              @Configuration，里面唯一那个 @Bean 是
+                  redisTemplate(RedisConnectionFactory connectionFactory)
+              而三个服务的启动类都在 com.novel 包下，默认组件扫描【一定】扫得到它。
+
+              少了 spring-boot-starter-data-redis，Spring Boot 就不会自动配置
+              RedisConnectionFactory，于是那个 @Bean 找不到参数 →
+              ★ 启动直接失败，而且报错指向「RedisConfig 缺一个 bean」，
+                【不指向】「你少加了一个依赖」—— 这是最费时间的那类错误。
+
+          ★ 反过来说：本服务【本来】就真的需要 Redis ——
+            NovelViewCounter 用 StringRedisTemplate 做阅读量脏集
+            （NOVEL_VIEWS + NOVEL_VIEW_DIRTY），按 SchedulingConfig 定时回写。
+            所以这不是「为了迁就 common 而加的依赖」，它本来就在。
+
+          ★ 同理 novel-interaction 也保留着这套配置（它自己不直接读写 Redis，
+            但 RedisConfig 一样会被扫到）。那条不在 M2 的改动清单里
+            （它是【保留】不是新增），但写在这里 —— 否则将来有人
+            「清理没用的 Redis 依赖」时会在 interaction 上踩同一个坑。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Lettuce 连接池：不加它 Redis 每次操作都新建连接 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- ==================== 接口文档 ==================== -->
+        <!--
+          ★ 接口文档直连 http://localhost:8082/doc.html，它【不走网关】——
+            原因见 docs/M0-骨架搭建.md「为什么文档不进网关」。
+            M2 之后有三个文档入口：8081 / 8082 / 8083。
+        -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ==================== 工具 ==================== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ==================== 认证授权 ==================== -->
+        <!--
+          ★★ spring-boot-starter-security 一旦引入就【自动拦截所有接口】，
+             放行规则写在 com.novel.content.config.ContentSecurityConfig。
+             这两者必须同时存在，单独加依赖 = 全站 401。
+
+          ★★ M2 之后本服务【不验 JWT】—— 验证已经全部收敛在网关（M1 决策）。
+             SecurityConfig 里只保留「读身份头 + 按 URL 前缀鉴权」那一段，
+             验签的代码在网关，不在任何一个下游服务。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          ★ 本服务【不声明 jjwt-api】（novel-interaction 声明了，这里刻意没有）：
+            它不签发也不解析任何 token。★ 这不代表 jar 里没有 jjwt ——
+            novel-common 用非 optional 的 compile/runtime 引了 jjwt 三件套
+            （因为 JwtUtil 在那边），会传递进来。所以「content 不碰 JWT」
+            要看【代码里没有 JwtUtil 的用法】，不能拿 jar 里有没有 jjwt 当证据。
+        -->
+
+        <!-- ==================== 服务间调用（M2） ==================== -->
+
+        <!--
+          ★★ OpenFeign：M2 之后本服务有【两类】出站调用：
+              ① 拿作者昵称   → novel-auth（AuthUserClient，M1 就有）
+              ② 拿评论正文   → novel-interaction（CommentTextLookup 的实现）
+
+          ★ ② 就是铁律 1 里那条「受认可的例外」接缝在 M2 之后的样子：
+            CommentTextLookup 这个【接口】住在消费方（本服务），
+            因为它描述的是「content 需要 interaction 提供什么」；
+            实现变成了「发一次 HTTP 请求」。提供方（interaction）
+            只暴露 URL，不暴露类型 —— 否则那边就是一个
+            能编译、能被扫描、永远不会被调用的死 bean。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!--
+          ★★ loadbalancer 必须【显式】加，它不是 openfeign 的传递依赖。
+             漏了的症状：启动就失败，报
+               「No Feign Client for loadBalancing defined.
+                 Did you forget to include spring-cloud-starter-loadbalancer?」
+             —— 这句话本身把答案写出来了，所以还算好查。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- ==================== 测试 ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <!--
+          ★ finalName 决定 jar 名：启动命令是
+              java -jar novel-content/target/novel-content.jar
+            日志文件名、docs/部署.md 里的产物清单都要跟它一致。
+            漏改的后果不是报错，是「打包出来的 jar 名字和文档写的对不上」——
+            这种事只有在照着文档从零跑一遍时才会暴露。
+        -->
+        <finalName>novel-content</finalName>
+        <plugins>
+            <!-- ★ 在父 pom 的 pluginManagement 里有配置，这里声明一次来激活它 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

@@ -22,18 +22,20 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 /**
  * <b>novel-auth 的 Spring Security 配置（M1 新建）</b>—— 认证服务的「白名单 + URL 闸」。
  *
- * <p><b>★★ 为什么它和 novel-backend 的 {@code SecurityConfig} 是两个类，
+ * <p><b>★★ 为什么它和 novel-content / novel-interaction 的
+ * {@code ContentSecurityConfig} / {@code InteractionSecurityConfig} 是三个类，
  * 而不是复制一份改改：</b>
- * 两个服务的白名单<b>本来就不同</b>：auth 这边有 {@code /api/auth/login}
- * （登录当然要能匿名调），backend 那边没有这个接口，留着那条就是一条
- * 永不命中的死规则。反过来 backend 那边有 {@code /api/novels/**} 的匿名
+ * 三个服务的白名单<b>本来就不同</b>：auth 这边有 {@code /api/auth/login}
+ * （登录当然要能匿名调），content / interaction 那边没有这个接口，留着那条就是一条
+ * 永不命中的死规则。反过来 content 那边有 {@code /api/novels/**} 的匿名
  * GET 限定，auth 这边一条作品接口都没有。
- * <p>如果强行合成一份放 {@code novel-common}，就成了「两个服务共用一份
- * 取并集的白名单」—— <b>那等于把 auth 的公开接口在 backend 上也开一遍</b>。
+ * <p>如果强行合成一份放 {@code novel-common}，就成了「三个服务共用一份
+ * 取并集的白名单」—— <b>那等于把 auth 的公开接口在 content / interaction 上也开一遍</b>。
  * 每个服务的最小权限面必须由它自己声明。这是 M0 留下 {@code SecurityConfig}
  * 不搬进 common 的原因，M1 兑现了它。
- * <p>★ 两个类的<b>类名和包名都不同</b>（{@code com.novel.config.SecurityConfig}
- * 与 {@code com.novel.auth.config.AuthSecurityConfig}），
+ * <p>★ 三个类的<b>类名和包名都不同</b>（{@code com.novel.auth.config.AuthSecurityConfig}、
+ * {@code com.novel.content.config.ContentSecurityConfig} 与
+ * {@code com.novel.interaction.config.InteractionSecurityConfig}），
  * 避免出现「同一个 FQN 有两个类、谁赢看 classpath 顺序」这种查不出来的鬼故事。
  *
  * <p><b>★ 这个类管的两件事（和 backend 那边完全一致，别混）：</b>
@@ -97,7 +99,9 @@ public class AuthSecurityConfig {
              *
              * ★ 开发期这个服务也带着 WebMvcConfig（在 novel-common 里），
              *   所以它同样能直接服 /uploads/**。生产的正式入口是网关
-             *   （那条路由指给 novel-backend），这里留着是为了
+             *   （M2 之后那条路由指给 novel-interaction —— 注意写封面的是
+             *   content、写头像的是本服务，三者共用同一个绝对路径目录，
+             *   所以谁来"服"这个 URL 都可以），这里留着是为了
              *   「直连 :8081 排错时头像也能显示」。
              */
             "/uploads/**",
@@ -106,7 +110,9 @@ public class AuthSecurityConfig {
     /**
      * ★★ <b>内部接口为什么必须 {@code permitAll()}，这是整个 M1 最反直觉的一处。</b>
      *
-     * <p>{@code /internal/**} 是给兄弟服务（novel-backend）调的。
+     * <p>{@code /internal/**} 是给兄弟服务调的 —— M2 之后有<b>两个</b>：
+     * {@code novel-content}（取作者昵称）和 {@code novel-interaction}
+     * （取评论者昵称）。M1 时只有一个（那时叫 novel-backend）。
      * 它<b>不能</b>要求登录态 —— 因为匿名首页的书列表就要调它
      * （见 {@code InternalUserController} 的类注释）。设成
      * {@code hasRole("ADMIN")} 或落进 {@code anyRequest().authenticated()}

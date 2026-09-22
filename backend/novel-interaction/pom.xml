@@ -1,0 +1,240 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-interaction</artifactId>
+    <name>novel-interaction</name>
+    <description>小说管理系统 · 互动域（评论 / 书评 / 书架 / 历史），第二期 M2 起退到 8083</description>
+
+    <!--
+      ============================================================
+      这个模块的来历：novel-backend 改了名
+      ============================================================
+      M0     ：它是第一期那个单体（端口从 8080 让给网关，自己退到 8090）
+      M1     ：modules/system 摘走 → novel-auth:8081，它还剩 content + interaction + ai
+      ★ M2   ：modules/{content,ai} 摘走 → novel-content:8082，它【只剩 interaction】，
+               于是改名为 novel-interaction，端口 8090 → 8083。
+
+      ★★ 「novel-backend」这个名字到此为止就是一个【假话】了 ——
+          它既不是 backend（内容域已经搬走），也不是单体。
+          与其留着名字再在文档里解释「它其实只剩互动」，不如现在改掉：
+          这次改动是纯 rename（git 显示 R 不是 A+D），成本近乎为零，
+          而拖到 M3 就要同时做「改名 + 建新服务 + 上 MQ」三件事。
+
+      ★ 改名的连带面（漏一个就会出现「服务在跑但网关找不到」）：
+          spring.application.name  → Nacos 上的服务名
+          server.port              → 8083（大纲 §四目录结构定的）
+          finalName                → jar 名
+          网关的 lb://novel-interaction
+          novel-auth 的 ContentAuditClient（它按服务名找对端）
+          package.json 的 dev:interaction、日志文件名、README/部署文档
+
+      ★ 与大纲 §四 目录结构的【已知偏差】：大纲写的是
+        `.../interaction/modules/{comment,shelf,history}/`，
+        我们保留 `modules/interaction/{controller,service,mapper,...}/`。
+        理由与 M1 相同 —— docs/P2-内容主干.md:56 已经写过
+        「一个包对应将来要拆出去的一个服务」，保留包名就是兑现那条约定。
+        这一条在 docs/M2 里有记录，别以为是漏改。
+    -->
+
+    <dependencies>
+
+        <!-- 第一期搬过来的那 23 个类。版本由父 pom 的 dependencyManagement 给 -->
+        <dependency>
+            <groupId>com.novel</groupId>
+            <artifactId>novel-common</artifactId>
+        </dependency>
+
+        <!-- ==================== Web ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- 参数校验：@NotNull / @Size / @Email 这些注解靠它 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 注册中心（M0 新增） ====================
+          ★ 只加这一个依赖，本服务就变成了 Nacos 上的一个服务实例，
+            网关的 lb://novel-interaction 才找得到它。
+
+          ★ 配置在 application-dev.yml 的 spring.cloud.nacos.discovery 下。
+            那里有一条 ★★ 注释解释「为什么 username/password 必须写在
+            discovery 下面，而不是只写 spring.cloud.nacos 那一层」。
+
+          ★ 为什么【不加】spring-cloud-starter-loadbalancer：
+            单体是服务【提供方】，不是消费方 —— 它不需要去发现别人。
+            LB 是网关（消费方）的事，加在这里纯属多一个变量。
+        -->
+        <!-- ★ artifactId 里必须带 starter（同 novel-gateway 那条注释） -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!-- ==================== 持久层 ==================== -->
+        <!--
+          ★ Spring Boot 3 要用 mybatis-plus-spring-boot3-starter
+            用老的 mybatis-plus-boot-starter 会启动报
+            「NoClassDefFoundError: javax/servlet/...」—— 因为它还是 javax 时代的包
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+        </dependency>
+
+        <!--
+          ★ 从 3.5.9 开始，MyBatis-Plus 把 jsqlparser 拆成了独立依赖。
+            分页插件 PaginationInnerInterceptor 内部要用它解析 SQL 来拼 LIMIT，
+            不引这个包，第一次调分页接口就会报：
+                java.lang.NoClassDefFoundError: net/sf/jsqlparser/statement/select/Select
+            报错信息里完全看不出和分页插件有关，很容易卡住。
+            用 mybatis-plus-jsqlparser（对应 jsqlparser 5.x）即可，
+            另一个 mybatis-plus-jsqlparser-4.9 是给还依赖 jsqlparser 4.9 的老项目用的。
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- ==================== 缓存 / 会话 ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Lettuce 连接池：不加它 Redis 每次操作都新建连接，压测时很难看 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- ==================== 接口文档 ==================== -->
+        <!--
+          ★ 第二期 M0 起，接口文档直连 http://localhost:8083/doc.html（M2 之前是 8090）。
+            它【不走网关】—— 原因见 docs/M0-骨架搭建.md「为什么文档不进网关」：
+            /doc.html 内部还会去拉 /webjars/** 和 /v3/api-docs/**，
+            要透传就得给这一整套加路由，还要处理 X-Forwarded-* 和
+            springdoc 的 server 推断，是一件独立的、会把 M0 拖长的活。
+            这是开发期唯一一个不走 :3000 的入口。
+        -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ==================== 工具 ==================== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ==================== 认证授权（P1） ==================== -->
+
+        <!--
+          ★★ spring-boot-starter-security 一旦引入就会【自动拦截所有接口】，
+             连 /api/ping 都访问不了 —— 放行规则写在 com.novel.config.SecurityConfig。
+             这两者必须同时存在，单独加依赖 = 全站 401。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!--
+          ★ jjwt-impl / jjwt-jackson 不再在这里声明了：novel-common 已经
+            用 runtime scope 引了它们，会传递到这里。
+
+            留在这里也不会出错（Maven 会去重），只是同一个东西写两遍
+            将来一定会分叉。JWT 相关的依赖统一由 novel-common 负责 ——
+            因为 JwtUtil 在那边。
+        -->
+        <dependency>
+            <groupId>io.jsonwebtoken</groupId>
+            <artifactId>jjwt-api</artifactId>
+        </dependency>
+
+        <!-- ==================== 服务间调用（M1） ==================== -->
+
+        <!--
+          ★★ OpenFeign：M1 起 content 要拿作者昵称，而去查 sys_user 的那段 SQL
+             已经跟着 modules/system 搬进了 novel-auth。跨进程了，只能走 HTTP。
+
+          ★ 版本由父 pom import 的 spring-cloud-dependencies BOM 给
+            （spring-cloud-starter-openfeign 在那个 BOM 里），所以这里不写 <version>。
+            ★★ 父 pom 里那两个 BOM 的 import 顺序【不能反】：
+               先 spring-cloud（它锁 openfeign / loadbalancer / gateway 的版本），
+               后 spring-cloud-alibaba（只补它独有的 nacos-client）。
+               import 是「先到先得」，反过来会让 SCA 的旧版本盖住 spring-cloud 的。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!--
+          ★★ loadbalancer 必须【显式】加，它不是 openfeign 的传递依赖。
+             漏了它的症状：启动就失败，报
+               「No Feign Client for loadBalancing defined.
+                 Did you forget to include spring-cloud-starter-loadbalancer?」
+             —— 这句话本身已经把答案写出来了，所以还算好查；
+             真正难查的是「以为注册中心能自己兜住」而不加。
+
+          ★ 为什么 Feign 需要它：@FeignClient(name = "novel-auth") 里的
+            name 是【服务名】不是主机名，Feign 得靠 loadbalancer 去 Nacos
+            把服务名解析成实例地址。没有它，Feign 不知道 novel-auth 在哪台机器上。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- ==================== 测试 ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <!--
+          ★ M2：finalName 跟着 artifactId 一起从 novel-backend 改成 novel-interaction。
+            启动命令 `java -jar novel-interaction/target/novel-interaction.jar`、
+            日志文件名、docs/部署.md 里的产物清单都要同步。
+
+            （历史上：父 pom 的 artifactId 从 novel-backend 改成 novel-parent，
+              就是为了把这个名字腾给这个模块 —— 见父 pom 顶部那段。
+              M2 之后 novel-backend 这个名字在整个仓库里只存在于历史文档里。）
+        -->
+        <finalName>novel-interaction</finalName>
+        <plugins>
+            <!-- ★ 在父 pom 的 pluginManagement 里有配置，这里声明一次来激活它 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

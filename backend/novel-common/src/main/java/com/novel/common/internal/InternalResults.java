@@ -22,7 +22,17 @@ import lombok.extern.slf4j.Slf4j;
  * <b>调用失败被伪装成了「查无此人」</b>，而这两个结论在业务上的处理
  * 完全相反（一个该报错，一个该显示「已删除」）。
  *
- * <p><b>★ 失败时抛什么：{@code SYSTEM_ERROR}（HTTP 500），而不是新建一个 9xxx 码。</b>
+ * <p><b>★★ 本类有两个解包方法，选错哪一个都是真 bug</b>（M2 补的第二个）：
+ * <ul>
+ *   <li>{@link #unwrap} —— 失败一律抛 {@code SYSTEM_ERROR}（500）。
+ *       用在「对端替我查一次数据」的场景。</li>
+ *   <li>{@link #unwrapBusiness} —— 失败时<b>把对端的业务码原样抛回</b>。
+ *       用在「对端替我执行一次校验」的场景（2001 / 3001 必须原样到达前端）。</li>
+ * </ul>
+ * 判据和踩错之后的症状都写在 {@code unwrapBusiness} 的注释里，<b>用之前先读它</b>。
+ *
+ * <p><b>★ {@code unwrap} 失败时抛什么：{@code SYSTEM_ERROR}（HTTP 500），而不是新建一个 9xxx 码。</b>
+ * <p>（下面这一整段说的是 {@code unwrap}，{@code unwrapBusiness} 走的是另一条路。）
  *
  * <p>原因是 {@code ResultHttpStatus} 的规则：<b>只有 400~599 才会变成真实的
  * HTTP 状态码，其余一律返 200</b>。而「兄弟服务调不通」是一次
@@ -70,6 +80,87 @@ public final class InternalResults {
             log.error("跨服务调用返回失败 | {} | code={} message={}",
                     what, result.getCode(), result.getMessage());
             throw new BusinessException(ResultCode.SYSTEM_ERROR, "服务暂时不可用，请稍后再试");
+        }
+        return result.getData();
+    }
+
+    /**
+     * 解包一个内部调用的结果，<b>失败时把【对端的业务码】原样抛回业务层</b>。
+     *
+     * <p><b>★★ 和 {@link #unwrap} 的区别只有一行，但选错哪一个都是真 bug。</b>
+     * 判据是同一个问题：<b>「对端失败」这件事，在调用方的上下文里是什么？</b>
+     *
+     * <table border="1">
+     *   <caption>两个方法的判据</caption>
+     *   <tr><th></th><th>{@link #unwrap}</th><th>{@code unwrapBusiness}</th></tr>
+     *   <tr>
+     *     <td>对端在做什么</td>
+     *     <td>替我做一次<b>查询</b><br>（取昵称、取申请摘要）</td>
+     *     <td>替我做一次<b>校验 / 动作</b><br>（作品在不在架上、这章属于这本书吗）</td>
+     *   </tr>
+     *   <tr>
+     *     <td>对端失败＝</td>
+     *     <td>我<b>没拿到</b>本来要用的数据</td>
+     *     <td>调用方这次操作<b>本来就不该成功</b></td>
+     *   </tr>
+     *   <tr>
+     *     <td>该抛什么</td>
+     *     <td>{@code SYSTEM_ERROR}（500）</td>
+     *     <td><b>对端那个码</b>（2001 / 3001 …）</td>
+     *   </tr>
+     *   <tr>
+     *     <td>抛错的样子</td>
+     *     <td>「服务暂时不可用」</td>
+     *     <td>「作品不存在或未上架」</td>
+     *   </tr>
+     * </table>
+     *
+     * <p><b>★ 为什么这个区分是必需的 —— 一个具体的例子：</b>
+     * {@code NovelService#requirePublished} 对「未上架」返回 2001，
+     * 前端据此显示「作品不存在或未上架」。如果调用方用 {@link #unwrap} 解包，
+     * 这个 2001 会被改写成 500，用户看到的是「服务器开小差了」——
+     * <b>一次正常的业务拒绝被伪装成了系统故障</b>，而且监控上会多出一批
+     * 假的 5xx（每一次「有人点了一本下架的书」都会计一次）。
+     *
+     * <p><b>★★ 反过来的错误同样严重，这是这个项目最容易踩的坑：</b>
+     * 因为业务码一律返 HTTP 200（铁律 3），<b>Feign 不会因为 2001 抛异常</b> ——
+     * 它安安静静地返回一个 {@code code: 2001} 的信封。调用方要是
+     * 「拿到结果就当成功」（哪怕是<b>根本不看返回值</b>），
+     * 校验就<b>静默失效</b>了：给未上架的书发评论、给不存在的书加书架，
+     * 全部会成功。<b>没有任何报错，只有数据慢慢变脏。</b>
+     *
+     * <p><b>★ 用它的前提：对端那个码在【本服务的上下文里】语义相同。</b>
+     * 这在同源的 {@code ResultCode}（住在 novel-common，两边共用一份）
+     * 下天然成立 —— 比如 2001 的定义就是「作品不存在或未上架」，
+     * 不管它在哪个进程里被抛出来，意思都一样。
+     * <p>★ 但对「对端自己发明的、我这边不存在的概念」就不能用（比如 auth 的
+     * 1001「用户不存在」在 content 取昵称的上下文里没有意义）—— 那种情况用
+     * {@link #unwrap}，这条区别就是 {@code ContentUserLookup} 那边选 unwrap 的原因。
+     *
+     * @param result 对端返回的信封，可以为 {@code null}（对端返回了空 body）
+     * @param what   这次调用的用途，只用于日志
+     * @return 信封里的 data
+     * @throws BusinessException 对端返回了非成功码（<b>带的是对端那个码</b>），
+     *                           或者根本没返回东西（这一种仍然是 500 ——
+     *                           拿不到信封是通信故障，不是业务结论）
+     */
+    public static <T> T unwrapBusiness(Result<T> result, String what) {
+        if (result == null) {
+            // ★ 这一种【不能】沿用对端的码：连信封都没有，说明是通信故障。
+            //   把「我没收到回复」说成「作品不存在」会让故障彻底隐形。
+            log.error("跨服务调用没有拿到响应体 | {}", what);
+            throw new BusinessException(ResultCode.SYSTEM_ERROR, "服务暂时不可用，请稍后再试");
+        }
+        if (!result.isSuccess()) {
+            /*
+             * ★ 和 unwrap 的唯一区别：不翻译成 SYSTEM_ERROR，原样抛对端的码。
+             *   ★ 这里记 warn 而不是 error —— 它是一次【业务拒绝】，
+             *     和「参数校验失败」同级，不是系统故障。记 error 会让日志里
+             *     真正的故障被淹掉（一天几万次「有人点了下架的书」）。
+             */
+            log.warn("跨服务校验未通过 | {} | code={} message={}",
+                    what, result.getCode(), result.getMessage());
+            throw new BusinessException(result.getCode(), result.getMessage());
         }
         return result.getData();
     }

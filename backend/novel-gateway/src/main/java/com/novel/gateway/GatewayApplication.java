@@ -22,8 +22,9 @@ import org.springframework.context.annotation.Import;
  *   浏览器 :3000
  *      └─ dev-proxy（开发期）/ Nginx（生产）
  *           └─ :8080  ★ 本服务 —— 唯一入口，M1 起在这里验 JWT
- *                ├─ lb://novel-auth    → :8081（登录/用户/角色/公告/作者申请）
- *                └─ lb://novel-backend → :8090（作品/章节/评论/搜索/AI）
+ *                ├─ lb://novel-auth        → :8081（登录/用户/角色/公告/作者申请）
+ *                ├─ lb://novel-content     → :8082（作品/章节/分类/审核/搜索/AI）
+ *                └─ lb://novel-interaction → :8083（评论/书架/阅读历史）
  * </pre>
  *
  * <h3>★★ M1：{@link Import} 为什么是「逐个点名」而不是「扫描 novel-common」</h3>

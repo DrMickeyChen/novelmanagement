@@ -1,0 +1,250 @@
+# ============================================================
+# 开发环境配置 · 内容服务（novel-content :8082）
+# ============================================================
+# ★★★ 这个文件里的 IP 要改成你自己的虚拟机 IP ★★★
+#
+# 怎么查：在虚拟机上执行
+#     hostname -I
+#   取输出的第一个 IP（形如 192.168.127.137）
+#
+# 本文件里【三处】192.168.127.137 都要换成它（就是下面这三个键的值，
+# 别去数行数 —— 上面那句 "形如 192.168.127.137" 是举例，不用改）：
+#   ① spring.datasource.url
+#   ② spring.data.redis.host
+#   ③ spring.cloud.nacos.discovery.server-addr
+#
+# ★ ③ 是唯一一个「值里带端口」的（192.168.127.137:8848），改 IP 时
+#   把端口一起留着 —— 8848 是 Nacos 的默认 HTTP 端口，不是变量。
+#
+# ★★ M2 之后有【四份】application-dev.yml（gateway/auth/content/interaction）。
+#    ①②③ 三处在四份里【取值完全相同】—— 因为 M2 决定「一个 schema + 表归属独占」，
+#    不物理拆库。所以改虚拟机 IP 时要改四份，不是一份。
+#    漏改的症状：那个服务起不来（连不上库）或注册不上（连不上 Nacos）。
+#
+# 为什么不用 localhost：后端跑在你的 Windows 上，
+# MySQL/Redis/Nacos 跑在虚拟机的 Docker 里，是两个不同的机器。
+# localhost 指的是 Windows 本机，那里没有 MySQL。
+# ============================================================
+
+spring:
+
+  # ---------------- MySQL ----------------
+  # ★★ 和 novel-auth / novel-interaction 连的是【同一个库】。
+  #    这不是疏漏，是 M2 拍板的决定 1：一个 novel schema + 表归属独占。
+  #    大纲 §三 约束 6 要的是「每个服务只访问自己的表」，一个 schema 完全满足。
+  #    ★ 「表归属独占」是纪律，不是数据库强制的 —— 违反它不会报错，
+  #      所以每个模块的 mapper 注释里都写清了自己拥有哪些表。
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://192.168.127.137:3306/novel?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&allowMultiQueries=true
+    username: root
+    password: root123456
+
+    # HikariCP 连接池（Spring Boot 默认，不用额外引依赖）
+    hikari:
+      pool-name: NovelContentHikariPool   # ★ 四个进程各起一个池，池名要能区分开
+      minimum-idle: 5              # 最少保持 5 个空闲连接
+      maximum-pool-size: 20        # 最多 20 个连接
+      idle-timeout: 600000         # 空闲连接超过 10 分钟回收
+      max-lifetime: 1800000        # ★ 连接最长活 30 分钟，必须小于 MySQL 的 wait_timeout
+      connection-timeout: 10000    # 拿不到连接时最多等 10 秒就报错，别无限等
+      connection-test-query: SELECT 1
+
+  # ---------------- Redis ----------------
+  # ★ Spring Boot 3 里路径是 spring.data.redis，不是 spring.redis
+  #   （老教程里写的 spring.redis 在 Boot 3 下会被静默忽略，连接直接走默认的 localhost）
+  #
+  # ★★ 本服务【真的要用】Redis，不只是因为 RedisConfig 被扫到：
+  #    NovelViewCounter 用 StringRedisTemplate 做阅读量脏集
+  #    （NOVEL_VIEWS + NOVEL_VIEW_DIRTY），按 SchedulingConfig 定时回写数据库。
+  #    ⚠️ 所以 Redis 挂了不只是「未读数不准」，是【阅读量这个功能整体不可用】。
+  data:
+    redis:
+      host: 192.168.127.137
+      port: 6379
+      password: redis123456
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 16           # 最多 16 个连接
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+
+  # ---------------- Nacos 注册中心 ----------------
+  #
+  # 加上这一段，本服务就在 Nacos 上注册成了一个实例，
+  # 网关的 lb://novel-content 才找得到它。
+  #
+  # ★ 这里【只有服务发现】，没有 Nacos 配置中心。
+  #   第二期不接 Nacos Config —— 见 novel-gateway/application.yml 顶部
+  #   那段「路由为什么写在本地」。
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 192.168.127.137:8848
+
+        # ★★ 这两行【必须】写在 discovery 下面，不能只写在外层
+        #    spring.cloud.nacos.username 上。
+        #
+        #    容器里的 Nacos 开了鉴权（NACOS_AUTH_ENABLE=true），
+        #    只配了后者的话症状是「配置能拉、服务注册不上」——
+        #    报 403，或者客户端直接假死在那儿不动。
+        #    ★ 而且报错信息里【完全看不到】配置项的事，
+        #      会让人往网络、往 Nacos 服务端查，方向全错。
+        #
+        #    nacos/nacos 是 Nacos 自带的固定演示账号，和下面 MySQL 的
+        #    root123456 同一性质 —— 本地搭环境用的固定值，不含真实凭据。
+        #    生产环境请改掉（docs/部署.md）。
+        username: nacos
+        password: nacos
+
+        # ★★ 这一行在 Windows 上【必须写】，M2 之后是【四个服务】都要写。
+        #
+        #    Nacos 客户端默认取「第一块非 loopback 网卡」的地址。
+        #    装了 VMware / VirtualBox / Hyper-V / WSL 之后，那个「第一块」
+        #    很可能是 192.168.56.1 这类虚拟网卡地址 —— 而本服务根本不在那儿。
+        #
+        #    症状极有迷惑性：Nacos 控制台上服务列表、实例数一切正常，
+        #    但 http://localhost:8080/api/novels 返回 503，
+        #    日志是「Unable to find instance for novel-content」或连接超时。
+        #    看起来【完全像是网关的路由配错了】，会让人去翻网关的 yml。
+        #
+        #    网关那边（novel-gateway/application.yml）有同样的一行。
+        ip: 127.0.0.1
+
+    # ---------------- Feign 超时（M2） ----------------
+    #
+    # ★★ 不加这两行的后果，比「慢」严重得多：
+    #    Feign 默认【没有读超时】。对端只要不是干脆地拒绝连接，
+    #    而是「连上了但不回」（进程假死、GC 卡住、网络半通），
+    #    这个请求就会一直挂在那儿，把 Tomcat 的工作线程一起占住。
+    #    占满之后本服务的所有接口都开始排队 ——
+    #    症状是「整个站点越来越慢直到完全打不开」，
+    #    而日志里可能干干净净，因为那些线程都还「在执行中」。
+    #
+    # ★ M2 之后本服务【有两个对端】：novel-auth（取作者昵称）
+    #   和 novel-interaction（取评论正文）。后者是审核日志列表在用，
+    #   属于管理端低频操作，但超时挂住的后果是一样的。
+    #
+    # ★ 2 秒 / 5 秒是【开发期】的取值：本机到本机的调用正常在 10ms 以内，
+    #   2 秒没连上就是真的有问题。
+    #   生产（跨主机）应放宽到 1s / 3s 左右，并结合 M5 的熔断一起调。
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 5000
+
+# ---------------- 文件上传路径 ----------------
+# 作品封面（本服务写）存这里。开发期先存本地磁盘，
+# 第二期接入对象存储（MinIO / OSS）时只改这一个配置项
+novel:
+  upload:
+    # ★★ 这个路径必须和 novel-auth（头像，同一目录的 avatar/ 子目录）
+    #    写成【同一个绝对路径】。
+    #
+    #    原因：/uploads/** 这条路由在 M2 之后仍然由 novel-interaction 提供
+    #    （它是唯一一个「读上传目录」的服务），而【写】发生在
+    #    content（封面）和 auth（头像）。三个进程只有在
+    #    「同一个文件系统的同一个绝对路径」这个前提下才互相看得见。
+    #
+    #    ★ 生产上三个服务各有自己的容器文件系统 → 这么写必然是 404。
+    #      这是 M1 R10 记录的同一个问题，M2 沿记录，M5 接对象存储时解决。
+    #      ★ 换句话说：开发期它能工作，靠的是「都在你这一台 Windows 上」。
+    path: ${user.home}/novel-uploads/
+    url-prefix: /uploads/
+
+  # ---------------- 内部令牌 ----------------
+  #
+  # ★★ 这是【服务间调用】和【网关到下游】的共享密钥，用的都是同一个值。
+  #
+  #    它防的是：有人绕过网关，直接 curl :8082 / :8083 / :8081 并自己伪造
+  #    X-User-Id / X-Roles 头，从而变成管理员。
+  #    下游的 HeaderAuthenticationFilter 看到没有这个令牌（或值不对），
+  #    就把那些身份头【整份忽略】、按匿名处理，
+  #    /internal/** 更是直接 403。
+  #
+  # ★ 所以它的值必须在【五个地方】完全一致：
+  #    网关 application.yml、novel-auth、novel-content、novel-interaction、
+  #    以及调用方手工 curl 时带的头。
+  #    不一致的症状是「全站 401」或「/internal/** 403」——
+  #    看起来像网关没转发、像服务没注册，唯独不像密钥。
+  #    ★ 排错时先 grep 一下：grep -rn "internal" backend/*/src/main/resources/application*.yml
+  #
+  # ★★ 下面这个值是【开发专用】的明文常量（和 jwt.secret 同一性质）：
+  #    它只为了让 clone 下来不配任何环境变量就能跑，不含任何真实凭据。
+  #    生产环境必须靠环境变量 INTERNAL_TOKEN 覆盖它（见 application.yml）——
+  #    那边【故意不写默认值】，不配就启动失败，而不是悄悄用一个公开的弱密钥。
+  #
+  # ★ 剩余边界（M5 治理项）：共享密钥只能证明「调用方知道这个字符串」，
+  #   证明不了「调用方是谁」。更彻底的做法是内网隔离 + mTLS。
+  #   生产上另外还有一层：这几个端口【不对外】，只暴露网关。
+  internal:
+    token: ${INTERNAL_TOKEN:novel-dev-only-internal-token-please-change-in-production-2026}
+
+  # ---------------- JWT ----------------
+  # ★ 本服务不签发也不验签 token（验签在网关）。这一段存在的唯一原因是
+  #   com.novel.common.security.JwtUtil 是个 @Component，会被扫到并被实例化，
+  #   而它的两个 @Value 占位符没有默认值。详见 application.yml 里那段长注释。
+  #
+  # ★★ 所以它的值必须和 novel-auth（真正签发 token 的那个）【完全一致】——
+  #    不一致不会报错，但两边对「密钥长度」「有效期」的判断会出现偏差。
+  jwt:
+    # 开发环境的默认密钥。这样 clone 下来不配任何环境变量就能直接跑。
+    #
+    # ★ 两点必须知道：
+    #   1. 长度必须 ≥ 32 字节。jjwt 用 HMAC-SHA256 签名，密钥短于 256 bit
+    #      会直接抛 WeakKeyException（HMAC 的密钥越短越容易被暴力破解，
+    #      所以它主动拒绝）。这一串是 54 个字符，绰绰有余。
+    #   2. 这个值【只用于本地开发】，明文写在提交到 git 的文件里。
+    #      生产环境靠环境变量 JWT_SECRET 覆盖它（见 application.yml）。
+    secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
+
+# ---------------- 接口文档显示开关 ----------------
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+# ---------------- 日志：开发期看详细 SQL ----------------
+logging:
+  level:
+    com.novel: debug
+    com.novel.modules: debug
+    org.springframework.jdbc: debug
+
+  # ---------------- 同时写一份文件到 backend/logs/ ----------------
+  #
+  # ★ 为什么写文件：开发期后端是通过
+  #     Start-Process java -jar target/novel-content.jar -WorkingDirectory backend
+  #   起的（隐藏窗口），控制台看不到；而且排障时经常需要回头翻
+  #   「刚才那次请求到底报了什么」，翻不了滚动的窗口就抓瞎。
+  #
+  # ★ 路径为什么可以写成相对路径：启动命令里 jar 本身就写成
+  #   `target/novel-content.jar`（相对路径），所以工作目录必然是
+  #   backend/ 这一个；`logs/` 也就必然落到 backend/logs/。
+  #   ⚠️ 但四份配置的 file.name 各不相同（否则四个进程会抢同一个文件），
+  #      所以四个 jar 都必须用 -WorkingDirectory backend 启动 ——
+  #      任何一个换成 backend/novel-xxx/ ，它的日志就会静默换目录。
+  #
+  # ★ 放在 dev 而不是 application.yml：生产是跑在容器里的，
+  #   日志应该走 stdout 交给采集器，落文件反而会在容器里堆着。
+  #
+  # ★ .gitignore 里已有 `logs/` 和 `*.log`，不会误提交。
+  file:
+    name: logs/novel-content.log
+
+  # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+
+  # ★ 一定要封顶：这几个服务常年开着不重启，没有滚动策略的话
+  #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 7

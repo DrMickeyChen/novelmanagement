@@ -18,7 +18,7 @@ import java.util.function.Function;
  * <p>M1 起认证搬到了网关：网关验签、查 Redis，然后把 {@link LoginUser} 拆成
  * 一组请求头写进转发的请求里；下游服务再把它拼回一个 {@code LoginUser}。
  * <b>写的一端和读的一端必须对同一份格式达成一致</b>，而它们分别在
- * 三个进程里（网关、novel-auth、novel-backend）。
+ * 四个进程里（网关、novel-auth、novel-content、novel-interaction）。
  *
  * <p><b>★★ 为什么必须是「一个类」而不是「三处各写一遍」：</b>
  * 这里没有编译期约束 —— 网关把昵称写进 {@code X-Nickname}、下游从
@@ -32,7 +32,7 @@ import java.util.function.Function;
  * <p><b>★ 三个使用点，全部指向本类：</b>
  * <pre>
  *   novel-gateway   JwtAuthGlobalFilter    先 strip() 再 write()     ← 写的唯一出处
- *   两个服务         HeaderAuthenticationFilter  read()              ← 读的唯一出处
+ *   三个服务         HeaderAuthenticationFilter  read()              ← 读的唯一出处
  *   Feign 出站       各自的 RequestInterceptor    write()             ← 服务间调用也走同一套
  * </pre>
  *
@@ -123,9 +123,9 @@ public final class IdentityHeaders {
      *   <li>Feign 出站时带上它 → {@code /internal/**} 的内部接口才会应答。</li>
      * </ol>
      *
-     * <p><b>★ 没有它，直连 {@code :8090} 发一个
+     * <p><b>★ 没有它，直连 {@code :8082} 发一个
      * {@code -H "X-User-Id: 1" -H "X-Roles: ADMIN"} 就是管理员了。</b>
-     * 开发期 8090/8081 是开着的（排错要直连），所以这个头是必需的；
+     * 开发期 8081/8082/8083 是开着的（排错要直连），所以这个头是必需的；
      * 生产上还有网络隔离兜底（只有网关对外）。
      */
     public static final String INTERNAL_TOKEN = "X-Internal-Token";

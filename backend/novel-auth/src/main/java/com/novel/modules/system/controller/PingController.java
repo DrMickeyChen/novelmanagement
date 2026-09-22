@@ -41,9 +41,10 @@ import java.util.concurrent.TimeUnit;
  *
  * <p><b>★ M1：这个类跟着 {@code modules/system} 搬进了 novel-auth（:8081）。</b>
  * 它测的东西因此也变了 —— 现在回答的是「<b>auth 服务</b>能不能连上
- * MySQL / Redis」，不再是「单体能不能」。两个服务连的是同一台 MySQL、
- * 同一个 Redis database，所以正常情况下两边结论一致；
- * 但排障时<b>要看清是在哪个端口上打的</b>，:8081 和 :8090 是两个进程。
+ * MySQL / Redis」，不再是「单体能不能」。四个服务连的是同一台 MySQL、
+ * 同一个 Redis database，所以正常情况下结论一致；
+ * 但排障时<b>要看清是在哪个端口上打的</b>，:8081 和 :8082 / :8083
+ * 是三个不同的进程（M2 之前是 :8090 那个单体，它已经拆成后两个了）。
  * 返回体里的 {@code application} 字段就是给这件事用的（见下面那个字段的注释）。
  *
  * @author MickeyChen

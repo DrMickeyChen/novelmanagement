@@ -8,7 +8,7 @@ import lombok.Data;
  *
  * <p><b>★★ 这个 DTO 是刻意【收窄】的，收窄本身就是它的设计。</b>
  *
- * <p>novel-backend 那一侧的 {@code AuditLogService#record} 收三个参数：
+ * <p>novel-content 那一侧的 {@code AuditLogService#record} 收三个参数：
  * {@code (AuditTargetType, Long, AuditAction, String)} —— 它能记
  * <b>任何</b>类型的流水（作品、章节、评论、作者申请……）。
  * 如果内部接口直接暴露那个签名，就等于<b>把「往流水表里写任意一行」的能力
@@ -28,7 +28,7 @@ import lombok.Data;
  * <b>多一个窄接口的成本，远低于一个宽接口被用错的成本。</b>
  *
  * <p><b>★★ 注意这里【没有】操作人字段，这是有意的：</b>
- * 流水的 {@code operator_id} 由 novel-backend 从 {@code UserContext} 取
+ * 流水的 {@code operator_id} 由 novel-content 从 {@code UserContext} 取
  * （见 {@code AuditLogServiceImpl#record} 里那句
  * {@code UserContext.requireUserId()}），<b>不接受调用方传</b>。
  * 那「调用方的登录态怎么过去的」呢 —— 靠 Feign 出站拦截器把当前身份

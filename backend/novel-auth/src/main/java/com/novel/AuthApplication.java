@@ -24,7 +24,8 @@ import org.springframework.core.env.Environment;
  * 只装着自己的 modules】，所以同一个扫描范围在两边扫出来的东西自然不同：
  * <pre>
  *   novel-auth     扫到  com.novel.modules.system
- *   novel-backend  扫到  com.novel.modules.{content,interaction,ai}
+ *   novel-content  扫到  com.novel.modules.content + com.novel.modules.ai
+ *   novel-interaction 扫到  com.novel.modules.interaction
  * </pre>
  *
  * <p><b>★ {@code @MapperScan} 为什么可以照抄 {@code com.novel.modules.**.mapper}：</b>
@@ -39,11 +40,11 @@ import org.springframework.core.env.Environment;
  * 所以 {@code AuthSecurityConfig} 里配的仍然全是「URL 闸」，一行业务鉴权代码都没改。
  *
  * <p><b>★ {@code @EnableFeignClients} 为什么需要它：</b>
- * 本服务有一个出站调用 —— 审完作者申请要回头让 novel-backend 写审核流水
- * （{@code com.novel.auth.client.BackendAuditClient}）。
+ * 本服务有一个出站调用 —— 审完作者申请要回头让 novel-content 写审核流水
+ * （{@code com.novel.auth.client.ContentAuditClient}）。
  * 不加这个注解，{@code @FeignClient} 接口<b>不会被注册成 Bean</b>，
  * 而错误只会在启动时冒出来：{@code AuthorApplyAuditRecorderImpl} 找不到
- * 可注入的 {@code BackendAuditClient}。
+ * 可注入的 {@code ContentAuditClient}。
  * <p>★ 它的默认扫描范围是<b>启动类所在包</b>（{@code com.novel}），
  * 所以 {@code com.novel.auth.client} 在范围内，不用写 {@code basePackages}。
  * <p>★ <b>网关绝对不要加这个注解</b> —— 它不做任何出站业务调用，
