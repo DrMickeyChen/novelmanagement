@@ -607,7 +607,8 @@ THROUGH :8080  HTTP 200   Content-Type=text/event-stream;charset=UTF-8
 
 | # | 检查 | 结果 |
 |---|---|---|
-| 1 | **网关 `dependency:tree` 锚定 grep** `spring-boot-starter-web:jar\|spring-webmvc\|tomcat-embed-core` | **零命中** ✓（反向对照：`spring-boot-starter-webflux` 命中 1，证明日志非空、正则有效） |
+| 1 | **直接查打出来的 jar**：`jar tf novel-gateway.jar \| grep BOOT-INF/lib/` 共 **103 个依赖**，逐个锚定 `spring-boot-starter-web-` / `spring-webmvc-` / `tomcat-embed-core-` / `tomcat-embed-websocket-` / `jakarta.servlet-api-` | **五个全 0** ✓；对照 `spring-webflux-6.1.15` + `reactor-netty-http-1.1.24` 都在 ✓ |
+| 1b | 同一件事用 `dependency:tree -Dincludes=...` 复核 | 零命中 ✓（反向对照 `spring-boot-starter-webflux` 命中 1） |
 | 2 | 网关启动日志 | **`Netty started on port 8080`**，**没有** `Tomcat started` ✓ |
 | 3 | `/actuator/gateway/routes` | **12 条**（10 auth order=1 + 2 backend order=10）✓ |
 | 4 | **12 个锁定文件 md5** | 三端**逐字节一致**；`request.js` = `2047681401d85ed69cebbd069f4ee7dd`，**与 P4 基线完全相同** ✓ |
@@ -615,6 +616,25 @@ THROUGH :8080  HTTP 200   Content-Type=text/event-stream;charset=UTF-8
 | 6 | 前端 git 改动 | **0 处** ✓ |
 | 7 | 种子基线 | 菜单 **READER 0 / AUTHOR 2 / ADMIN 15**、`sys_role_menu` **17 行**、账号 1~4 未动、novels 12 / chapters 47 ✓ |
 | 8 | 一次性对象 | 全部清理，复查 0 条残留 ✓ |
+
+★★ **检查 1 有两个真的会骗人的坑，都是这次复核时才发现的**（M0 文档警告过的同一类）：
+
+- **坑 A：别给 `dependency:tree` 加 `-q`。** `-q` 会把 `[INFO]` 那一整棵树一起吞掉，
+  于是「零命中」和「根本没输出」长得一模一样 —— 而且**反向对照也会变成零命中**，
+  所以它连自证能力都没有。复核时我第一次就是带着 `-q` 跑的，
+  差点把一个「什么都没查」当成「查过了，很干净」写进报告。
+  ★ 要用它就必须去掉 `-q`，并且**同时跑一次正向对照**（`-Dincludes=...webflux` 应有命中）。
+- **坑 B：`grep tomcat` 会误命中 `tomcat-embed-el`。** 实测网关 jar 里确实有
+  `tomcat-embed-el-10.1.33.jar` —— 它是 **EL 表达式实现**（Hibernate Validator 的传递依赖），
+  不含任何 servlet API，在 WebFlux 里完全无害。
+  致命的是 `tomcat-embed-core`（servlet 容器）和 `tomcat-embed-websocket`。
+  ★ 所以正则要**锚定到 `-<版本>.jar` 结尾**，不能只写 `tomcat` ——
+  这和 M0 记的「`spring-boot-starter-web` 是 `spring-boot-starter-webflux` 的前缀」
+  是同一个坑，只是这次换成了 tomcat 家族。
+- ★ **检查 1（直接查 jar）比 1b（Maven 过滤）可信**：前者是对**产物**取证，
+  不依赖 Maven 过滤器的语义；后者要绕过上面两个坑才等价。**能查产物就查产物。**
+  另一条互相独立的旁证是检查 2 —— 启动日志是 Netty 而不是 Tomcat，
+  而 spring-webmvc 在的话 Tomcat 必然会被装配起来。
 
 ★ **验收全程跑在带时间戳的一次性账号上，结尾断言种子完好**（铁律 5）。
 清理用**字面 id 的 `IN (...)`**，没有用 `LIKE`。
