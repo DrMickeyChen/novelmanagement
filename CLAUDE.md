@@ -11,10 +11,14 @@
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
-第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES（均已完成）** → M5 治理。第三期 E1 AI。
+第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES、M5 治理（均已完成）**。第三期 E1 AI。
 ★ **M3 的实质只有 MQ**：大纲把 M3 写成「摘出 interaction + 引入 MQ」两件事，而 interaction 在 M2 就已经是独立进程了 —— 拆分那半早就兑现。见 `docs/M3-引入MQ.md` 开头。
 ★ **M4 的实质是「换检索内核」**：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，
 **并且顺手证伪了大纲里的 `group-content-stat` 消费组**（`syncNovelStat` 读写的两张表同库同事务，拆成消息是**降级**）—— 见 `docs/M4-摘出search.md` 判断 1。
+★ **M5 的实质是「把降级收紧成一条可判定的规则」**，不是「加超时」（超时 M2 就做完了，且 auth 里已没有 Feign）——
+判据是 **「消费方能不能诚实地把这个缺失渲染出来」**（见铁律 10）；顺带证伪了大纲的「白屏」
+（真实症状是一句**语气笃定的谎话**），并把「跨服务聚合改并行」的对象从详情页挪到**管理端审核日志**。
+见 `docs/M5-治理.md` 一、二。
 **★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
 
 三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
@@ -25,7 +29,9 @@
 `lb://novel-content` → **content `:8082`**（`modules/content` + `modules/ai`：作品/章节/分类/审核/AI）／
 `lb://novel-interaction` → **interaction `:8083`**（`modules/interaction`：评论/书架/历史）／
 `lb://novel-search` → **search `:8084`**（★ **M4 新增**：`GET /api/search`、`POST /api/admin/search/reindex`。
-**它没有数据库** —— ES 只当「id 检索器」，装配 `NovelVO` 是 Feign 回 content 做）。
+**它没有数据库** —— ES 只当「id 检索器」，装配 `NovelVO` 是 Feign 回 content 做。
+★ **M5 起重建改【异步】**：`POST` 立刻返回 `{taskId}`，进度轮询 `GET /api/admin/search/reindex/{taskId}`。
+**「提交成功」≠「重建成功」** —— 200 只说明任务进了队列，别读成「索引已经好了」）。
 后三个**不再验签，只读身份头**。
 所以 `localhost:8080` 是网关、不是后端；排错要绕过网关时直连 `:8081` / `:8082` / `:8083` / `:8084`。
 ★★ **直连 `:8081`/`:8082`/`:8083`/`:8084` 必须带 `novel.internal.token`（走 `X-Internal-Token`）**，否则身份头一律被忽略、当**匿名**处理 —— 这是刻意的（决策 4），不是 bug。
@@ -62,14 +68,19 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
    自然的想法是「auth 改名时通知 search」—— 但 **auth 现在的出站边是 0 条，那是 M3 好不容易挣来的**。
    **不为了一个极低频的场景把它加回来**，收敛点是定时全量重建。
    ★ **M1 造出的那个【服务级】环** `novel-auth ⇄ novel-content`：**M3 用事务消息解掉了** ——
-   auth 对 content 的**唯一**一条出站边（`ContentAuditClient`）已删，
-   `grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/` → **0 命中**。
+   auth 对 content 的**唯一**一条出站边（`ContentAuditClient`）已删。
+   ★★★ **复核 auth 出站边为 0，判据必须钉在【结构】上，不能 grep 一个词** ——
+   M3 记的是 `grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/` → 0 命中，
+   **M5 实测它是 5**（而且**每写一次「它应该是 0」，注释就多含几个那个词，判据离 0 更远一步**）。
+   **工作判据（M5 起）**：`grep -rn "^\s*@FeignClient(" backend/novel-auth/src/` = 0、
+   `grep -rn "^\s*@EnableFeignClients" ...` = 0、**pom 去掉 XML 注释后**的 openfeign+loadbalancer 依赖 = 0。
    ★★ **M2 又造出第二个【服务级】环** `novel-content ⇄ novel-interaction`：**M3 没解，也解不了**。
    interaction 读 content 的 8 个内部端点 → M3 后降到 4 条左右（删掉 3 条写回 + 1 条审核流水，保留读）；
    content 反过来读 interaction 的 1 个（管理端审核日志要显示评论正文）。
    ★★ **这一个 MQ 解不了** —— 「审核日志要显示评论正文」是一次**同步读**，
    要解只能改成「审核时把正文快照写进 `audit_log`」，那是 DDL、属于 M5。
-   **它活到了 M5**（论证见 `docs/M2-摘出content.md` 与 `docs/M3-引入MQ.md` §十三）。
+   **★ 而 M5 没做它 —— 它活过了 M5（第 4 期）**（论证见 `docs/M2-摘出content.md` 与 `docs/M3-引入MQ.md` §十三）。
+   ★ M5 反而**加强了**这条边上的判断：这条回程**是刻意不降级的**（铁律 10 的第一个例子）。
 2. **12 个文件逐字节锁定，任何一期都不许改**：三端各自的 `src/utils/request.js`、`src/utils/auth.js`、`src/stores/user.js`、`src/styles/index.css`。
    改完要复验 md5（基线值见 `docs/P4-创作中心.md` —— `request.js` = `2047681401d85ed69cebbd069f4ee7dd`，
    三端四个文件各自逐字节相同）。`utils/` 下**其它**文件（format/status/confirm/echarts）不在锁内。
@@ -107,10 +118,31 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
    在任何 Boot 应用上都会命中 —— `spring-boot-autoconfigure` 里含有**所有**技术的自动配置类名
    （`@ConditionalOnClass` 让它们惰性，库不在就什么都不做）。
    **判据要换成看 `BOOT-INF/lib`**（`unzip -l x.jar | grep -i elastic`）。
+   ★ **第三种形状（M5）：判据被自己的说明文字推翻。** 上面那条「auth 出站边 0 命中」的 grep
+   每次被写进注释/文档，那段文字本身就含那几个词 —— **判据每被记录一次，就离通过更远一步**，
+   最终**必然**失败，且失败原因和被测对象毫无关系。**判据要钉在结构上（包/依赖树/声明形式），别钉在词上。**
    ★ 解药是同一个：**换成差分式判据（和对照组比），别用阈值式（数个数）** —— 对照组的对齐是自动的。
+   ★★ **M5 白捡的阴性对照**：同一条 traceId 日志里，请求行有 `[xxxx]`，调度线程行是 **`[]` 空的** ——
+   这才证明 `[%X{traceId}]` 真在读 MDC，不是个写死的常量。**对照组就在同一份输出里，成本为零。**
 9. **★★ 削峰削的是【写】，不是读。** 「请求路径上跨服务调用归零」这种说法要警惕 ——
    M3 保留下来的两次 Feign 读**是有信息量的错误码**（`2001` / `3001` 的抗探测设计），不能为了好看搬走。
    准确说法：「请求路径上的**写**从『两次远程读 + 一次本地写』变成『一次投递』」。
+10. **★★★ 降级只对「消费方能【诚实地】把这个缺失渲染出来」的字段成立（M5）。**
+   ★ **不是**「缺失在界面上看不看得见」—— 那是**被实测推翻**的前一版判据（`docs/M5-治理.md` §2.3）。
+   反例：审核日志的评论正文那一格**只有两个渲染分支**（「有标题」/「已删除」），
+   降级后它把「拿不到」渲染成 **「评论 #94（已删除）」** —— 对一条**从没被删过**的评论说的具体假话，
+   还是在**追责页面**上。**没有第三个状态能容纳「暂时拿不到」→ 这里没有安全的降级值 → 宁可 500。**
+   ★★ **降级 = 让字段从 JSON 里【消失】**（靠全局 `default-property-inclusion: non_null` + 包装类型），
+   **绝不是**填 `0` / `false` / `""` 这类「看起来正常」的假值 ——
+   所以**降级前先看字段是不是基础类型**：`int` 表达不了「未知」，降级它只会把 `0` 送出去。
+   ★ **判别式是「这个字段会不会因为【别人挂了】而消失」，不是「它重不重要」** ——
+   所以同一张卡片上，`authorName` 显示 `—`（跨服务，取不到=auth 挂了），
+   而 `categoryName` 仍回落「未分类」（同库 JOIN，取不到=真被删了）。**「佚名」在本系统里是假话，不是兜底**
+   （`novel.author_id` 是外键，每本书必然有作者）。
+   ★★ **「参与筛选的输入」一律不降级**：`userIdsByNickname` 降级成空集合 = 结果集 0 条 + 界面说
+   「没有找到相关作品」= M1 最反对的那种页面。**它停 auth 时必须 500，这是刻意设计的。**
+   ★ **验收口径由此变成：用户能分清「没有数据」和「暂时拿不到」** —— 前端 `usePagedList` 的
+   `isEmpty` 里**含** `!failed`，两支由构造互斥（别把 `error` 这个 ref 加了却没人消费）。
 
 ## ★ 注释规矩
 
@@ -177,6 +209,17 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 #   novel-interaction/target/novel-interaction.jar  （:8083，logs/novel-interaction.log）
 #   novel-search/target/novel-search.jar            （:8084，logs/novel-search.log）← ★ M4 新增
 # SQL 日志在 stdout —— 要 grep SQL 得额外加 -RedirectStandardOutput
+# ★★★ M5 起【每个进程还多监听一个 8719】（Sentinel 的 transport 端口，被占则向上探测）。
+#   ★ 这也是 M5 唯一新增的【对外暴露面】：生产必须和 8081~8084 一起被防火墙挡掉。
+#   ★ 排查时多一个「这是谁的端口」——别再当成野进程。
+# ★★ M5 起排查的入口是 **traceId**：五份日志的 pattern 都是 `[%X{traceId}]`，
+#   同一个请求在网关/content/... 里是【同一个】32 位串。用法：`grep <traceId> backend/logs/*.log`。
+#   ★ 它由网关注入并【强制覆盖】客户端自带的 `X-Trace-Id`（否则能把别人的日志关联到自己身上）。
+#   ★★ **前端【看不到】traceId** —— `request.js` 是锁定文件、响应拦截器 `return res.data`，
+#      响应头在前端被丢掉。用户报错时**问他要不到号**，只能按「时间 + 页面」反查。别以为加了就能报号。
+#   ★ Sentinel 自己的日志【不在】 backend/logs/ —— 在 `backend/logs/csp/`（按 PID 分文件），
+#     `*-block.log` 是熔断拦截、`*-record.log*` 是规则与状态变更（含熔断打开/恢复）。
+#     ★ 直接写 `csp.sentinel.log.dir` 是【无效】的，SCA 只认 `spring.cloud.sentinel.log.dir`。
 
 # ★ M3 起中间件多一个 RocketMQ，在【同一个虚拟机】上（不是第五个 Java 进程）：
 #   namesrv :9876 / broker :10909,:10911,:10912；容器定义在 docs/docker/docker-compose.yml

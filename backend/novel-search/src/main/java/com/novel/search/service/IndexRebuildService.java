@@ -8,6 +8,7 @@ import com.novel.search.document.NovelDocument;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.lang.management.ManagementFactory;
@@ -17,10 +18,14 @@ import java.util.List;
 /**
  * <b>全量重建的编排（M4 / S8）—— 加锁、删索引、按游标把整个库灌进去。</b>
  *
- * <p>★ 它调用的原语（{@code recreateIndex} / {@code bulkUpsert}）在
+ * <p>★ 它调用的原语（{@code newPhysicalIndexName} / {@code createPhysicalIndex} /
+ * {@code bulkUpsert} / {@code switchAlias} / {@code deleteStaleIndices}）在
  * {@link IndexService}；这里只管<b>顺序、轮次、以及加不加锁</b>。
  * 分开的理由见 {@code IndexService} 的类注释：<b>两者的失败语义相反</b> ——
  * 原语失败要抛，编排失败要「记下来 + 等下一个周期」。
+ * ★★ S8 之后这条分界更清楚了：<b>「别名什么时候切」是编排的决定，不是原语的决定</b> ——
+ * {@code switchAlias} 自己不知道这一轮灌得对不对，所以「灌进来 0 条就【不许切】」
+ * 这个判断只能写在这一侧（见下面那段）。
  *
  * <h3>★★★ 它存在的理由：MQ 是「尽力而为」的，没有它对账，「最终一致」的「最终」是空的</h3>
  *
@@ -67,9 +72,31 @@ import java.util.List;
  * </pre>
  * ★ 30 分钟比 {@code NovelStatReconcileJob} 的 5 分钟宽得多，因为两者的工作量差着量级：
  * 那个是翻页读一个数再比对，这个是<b>把整个库灌进 ES</b>。
- * ★ <b>但不主动释放锁</b>（理由同那个任务）：主动释放要做 compare-and-delete，
- * 否则可能在 TTL 刚过期、别人刚拿到锁的那一刻把人家的锁删掉 ——
- * 那就从「少一层保护」变成「制造一次并发」。
+ * ★★ <b>拿到锁的那一段，退出时一定放锁（compare-and-delete）—— 成功如此，失败也如此。</b>
+ *
+ * <p>原文写的是「不主动释放（理由同那个任务）」，这里订正 —— <b>那句话只说对了【做法】
+ * 要小心，没说【不做】是对的。</b> 不裸 {@code DEL} 是对的（TTL 刚过期、别人刚拿到锁时
+ * 裸删就从「少一层保护」变成「制造一次并发」），但那个风险由
+ * {@link #UNLOCK_SCRIPT} 的 {@code GET == ARGV[1]} 原子判断消掉了。
+ *
+ * <p>★★★ <b>「不释放」的代价在 M5 实测里暴露了两次，第二次比第一次更隐蔽：</b>
+ * <ol>
+ *   <li><b>成功路径不放</b>（S8 实测）→ 一次成功的重建也留下 30 分钟幽灵锁，
+ *       它<b>正好卡死启动自愈</b>（{@code IndexInitializer} 探到索引为空 → 触发全量
+ *       → 拿不到锁 → {@code skipped=true}），系统停在<b>一个索引都没有</b>的状态里走 LIKE 降级。
+ *       ★ S8 只修了这一条。</li>
+ *   <li><b>失败路径不放</b>（S9 实测）→ 停 content 造一次必然失败的重建，
+ *       再修好重试，拿到的是 {@code skipped=true}，而它的成因被写成
+ *       「另一个重建正在跑」—— <b>一句假话</b>，且没人知道要等 30 分钟。
+ *       ★ 这才让「失败也放」被补上。</li>
+ * </ol>
+ * <p>完整的两次现场见 {@link #UNLOCK_SCRIPT} 与 {@link #rebuildAll}。
+ *
+ * <p>★ 判据是「<b>锁的寿命要对齐它保护的东西的寿命</b>」：锁要防的是
+ * 「A 在灌、B 把索引删了」，而失败时半成品新索引已被删、别名没切、
+ * 旧索引原样在用 —— <b>它保护的东西一件都不剩了。</b>
+ * ★ 唯一仍然靠 TTL 兜底的是<b>进程被 kill -9</b>（{@code finally} 不执行），
+ * 那条路本来就只能等 TTL，而它也依旧与「跑完了」长得不一样。
  *
  * <h3>★★ 拿不到锁 = 本轮什么都不做，方向是刻意选的</h3>
  *
@@ -78,6 +105,34 @@ import java.util.List;
  * ★★ 对<b>管理端点</b>触发的：调用方拿到的是 {@code skipped=true}，
  * 而<b>绝不能把这个显示成「重建成功」</b> —— 见 {@link RebuildReport} 的注释。
  *
+ * <h3>★★★ S8 的代价：重建期间到达的【增量】会随旧索引一起被删掉</h3>
+ *
+ * <p>别名切换消掉了「读出 0 条」这个坏状态，<b>但它消不掉一个写的缺口</b>，
+ * 这一条必须写清楚，否则它看起来像是个没人想到的 bug：
+ *
+ * <pre>
+ *   t0  重建开始，新索引建好，开始一页页读 content
+ *   t1  ★ 某本书被改了 → MQ → 消费者写【别名】→ 落在【旧】索引上
+ *   t2  重建跑完，别名切到新索引，旧索引被删
+ *   →   新索引里那本书是 t0 时刻的样子，t1 那次改动【丢了】
+ * </pre>
+ *
+ * <p>★ 丢失的窗口是<b>「重建本身的耗时」</b>，恢复有两条路：
+ * 那本书<b>下次被改动</b>时（增量消息会重新带上它），或者<b>下一轮 6 小时的全量重建</b>。
+ *
+ * <p>★★ <b>为什么宁可留着这个缺口，也不做「重建期间双写」</b>：
+ * 双写要在 Redis 里放一个「本轮重建的目标索引名」，让消费者每条消息都去读它、
+ * 然后写两份 —— 那等于给<b>最热的那条路径</b>（增量消息）加一次 Redis 往返和一个新的失败面：
+ * 那个 key 一旦泄漏（重建崩了没清），消费者就会<b>往一个没人指向的索引里写</b>，
+ * 而且是静默的。★ 用一个「只有几秒、且有两条自动恢复路径」的小缺口，
+ * 去换一个「静默写错地方」的新失败模式，不划算。
+ * ★★ 这条判断的形状和 M4 那条一样：<b>「去重算一次」永远比「算好的结果」好维护</b> ——
+ * 这里选的是「让下一条消息把真值重新算一遍」，而不是「小心翼翼地维护两份写入」。
+ *
+ * <p>★ 还有一层：<b>M4 时代这个缺口其实更大、只是没人算过</b> ——
+ * 那时候整个重建窗口里检索都在降级（排序退回阅读量），
+ * 而现在只是「重建期间被改的那几本书，索引旧了一点」。</p>
+ *
  * <h3>★ 为什么这里可以放心用 {@code ContentClient}（Feign），而消费者那边要小心</h3>
  *
  * <p>两者都在 search 进程里、都调 content，区别在<b>调用发生在哪个线程</b>：
@@ -85,7 +140,8 @@ import java.util.List;
  * 本类跑在定时任务线程 / 请求线程上。
  * ★ <b>定时任务线程上没有 {@code UserContext}</b>（没有请求）——
  * 所以这里调的对端端点必须是不依赖登录态的那种，
- * 而这正是 {@code /internal/**} 的前提（认证只靠共享密钥头，由 {@code FeignIdentityConfig} 带上）。
+ * 而这正是 {@code /internal/**} 的前提（认证只靠共享密钥头，
+ * 由 {@code com.novel.common.internal.FeignIdentityConfig} 带上 —— ★ M5 起它只有一份）。
  * ★★ 这一条和 {@code NovelStatReconcileJob} 里「绝不能调 {@code ShelfService}」是同一类约束：
  * <b>定时任务能调什么，取决于目标方法要不要登录态，不取决于它是不是 public。</b>
  *
@@ -149,6 +205,62 @@ public class IndexRebuildService {
      * （{@code InetAddress.getLocalHost()} 在有些环境里会卡住，为一个日志字段不值得）。
      */
     private static final String INSTANCE_ID = ManagementFactory.getRuntimeMXBean().getName();
+
+    /**
+     * 「如果锁是我的，就删掉它」的 Lua 脚本。★★★ S8 实测补上的那一步。
+     *
+     * <pre>
+     *   KEYS[1] = novel:lock:search-index-rebuild   （锁本身，一个 String）
+     *   ARGV[1] = INSTANCE_ID                       （本进程的 pid@hostname）
+     *
+     *   返回 1 = 锁是我的，已删
+     *   返回 0 = 锁不是我的（早过期被别人拿了，或压根没锁）→ 什么都不做
+     * </pre>
+     *
+     * <p>★★★ <b>为什么必须补这一步 —— 先把「不释放」的原始理由摆出来：
+     * 它当时是对的，只是漏了一种触发路径。</b>
+     *
+     * <p>类注释原本写着「不主动释放（理由同 {@code NovelStatReconcileJob}）」，
+     * 而那条理由说的是<b>释放的【做法】</b>要小心（不能裸 {@code DEL}），
+     * 不是「释放这件事本身没必要」。当时的取舍是：**宁可留个幽灵锁，也不冒删错别人锁的风险。**
+     *
+     * <p>★★ <b>但这个取舍没有算过【启动自愈】这条路径，而 M5 实测把它撞出来了：</b>
+     *
+     * <pre>
+     *   21:36:23  一次【成功】的重建跑完，别名切好 —— 锁没人删，留着
+     *   21:39:21  重启 search：IndexInitializer 探到「别名不存在」→ 触发全量自愈
+     *   21:39:21  ★ 拿不到锁（上一轮那把还在，TTL 30 分钟）→ skipped=true，灌入 0 条
+     *   →         结果是 ES 里【一个索引都没有】，全站搜索走 LIKE 降级，
+     *             直到 22:06 锁自己过期 —— 而这一轮自愈早就结束了，没人会再来看一眼
+     * </pre>
+     *
+     * <p>★★ <b>也就是说：那个「幽灵锁」不是无害的，它正好卡死了唯一能自愈的那条路。</b>
+     *
+     * <p>★★★ <b>而 S8 之后，释放它已经不需要付出任何风险</b> —— 这正是本条能成立的原因：
+     * <ul>
+     *   <li>锁要保护的是「A 在灌、B 把索引删了」这个互相破坏。而<b>失败时</b>
+     *       别名根本没切、旧索引原样还在（见 {@link IndexService#switchAlias} 的原子性），
+     *       半成品新索引也被 {@code deleteIndexQuietly} 删掉了
+     *       —— 下一个重建者与它<b>没有任何共享的可破坏对象</b>。</li>
+     *   <li>★★ 所以<b>成功和失败都要释放</b>：成功是「新索引已就位、旧索引已摘除」，
+     *       失败是「什么都不剩」—— <b>两种情况下锁保护的那个东西都已经不存在了。</b>
+     *       ★ 一度只放了成功那条（S8），S9 实测立刻撞出代价：
+     *       一次失败的重建让运维入口在接下来 30 分钟里只会返回
+     *       {@code skipped=true}，而归因写的是「另一个重建正在跑」（见 {@link #rebuildAll}）。</li>
+     * </ul>
+     * ★★ 换句话说：<b>锁的寿命对齐到「它保护的那个东西的寿命」</b>，
+     * 而不是拍一个 30 分钟。TTL 退化成纯粹的<b>崩溃兜底</b>（进程被 kill 时没人执行到这里）。
+     *
+     * <p>★ 而 {@code GET == ARGV[1]} 这个判断是<b>原子的</b>（Lua 在 Redis 里单线程执行），
+     * 正好消掉类注释担心的那个竞态：TTL 刚过期、B 刚拿到锁、A 这会儿才走到释放 ——
+     * 此时 {@code GET} 拿到的是 B 的 INSTANCE_ID，脚本返回 0，<b>B 的锁毫发无伤</b>。
+     */
+    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT = new DefaultRedisScript<>("""
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+            """, Long.class);
 
     private final IndexService indexService;
     private final ContentClient contentClient;
@@ -223,77 +335,181 @@ public class IndexRebuildService {
         }
 
         /*
-         * ── 第二步：删索引 + 重建 ──
+         * ── 拿到锁之后：干活的整段包在 try/finally 里，放锁写在这里而不是在下面各条 return 上 ──
          *
-         * ★★ 从这一刻起到 refill() 结束，索引是【不存在】或【不完整】的。
-         *   这期间每一次检索都会抛异常 → 被 SearchService 的 catch 接住 →
-         *   自动走降级路径（MySQL LIKE）。★ 也就是说窗口内搜索仍然可用，
-         *   只是排序退回阅读量。这是判断 11 明确接受的取舍。
+         * ★★★ S9 实测把「只由成功路径放锁」这个写法推翻了。原文的理由是
+         *   「失败路径放锁不是更保险，而是会把『上一轮跑崩了』和『上一轮跑完了』
+         *     在下一个【人】眼里抹平 —— 而它们该有不同的后续」。
+         *   ★ 这句话本身没错，错的是它把那个「人」放在了【锁】这个通道上。
+         *   M5 之后那个人的通道是【任务记录】（{@code ReindexTaskStore}：
+         *   FAILED + error / SUCCEEDED + skipped），锁上根本没有人去读这份区别。
+         *
+         * ★★ 而「不放」的代价是 S9 实测出来的，具体、可复现：
+         *   停掉 content 提交一次重建 → 重建失败 → 锁被留下 30 分钟 →
+         *   修好 content 再提交 → 拿到的是 {@code skipped=true}（本轮什么都没做），
+         *   而它在文档和直觉里的成因写的是「另一个重建正在跑」—— 【那是一句假话】。
+         *   管理员于是看到一个「成功但什么都没做」的结果，并且无从知道该等 30 分钟。
+         *
+         * ★ 判据仍然是 S8 自己那条「锁的寿命要对齐它保护的东西的寿命」，
+         *   只是这一次它指向了【放】而不是【留】：锁保护的是「一个一致的就绪状态」
+         *   与「没有第二个重建在动索引」，而失败时 —— 半成品新索引已被
+         *   {@code deleteIndexQuietly} 删掉、别名没切、旧索引原样在用 ——
+         *   ★ 那把锁保护的**什么都不剩了**。（M5 实测：失败后 ES 里仍然只有一个物理索引。）
+         *   留着它买不到任何东西，只买到一个 30 分钟的运维盲区。
+         *
+         * ★ 而 S8 真正想留的那条边界并没有被抹掉：**进程被 kill -9 时 finally 不会执行**，
+         *   那条路仍然只能等 TTL 到期 —— 也就是「跑崩了」依旧由 TTL 兜底、
+         *   依旧与「跑完了」长得不一样（一个 taskId 停在 RUNNING 且没有 finishedAt）。
          */
-        indexService.recreateIndex();
+        try {
+            return doRebuild(startedAt);
+        } finally {
+            releaseLock();
+        }
+    }
+
+    /**
+     * <b>已经拿到锁之后真正干活的那一段。</b>拆出来只为让上一层的
+     * 「拿锁 → try → finally 放锁」在源码里一眼看得见形状 ——
+     * 也就是「这把锁的寿命 = 这个方法体的寿命」这句话不是注释里的承诺，是代码的结构。
+     *
+     * <p>★ 本方法<b>只管干活，不管锁</b>：它拿到的锁一定已经被 {@link #rebuildAll} 拿着了，
+     * 而且无论从哪条路出去（正常 return / 抛异常）都会由上层放掉。
+     */
+    private RebuildReport doRebuild(long startedAt) {
+        /*
+         * ── 第二步：建一个【新的空物理索引】 ──
+         *
+         * ★★★ S8 之前这里做的是「把当前索引整个 DELETE 掉再建回来」，
+         *   从那一刻到灌完为止，全站检索都拿不到索引。现在它只是【另起一个】，
+         *   别名仍然指着旧索引 —— 也就是说从这一行到切换那一行之间，
+         *   ★ 用户读到的始终是那个完好的旧索引。
+         */
+        String newIndex = indexService.newPhysicalIndexName();
+        indexService.createPhysicalIndex(newIndex);
 
         /*
-         * ── 第三步：灌数据 ──
+         * ── 第三步：灌数据（灌进【新索引】，不是别名） ──
          *
-         * ★★★ 灌失败时必须把【刚建出来的空索引】删掉再往外抛 —— 这一条是 S8 实测逼出来的，
-         *   不是设计时就想到的。完整论证在 IndexService#dropQuietly 的注释里，这里只留判据：
+         * ★★ 灌失败时必须把【刚建出来的空索引】删掉再往外抛，
+         *   否则它会作为一个没人指向的孤儿留在 ES 里。判据在 IndexService#deleteIndexQuietly
+         *   的注释里，这里只留一句：
+         *   ★ S8 之后「索引存在但空」这个坏状态【不可达】了 —— 空的只可能是这个新索引，
+         *     而别名还没指过去，谁也读不到它。所以这里的清理是「扫地」，不是「止血」。
          *
-         *     索引不存在   → 检索抛异常 → 降级到 MySQL LIKE → 结果【是全集的】，只是排序退化  ← 好
-         *     索引存在但空 → 检索无异常 → 直接返回 0 条     → 结果【是空的】，且无人报错    ← 坏
-         *
-         *   ★★ 实测那次：recreateIndex() 的 DELETE 成功、refill() 的 Feign 读超时 →
-         *      留下一个空索引 → 搜「剑」返回 `HTTP 200 total=0`，而 LIKE 的真值是 2 条。
-         *      【既不降级、也不报错】—— 这是本类能产生的最坏结果。
-         *   ★ 半成品（灌了几页才断）同理：那会让一部分书永远搜不到。
-         *
-         * ★ 注意 try 只包 refill()，不包 recreateIndex()：后者失败时索引【本来就不存在】，
-         *   没有什么要清理的，多删一次只是多一次网络往返。
-         * ★ dropQuietly() 自己不外抛（见它的注释），所以这里的 catch 之后再 throw e
+         * ★ deleteIndexQuietly() 自己不外抛（见它的注释），所以这里的 catch 之后再 throw e
          *   抛出去的仍然是最初那个异常，不会被覆盖掉。
          */
         long indexed;
         try {
-            indexed = refill();
+            indexed = refill(newIndex);
         } catch (RuntimeException e) {
-            indexService.dropQuietly();
+            indexService.deleteIndexQuietly(newIndex);
             throw e;
         }
 
         /*
-         * ★★ 条数为 0 要单独报警。两种成因，处置不同但都必须被看见：
-         *   ① content 那边一本都没有（干净库）—— 正常，但值得记一笔，
-         *      因为它的另一个可能成因是「Feign 调通了、对端返回了空列表」，
-         *      而那是【把索引清空】这个后果里最安静的一种；
-         *   ② 对端返回了非空但解析成了空（契约漂移）—— 那是个真 bug。
-         * ★ ERROR 而不是 WARN：这个状态意味着【全站搜索此刻走的是降级路径】，
-         *   而如果没人注意，它会一直这样到下一个周期。
+         * ── 第四步：切换别名 —— 这是整个 S8 的落点，也是唯一一次「让用户看到新数据」 ──
          *
-         * ★★★ 【为什么这一支不跟着调 dropQuietly()】—— 上面那个 catch 会调，这里不会，
-         *   两者看起来都是「索引里没东西」，所以这个区别必须写下来，否则下一个人一定会问：
+         * ★★★ 条件是「灌进来了东西」【或】「当前根本没有可用的索引」。
+         *   反过来读更清楚：**一条都没灌进来，而旧索引是有内容的 → 绝不切换。**
          *
-         *   判据是这条不变式 —— 【索引存在 ⟹ 索引里的内容是正确的（空也算正确）】。
-         *     ① 干净库：索引空是【对的】，它如实反映了「库里没有书」。
-         *        此时删掉索引只会让每次检索白抛一次异常、白跑一趟 Feign，
-         *        最终结果还是 0 —— 更差，且什么也没换来。
-         *     ② 契约漂移：索引空是【错的】。
-         *   ★ 而 search 这边【分辨不出 ① 和 ②】—— 那正是这条 ERROR 日志存在的意义
-         *     （文案里那句「先确认 content 的作品表不是空的」就是在把分辨工作交给人的）。
-         *   ★★ 交给人的意思是：**能自动处置的自动处置，分不清的宁可留着现场让人来看**。
-         *     把 ② 也一并自动删掉的话，唯一的证据（那个空索引）就没了，
-         *     而症状会从「搜索返回 0」变成「搜索走了降级路径」—— 同样是坏的，但更难查。
+         *   为什么必须留这个分支：refill 返回 0 有两种成因，而本类【分辨不出】：
+         *     ① content 那边真的一本书都没有（干净库）—— 该切；
+         *     ② 契约漂移 / 对端返回了空列表（真 bug）—— 切过去就是【把一个好好的索引
+         *        换成一个空索引】，全站搜索从此静默返回 0 条。
+         *   ★ M4 时代这个取舍做不了（旧索引早被 DELETE 掉了，「留住它」这个选项不存在），
+         *     S8 之后做得了，所以必须做。★ 判据是「宁可这次重建白跑」——
+         *     白跑的代价是「索引旧了几分钟」，误判的代价是「搜索静默空了」。
+         *
+         *   ★★ 而 ② 的现场要留着让人看：这里【故意不删】那个新索引以外的任何东西，
+         *     并记一条 ERROR 说清「本次没有切换」。把空索引静默换上，
+         *     症状会从「搜索返回 0」变成「搜索看起来正常但少了一半」——
+         *     同样是坏的，但难查得多。
          */
         long elapsed = System.currentTimeMillis() - startedAt;
-        if (indexed == 0) {
-            log.error("索引重建完成，但一条都没灌进去 —— 全站搜索将走降级路径（MySQL LIKE）"
-                            + " | index={} 耗时={}ms。★ 先确认 content 的作品表不是空的，"
-                            + "再确认 /internal/novels/index-page 返回的不是空列表",
-                    indexService.indexName(), elapsed);
-        } else {
-            log.info("索引重建完成 | index={} 灌入={} 条 耗时={}ms",
-                    indexService.indexName(), indexed, elapsed);
+
+        if (indexed == 0 && indexService.aliasTargetsNonEmptyIndex()) {
+            log.error("索引重建：一条都没灌进来，而当前索引是有内容的 —— 【本次不切换别名】，"
+                            + "搜索继续用旧索引 | alias={} 新索引={}（已丢弃）耗时={}ms。"
+                            + "★ 先确认 content 的作品表不是空的，再确认 /internal/novels/index-page "
+                            + "返回的不是空列表",
+                    indexService.indexName(), newIndex, elapsed);
+            indexService.deleteIndexQuietly(newIndex);
+            return new RebuildReport(false, 0L, elapsed);
         }
 
+        indexService.switchAlias(newIndex);
+
+        /*
+         * ── 第五步：删旧索引（best-effort） ──
+         *
+         * ★★ 注意它在 switchAlias 之后、且【绝不影响成败】：
+         *   此刻旧索引已经没有任何人指向它，删不掉只是占空间。
+         *   ★ 让一次「删旧索引失败」把一次已经成功的重建报成失败，
+         *     会让管理员以为索引没切过去 —— 而事实正好相反。
+         * ★ 它顺带清掉历史遗留的孤儿索引（上次重建崩了留下的），
+         *   所以 ES 里不会慢慢攒下一堆没人指向的 novel_index_v*。
+         */
+        indexService.deleteStaleIndices(newIndex);
+
+        if (indexed == 0) {
+            /*
+             * ★ 走到这里说明「一条都没灌进来，且当前没有可用的旧索引」——
+             *   也就是【首次部署在一张空库上】。索引确实是空的，而那是【对的】。
+             *   ★ 仍然记 ERROR：另一个成因是 ② 契约漂移，而首次部署这个解释
+             *     只有在「库确实是空的」时才成立 —— 那句话是留给人的第一个检查动作。
+             */
+            log.error("索引重建完成，但一条都没灌进去 —— 全站搜索将走降级路径（MySQL LIKE）"
+                            + " | alias={} 新索引={} 耗时={}ms。★ 先确认 content 的作品表不是空的，"
+                            + "再确认 /internal/novels/index-page 返回的不是空列表",
+                    indexService.indexName(), newIndex, elapsed);
+        } else {
+            log.info("索引重建完成（已原子切换别名） | alias={} → {} 灌入={} 条 耗时={}ms",
+                    indexService.indexName(), newIndex, indexed, elapsed);
+        }
+
+        /*
+         * ── 第六步：交给上层放锁 ──
+         *
+         * ★★ 这里【不再】直接调 releaseLock()（S9 之前是）。
+         *   放锁移到了 rebuildAll 的 finally 里，见那里对「为什么失败也放」的完整论证 ——
+         *   一句话：锁保护的东西在失败时已经不存在了，留着它只买到一个 30 分钟的运维盲区。
+         *   ★ 本方法只管「干完了记得 return」，锁的寿命由调用方的结构保证。
+         */
         return new RebuildReport(false, indexed, elapsed);
+    }
+
+    /**
+     * 放锁。<b>compare-and-delete，不是裸 {@code DEL}</b> —— 理由见 {@link #UNLOCK_SCRIPT}。
+     *
+     * <p>★ 整个方法<b>不抛异常</b>。它现在由 {@code finally} 调用，所以「不抛」有了
+     * <b>第二条、也更硬的理由</b>：在失败路径上，抛出去会把<b>最初那个业务异常整个替换掉</b>
+     * （{@code try} 里正在往外冒的那个），日志里的人和轮询到的 error 都会看到
+     * 「删锁失败」而不是「content 连不上」—— 一个纯副作用的清理动作把主因盖掉了。
+     * <p>★ 而在成功路径上的理由不变：一个「锁没删掉」不该把一次成功的重建报成失败
+     * （那个后果是管理员以为索引没切，而事实正好相反 —— 与 {@code deleteStaleIndices} 同一条判据）。
+     * <p>★ 代价说清楚：删不掉 = 退化成这条修复之前的行为（TTL 到期自动消失），<b>不是错，只是旧</b>。
+     */
+    private void releaseLock() {
+        try {
+            Long released = stringRedisTemplate.execute(
+                    UNLOCK_SCRIPT, List.of(LOCK_KEY), INSTANCE_ID);
+            if (Long.valueOf(1L).equals(released)) {
+                log.info("索引重建：已释放锁（compare-and-delete） | lock={}", LOCK_KEY);
+            } else {
+                /*
+                 * ★ 返回 0 不是错误，但【值得记一笔】：它说明本次执行超过了 TTL(30 分钟)，
+                 *   锁早已过期并被别人拿走 —— 也就是说同一时刻可能有第二个重建在跑。
+                 *   这正是锁本该防住的事，所以要留下痕迹（记 WARN，不抛）。
+                 */
+                log.warn("索引重建：锁已不是本实例的，未删除（本次执行可能超过了 TTL={}） | lock={}",
+                        LOCK_TTL, LOCK_KEY);
+            }
+        } catch (Exception e) {
+            log.warn("索引重建：释放锁失败，将等 TTL 到期自动消失（不影响本次重建结果） | lock={} | {}: {}",
+                    LOCK_KEY, e.getClass().getSimpleName(), e.getMessage());
+        }
     }
 
     /**
@@ -309,8 +525,11 @@ public class IndexRebuildService {
      * <p>★ 撞上限时<b>不抛异常</b>，记 ERROR 后返回已灌条数 ——
      * 已经灌进去的部分是对的（upsert 幂等），下一轮重建还会来。
      * <b>抛出去反而会把「灌了一半」说成「整个失败」。</b>
+     *
+     * @param target 目标物理索引名。★ <b>是它而不是别名</b> —— 别名这时候还指着旧索引，
+     *               灌到别名上等于「一边重建一边往生产索引里掺半成品」。
      */
-    private long refill() {
+    private long refill(String target) {
         long afterId = 0L;
         long indexed = 0L;
 
@@ -327,7 +546,7 @@ public class IndexRebuildService {
              *   （LocalDateTime → ISO-8601 字符串的转换在那里）。这里不要自己拼字段。
              * ★ 一批一次 bulk，不是一条一次 index：见 IndexService#bulkUpsert。
              */
-            indexService.bulkUpsert(page.stream().map(NovelDocument::from).toList());
+            indexService.bulkUpsert(page.stream().map(NovelDocument::from).toList(), target);
             indexed += page.size();
 
             afterId = page.get(page.size() - 1).getId();

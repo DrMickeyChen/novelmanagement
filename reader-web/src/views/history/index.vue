@@ -20,14 +20,26 @@
 import { onMounted } from 'vue'
 import { getHistoryList } from '@/api/reader'
 import { usePagedList } from '@/composables/usePagedList'
-import { formatDateTime } from '@/utils/format'
+import { formatAuthorName, formatDateTime } from '@/utils/format'
 
-const { list, total, page, size, loading, loaded, load, changePage } = usePagedList(
-  ({ page, size }) => getHistoryList({ page, size }),
-  { pageSize: 20 },
-)
+const { list, total, page, size, loading, loaded, isEmpty, failed, load, changePage, reload } =
+  usePagedList(({ page, size }) => getHistoryList({ page, size }), { pageSize: 20 })
 
 onMounted(load)
+
+/**
+ * 失败态里那个「重试」。
+ *
+ * ★ 用 `reload()` 而不是 `load()`：失败时列表被清空、`total` 也是 0，
+ *   分页条已经消失，此刻「第几页」没有意义 —— 回到第 1 页重查。
+ * ★★ 必须在这里兜住 reject：`request.js` 的拦截器**提示完照样把
+ *   Promise 拒出去**，模板里裸写 `@click="reload"` 就是一条
+ *   unhandledrejection。（评论区 / 搜索页 / 分类页各有一份同样的
+ *   `retry()`，四处保持一致。）
+ */
+function retry() {
+  reload().catch(() => {})
+}
 
 /**
  * 「继续阅读」的地址。**取不到就是 null**，模板据此换一个入口。
@@ -85,7 +97,8 @@ function chapterLabel(item) {
 
           <div class="meta">
             <template v-if="item.available">
-              <span class="author">{{ item.authorName || '佚名' }}</span>
+              <!-- ★ M5：`—` 而不是「佚名」—— 判据见 utils/format.js 的 formatAuthorName -->
+              <span class="author">{{ formatAuthorName(item.authorName) }}</span>
               <el-divider direction="vertical" />
               <span>{{ item.categoryName || '未分类' }}</span>
               <template v-if="chapterLabel(item)">
@@ -120,10 +133,21 @@ function chapterLabel(item) {
       </div>
     </div>
 
-    <el-empty v-if="loaded && !list.length" description="还没有阅读记录">
+    <!--
+      ★★ M5：失败态单独一支。M5 之前失败和空态共用下面那一行，于是
+        停掉 content 之后读者看到的是【「还没有阅读记录」】加一个
+        「去逛逛」按钮 —— 而他的阅读记录一条都没少，是服务挂了。
+        ★ 更糟的是那句「去逛逛」：它把用户支使去首页，
+          等于用一个错误的原因改变了用户的行为。
+        `isEmpty` 里含 `!failed`，两支由构造互斥（见 usePagedList 文件头）。
+    -->
+    <el-empty v-if="isEmpty" description="还没有阅读记录">
       <router-link to="/">
         <el-button type="primary">去逛逛</el-button>
       </router-link>
+    </el-empty>
+    <el-empty v-else-if="failed" description="阅读记录暂时加载失败">
+      <el-button type="primary" plain @click="retry">重试</el-button>
     </el-empty>
 
     <div v-if="total > size" class="pager">

@@ -237,8 +237,11 @@ logging:
   file:
     name: logs/novel-auth.log
 
+  # ★ M5 起这里也要带 traceId。console 和 file 是【两份独立】的 pattern，
+  #   只改 application.yml 那份的症状是「控制台有、文件里没有」——
+  #   而事后查日志看的恰恰是文件。两份必须同时改。
   pattern:
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
 
   logback:
     rollingpolicy:

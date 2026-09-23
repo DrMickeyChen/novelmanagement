@@ -49,7 +49,14 @@ import java.util.Map;
  *
  * @author MickeyChen
  */
-@FeignClient(name = "novel-auth", path = "/internal")
+/*
+ * ★★ M5：fallbackFactory 是【同时】要满足两个条件的，缺一个就是一段死代码：
+ *   ① 这里写上它；② application.yml 里 feign.sentinel.enabled: true。
+ *   少了 ②，SCA 走 DefaultTargeter，这个工厂永远不会被创建，
+ *   而应用正常启动、零报错 —— 详细论证在 AuthUserClientFallbackFactory 的注释里。
+ */
+@FeignClient(name = "novel-auth", path = "/internal",
+        fallbackFactory = AuthUserClientFallbackFactory.class)
 public interface AuthUserClient {
 
     /** 单个用户的昵称。查不到返回 {@code data: null}（不是 404）。 */

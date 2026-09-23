@@ -30,18 +30,30 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getShelfList, removeFromShelf } from '@/api/shelf'
 import { usePagedList } from '@/composables/usePagedList'
-import { formatDate } from '@/utils/format'
+import { formatAuthorName, formatDate } from '@/utils/format'
 
 /**
  * 分页。★ 用项目统一的 `usePagedList`（它处理过「加载中和空态打架」
  * 「快速翻页时先发的响应后到」这些事，见它的文件头）。
  */
-const { list, total, page, size, loading, loaded, load, changePage } = usePagedList(
-  ({ page, size }) => getShelfList({ page, size }),
-  { pageSize: 12 },
-)
+const { list, total, page, size, loading, loaded, isEmpty, failed, load, changePage, reload } =
+  usePagedList(({ page, size }) => getShelfList({ page, size }), { pageSize: 12 })
 
 onMounted(load)
+
+/**
+ * 失败态里那个「重试」。
+ *
+ * ★ 用 `reload()` 而不是 `load()`：失败时列表被清空、`total` 也是 0，
+ *   分页条已经消失，此刻「第几页」没有意义 —— 回到第 1 页重查。
+ * ★★ 必须在这里兜住 reject：`request.js` 的拦截器**提示完照样把
+ *   Promise 拒出去**，模板里裸写 `@click="reload"` 就是一条
+ *   unhandledrejection。（评论区 / 搜索页 / 分类页 / 历史页各有一份
+ *   同样的 `retry()`，五处保持一致。）
+ */
+function retry() {
+  reload().catch(() => {})
+}
 
 /**
  * 续读目标章节。
@@ -163,7 +175,8 @@ const totalText = computed(() => (loaded.value ? `共 ${total.value} 本` : ''))
           </router-link>
 
           <div class="meta">
-            <span class="author">{{ item.authorName || '佚名' }}</span>
+            <!-- ★ M5：`—` 而不是「佚名」—— 判据见 utils/format.js 的 formatAuthorName -->
+            <span class="author">{{ formatAuthorName(item.authorName) }}</span>
             <el-divider direction="vertical" />
             <span>{{ item.categoryName || '未分类' }}</span>
             <el-divider direction="vertical" />
@@ -204,11 +217,22 @@ const totalText = computed(() => (loaded.value ? `共 ${total.value} 本` : ''))
       </div>
     </div>
 
-    <!-- ★ 必须等 loaded —— 只用 !list.length 的话首屏会「加载动画 + 空书架」同时出现 -->
-    <el-empty v-if="loaded && !list.length" description="书架还是空的">
+    <!--
+      ★ 必须等 loaded —— 只用 !list.length 的话首屏会「加载动画 + 空书架」同时出现
+
+      ★★ M5：失败态单独一支。M5 之前失败和空态共用下面那一行，于是
+        停掉 content 之后读者看到的是【「书架还是空的」】——
+        而他的收藏一本都没少。这和详情页那个收藏按钮是同一个谎话
+        （那边是显示成「加入书架」），两处一起改掉了。
+        `isEmpty` 里含 `!failed`，两支由构造互斥（见 usePagedList 文件头）。
+    -->
+    <el-empty v-if="isEmpty" description="书架还是空的">
       <router-link to="/">
         <el-button type="primary">去逛逛</el-button>
       </router-link>
+    </el-empty>
+    <el-empty v-else-if="failed" description="书架暂时加载失败">
+      <el-button type="primary" plain @click="retry">重试</el-button>
     </el-empty>
 
     <div v-if="total > size" class="pager">

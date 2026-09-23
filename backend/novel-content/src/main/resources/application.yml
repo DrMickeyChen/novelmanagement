@@ -102,6 +102,43 @@ spring:
   # 在 GlobalExceptionHandler 里接住它即可，不用动任何配置。
 
 # ============================================================
+# 熔断降级开关（M5）
+# ============================================================
+#
+# ★★★ 键名是 feign.sentinel.enabled ——【顶级 feign】，不是
+#     spring.cloud.openfeign.sentinel.enabled。
+#
+#     SCA 那边读它的是一行：
+#         @ConditionalOnProperty(name = "feign.sentinel.enabled")
+#     它是 SCA 自己的注解，【不是】SCOF 的 @ConfigurationProperties ——
+#     所以那次 `feign.* → spring.cloud.openfeign.*` 的迁移动不到它。
+#
+# ★★ 写成「看起来更对」的 spring.cloud.openfeign.sentinel.enabled 会怎样：
+#     没有任何类会读那个键。【应用正常启动、一条报错都没有】，
+#     而 @FeignClient 上写的 fallbackFactory 永远不会被调用 ——
+#     熔断和降级形同虚设，且没有任何症状。这正是 CLAUDE.md 里
+#     M3 那条「未知前缀不报错」的又一个适用者。
+#     ★ 所以这个键名值得在这里写死一段注释：它没有任何自证机制。
+#
+# ★ 为什么这条开关在 application.yml、而 Feign 超时在 application-dev.yml：
+#     超时是【每个环境不同的取值】，dev 给 2s/5s、生产跨主机要另调；
+#     而这个开关是【结构性的】—— 「本服务要不要熔断能力」和
+#     跑在哪个环境无关。
+#   ★★ 反过来放的后果很具体：仓库里【没有】application-prod.yml
+#      （它在 .gitignore 里，部署时按 docs/部署.md 那张表手建），
+#      只写进 dev 就意味着生产上这个键【根本不存在】→
+#      Sentinel 静默关闭，而所有 fallbackFactory 的代码看起来都是好的。
+#
+# ★ 开了之后发生什么：@FeignClient 上的 fallbackFactory 会被
+#   SentinelInvocationHandler 接上。★ 注意它接的是【所有】异常
+#   （源码里是 catch (Throwable)），不只是熔断 —— 所以即使一条规则
+#   都没有配，下游连不上时 fallbackFactory 照样会跑。
+#   「无规则 = 永不触发」说的是【熔断器】，不是 fallback，别混。
+feign:
+  sentinel:
+    enabled: true
+
+# ============================================================
 # 内部令牌
 # ============================================================
 novel:
@@ -268,5 +305,12 @@ logging:
     root: info
     com.novel: debug                    # 自己写的代码开 debug，方便排查
     org.springframework.web: info
+  # ★★ M5：traceId 进日志。键名必须和 TraceContext.MDC_KEY 逐字相同 ——
+  #   改了一个另一个不会报错，只会永远打空（Logback 找不到键就是空字符串）。
+  # ★ 字段顺序是「级别 → traceId → 线程 → logger → 消息」，即
+  #   从「这条多重要」到「哪一次请求」到「谁打的」到「说了什么」。
+  # ★ 非请求线程（启动日志 / MQ 消费 / 定时任务）没有 MDC，这一格显示成 [] ——
+  #   那是在说「这一行不属于任何一次请求」，不是错误；
+  #   反过来，一行处理请求的日志显示 [] 才值得去看。
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"

@@ -11,7 +11,7 @@
  *   等封面真正有了再往这个组件里加，四处一起生效 —— 这正是抽组件的好处。
  */
 import { computed } from 'vue'
-import { formatWordCount } from '@/utils/format'
+import { formatAuthorName, formatWordCount } from '@/utils/format'
 
 const props = defineProps({
   /** 一个 NovelVO。字段见后端 NovelVO */
@@ -49,9 +49,14 @@ const isFinished = computed(() => Number(props.novel.isFinish) === 1)
         ★ authorName 和 categoryName 都是后端 JOIN 出来的（NovelVO 里带的），
           前端不用再查一次 —— 后端为此加了 ContentUserLookup 做批量取昵称，
           就是不想让前端拿到一堆 authorId 之后自己一个个去查。
-          它可能为 null（作者已注销 / 分类被删），所以要有兜底文案。
+          ★★ M5 起两者的兜底**故意不一样**，理由在 formatAuthorName 的注释里：
+             authorName 跨服务（auth 挂了就整个消失 → 显示 `—`），
+             categoryName 是本库 JOIN（取不到就是真没有 → 显示「未分类」）。
+             ★ 卡片这一层**分辨不出**「auth 挂了」和「作者没了」——
+             但本系统里后者不存在（每本书都有作者），所以 `—` 是对的，
+             而原来的「佚名」是一句读起来很正常、内容是错的假话。
       -->
-      <span class="author">{{ novel.authorName || '佚名' }}</span>
+      <span class="author">{{ formatAuthorName(novel.authorName) }}</span>
       <el-divider direction="vertical" />
       <span>{{ novel.categoryName || '未分类' }}</span>
     </div>

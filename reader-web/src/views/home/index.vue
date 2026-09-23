@@ -30,11 +30,15 @@ import NoticeBanner from '@/components/NoticeBanner.vue'
 const categories = ref([])
 const loadingCategories = ref(false)
 const categoriesLoaded = ref(false)
+/** ★ M5：本块是不是**失败**了。语义同 `usePagedList` 的 `failed`，见文件头 */
+const categoriesFailed = ref(false)
 
 /** 热门榜。★ 榜单接口不分页，固定取前 N 条 */
 const hotList = ref([])
 const loadingHot = ref(false)
 const hotLoaded = ref(false)
+/** ★ M5：同上 */
+const hotFailed = ref(false)
 
 /**
  * 最近更新 —— 这里是全站唯一用了分页的「最近更新」。
@@ -61,6 +65,8 @@ const {
   size: latestSize,
   loading: latestLoading,
   loaded: latestLoaded,
+  isEmpty: latestIsEmpty,
+  failed: latestFailed,
   load: loadLatest,
   changePage: changeLatestPage,
 } = usePagedList(({ page, size }) => getNovelList({ page, size, sort: 'latest' }), {
@@ -76,13 +82,51 @@ onMounted(() => {
   loadLatest()
 })
 
+/**
+ * ★★ M5：首页三块各自的失败态。
+ *
+ * 这三块的 `catch` 以前都是「清空数组 + 拦截器弹过提示了」——
+ * 于是停掉 content 之后首页显示的是【三个「暂无作品」】。
+ * 而首页是**最常被打开的一页**，也是访客看到的第一屏：
+ * 一个「还没有任何分类、榜单空、最近更新空」的首页，
+ * 看起来完全像「这个站刚上线、里面什么都没有」。
+ *
+ * ★ 每块各给一条重试，而不是页面级一条 —— 三块是三个请求，
+ *   可能只挂一块（比如只停了 content 的某个端点），
+ *   页面级重试会把好的那两块也重查一遍。
+ * ★ 用小的 `el-empty`（`image-size: 60`）而不是大插画：
+ *   三块同时失败时，三张大插画会把首页撑得很难看，
+ *   而「暂时拿不到」这件事本来也不需要那么大的视觉权重。
+ */
+function retryCategories() {
+  loadCategories().catch(() => {})
+}
+
+function retryHot() {
+  loadHot().catch(() => {})
+}
+
+/**
+ * 最近更新那块的重试。
+ * ★ 用 `loadLatest` 而不是 `reload` —— 这里没解构 `reload`（本块不分页切换筛选），
+ *   而 `load()` 默认沿用当前页码。失败时列表被清空、`latestTotal` 也是 0，
+ *   分页条已经消失，「第几页」没有意义；但 `load()` 传的是 `page.value`，
+ *   那个值在失败时**没有被重置**，所以复用它是安全的。
+ */
+function retryLatest() {
+  loadLatest(1).catch(() => {})
+}
+
 async function loadCategories() {
   loadingCategories.value = true
+  categoriesFailed.value = false
   try {
     categories.value = (await getCategoryList()) || []
   } catch {
-    // 拦截器已经弹过提示了。这里保持空数组，页面显示空态即可，不再重复报错
+    // 拦截器已经弹过提示了。★ 但不能停在「空数组」上 —— 那等于说
+    // 「这个站没有分类」，而真相是分类接口没通
     categories.value = []
+    categoriesFailed.value = true
   } finally {
     loadingCategories.value = false
     categoriesLoaded.value = true
@@ -91,10 +135,12 @@ async function loadCategories() {
 
 async function loadHot() {
   loadingHot.value = true
+  hotFailed.value = false
   try {
     hotList.value = (await getRankList({ type: 'hot', limit: HOT_LIMIT })) || []
   } catch {
     hotList.value = []
+    hotFailed.value = true
   } finally {
     loadingHot.value = false
     hotLoaded.value = true
@@ -134,12 +180,17 @@ async function loadHot() {
       <!--
         ★ loaded 的用法见 composables/usePagedList.js 开头那段：
           不加「查过了」这个条件，首屏会出现「加载动画和空态同时显示」。
+        ★★ M5：失败态单独一支，见 loadCategories 上面那段。
+          `!categoriesFailed` 那半个条件不能少 —— catch 里数组也被清空了。
       -->
       <el-empty
-        v-if="categoriesLoaded && !categories.length"
+        v-if="categoriesLoaded && !categoriesFailed && !categories.length"
         description="还没有任何分类"
         :image-size="60"
       />
+      <el-empty v-else-if="categoriesFailed" description="分类暂时加载失败" :image-size="60">
+        <el-button size="small" type="primary" plain @click="retryCategories">重试</el-button>
+      </el-empty>
     </el-card>
 
     <!-- ============ ② 热门榜 ============ -->
@@ -155,7 +206,15 @@ async function loadHot() {
         <NovelCard v-for="novel in hotList" :key="novel.id" :novel="novel" />
       </div>
 
-      <el-empty v-if="hotLoaded && !hotList.length" description="暂无作品" :image-size="60" />
+      <!-- ★★ M5：失败态单独一支，理由同上面「分类」那块 -->
+      <el-empty
+        v-if="hotLoaded && !hotFailed && !hotList.length"
+        description="暂无作品"
+        :image-size="60"
+      />
+      <el-empty v-else-if="hotFailed" description="热门暂时加载失败" :image-size="60">
+        <el-button size="small" type="primary" plain @click="retryHot">重试</el-button>
+      </el-empty>
     </el-card>
 
     <!-- ============ ③ 最近更新（分页） ============ -->
@@ -170,7 +229,11 @@ async function loadHot() {
         <NovelCard v-for="novel in latestList" :key="novel.id" :novel="novel" />
       </div>
 
-      <el-empty v-if="latestLoaded && !latestList.length" description="暂无作品" :image-size="60" />
+      <!-- ★★ M5：失败态单独一支（这一块用的是 usePagedList，判据由它给） -->
+      <el-empty v-if="latestIsEmpty" description="暂无作品" :image-size="60" />
+      <el-empty v-else-if="latestFailed" description="最近更新暂时加载失败" :image-size="60">
+        <el-button size="small" type="primary" plain @click="retryLatest">重试</el-button>
+      </el-empty>
 
       <!--
         ★ 总数不超过一页时不显示分页控件。

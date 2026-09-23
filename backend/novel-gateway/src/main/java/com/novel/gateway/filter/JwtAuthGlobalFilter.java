@@ -10,6 +10,7 @@ import com.novel.common.security.IdentityHeaders;
 import com.novel.common.security.JwtUtil;
 import com.novel.common.security.LoginUser;
 import com.novel.common.security.TokenStore;
+import com.novel.common.trace.TraceContext;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import lombok.RequiredArgsConstructor;
@@ -141,8 +142,64 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
     @Value("${novel.internal.token}")
     private String internalToken;
 
+    /**
+     * <b>只负责 traceId 的生成与清理（M5），鉴权与转发全在 {@link #handle} 里。</b>
+     *
+     * <p>之所以拆成两个方法，是为了让 {@code try/finally} 不用把一百多行业务包进去
+     * —— 拆开之后那个业务方法的缩进<b>一行都不用动</b>，
+     * 而「生成 → 放 → 清」这三步能一眼看完。
+     *
+     * <h3>★★ 永远生成新的，不看客户端带没带</h3>
+     *
+     * <p>网关面对的是<b>浏览器</b>，{@code X-Trace-Id} 是客户端可以随便设的头。
+     * 采纳它 = 任何人加一个 {@code -H "X-Trace-Id: xxx"} 就能把自己的请求
+     * <b>关联到别人的日志上</b>。
+     * <p>★ 这和 {@code IdentityHeaders.strip} 剥掉 {@code X-User-*} 是同一个道理，
+     * 只是后果不同：那个是<b>越权</b>，这个是<b>日志串号</b>。
+     * 严重性差很多，但成本都是零，所以一样处理。
+     *
+     * <h3>★ 而下游【必须】采纳 —— 两条规则不一样是刻意的</h3>
+     *
+     * <p>四个服务里的 {@code TraceIdFilter} 面对的是网关或兄弟服务的 Feign 调用，
+     * 它<b>不采纳</b>的话链路就在每个服务边界断掉，等于没做追踪。
+     * 完整的对照表在 {@code TraceContext} 的类注释里。
+     *
+     * <h3>★ MDC 只覆盖「这个 filter 自己的同步段」</h3>
+     *
+     * <p>WebFlux 里一个请求会跨线程，MDC 是 ThreadLocal，所以
+     * <b>下游路由（{@code NettyRoutingFilter}）那一段的日志没有 traceId</b>
+     * —— 那是 Reactor 上下文传播要解决的问题，M5 不引入（记为债）。
+     * <p>而<b>写进请求头的那个值走参数、不走 MDC</b>：它是下游四个服务唯一的
+     * 关联依据，不能「大部分时候对」。见 {@link #handle} 的 {@code traceId} 参数。
+     */
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        String traceId = TraceContext.newTraceId();
+        TraceContext.put(traceId);
+        try {
+            return handle(exchange, chain, traceId);
+        } finally {
+            /*
+             * ★ put 和 clear 在【同一个线程】上成对出现 —— 这一点能成立，
+             *   是因为 filter 返回的 Mono 是【懒】的：真正的转发要等外层订阅
+             *   才会执行，那时已经出了这个 try/finally。
+             *   ★ 也就是说：Netty 相关的日志里 MDC 是空的（上面已经写明），
+             *     但【绝不会】把 traceId 泄漏到同一条 Netty 线程上的下一个请求 ——
+             *     那个泄漏才是真正会污染日志的（Tomcat 线程复用是同一个问题，
+             *     见 TraceContext#clear）。
+             */
+            TraceContext.clear();
+        }
+    }
+
+    /**
+     * 鉴权 + 写头 + 转发的本体。
+     *
+     * @param traceId ★ <b>由 {@link #filter} 生成的、本次请求唯一的关联 id。</b>
+     *                它<b>不走 MDC</b>：MDC 是给日志用的 best-effort，
+     *                而写进 {@code X-Trace-Id} 头的值必须是确定的。
+     */
+    private Mono<Void> handle(ServerWebExchange exchange, GatewayFilterChain chain, String traceId) {
         ServerHttpRequest request = exchange.getRequest();
         HttpHeaders headers = request.getHeaders();
 
@@ -159,7 +216,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
          */
         if (token == null) {
             log.debug("匿名请求（无 token）| {} {}", request.getMethod(), request.getURI().getPath());
-            return forward(exchange, null, chain);
+            return forward(exchange, null, traceId, chain);
         }
 
         /*
@@ -182,7 +239,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
              */
             log.debug("token 无效，按匿名放行 | {} {} | {}",
                     request.getMethod(), request.getURI().getPath(), e.getClass().getSimpleName());
-            return forward(exchange, null, chain);
+            return forward(exchange, null, traceId, chain);
         }
 
         Long userId = jwtUtil.getUserId(claims);
@@ -194,7 +251,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
              *   走到这里说明 token 的结构不对 —— 同样是按匿名处理。
              */
             log.debug("token 缺少 sub/jti，按匿名放行 | {}", request.getURI().getPath());
-            return forward(exchange, null, chain);
+            return forward(exchange, null, traceId, chain);
         }
 
         /*
@@ -243,7 +300,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
              */
             log.info("token 有效但登录态已不存在（已登出/被踢下线）| userId={} jti={} path={}",
                     userId, jti, request.getURI().getPath());
-            return forward(exchange, null, chain);
+            return forward(exchange, null, traceId, chain);
         }
 
         /*
@@ -254,7 +311,7 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         log.debug("身份已解析 | userId={} username={} roles={} path={}",
                 loginUser.getUserId(), loginUser.getUsername(), loginUser.getRoles(),
                 request.getURI().getPath());
-        return forward(exchange, loginUser, chain);
+        return forward(exchange, loginUser, traceId, chain);
     }
 
     /**
@@ -269,9 +326,11 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
      *
      * @param loginUser {@code null} 表示匿名 —— 此时<b>只写共享密钥</b>，
      *                  身份头一个都不写
+     * @param traceId   ★ M5 新增。见下面「③」那一段：它<b>永远非空</b>，
+     *                  这一点决定了它<b>不需要</b>像身份头那样先剥一下
      */
     private Mono<Void> forward(ServerWebExchange exchange, LoginUser loginUser,
-                               GatewayFilterChain chain) {
+                               String traceId, GatewayFilterChain chain) {
         /*
          * ★★ 先攒一个普通的 Map<String,String>，再整个落到请求头上。
          *
@@ -300,12 +359,37 @@ public class JwtAuthGlobalFilter implements GlobalFilter, Ordered {
         /* ② 有身份才写身份（loginUser 为 null 时 write 直接返回，什么都不加） */
         IdentityHeaders.write(identity, loginUser);
 
+        /*
+         * ③ M5：本次请求的关联 id。
+         *
+         * ★★ 注意这里【没有】一句 headers.remove(X-Trace-Id) 去剥客户端的同名头 ——
+         *   而身份头那边有一句 IdentityHeaders.strip。这不是漏了，两边的条件不同：
+         *
+         *     身份头：匿名时 loginUser 为 null → write 什么都不写
+         *             → 客户端自带的 X-User-Id 会【原样活到下游】
+         *             → 所以【必须剥】，否则「任何人加一个 X-User-Id 就是管理员」
+         *
+         *     traceId：每一个请求都会走到这一行，值【永远非空】
+         *             → 下面 identity.forEach(headers::set) 里的 set
+         *               本身就会把客户端那个值顶掉（set 是替换整个值列表）
+         *             → 再写一句 remove 是【永远不起作用】的一行
+         *
+         *   ★ 所以这里不写。写了一句不会失败的防护，比不写更糟 ——
+         *     它会让后来的人以为「不剥就会漏」（铁律 8 的同族形状）。
+         *   ★ 但这条推断是【可证伪】的，所以 S1 的验收里有一条阳性对照：
+         *     带 -H "X-Trace-Id: DEADBEEF..." 打网关，
+         *     下游日志里必须【没有】DEADBEEF。
+         */
+        identity.put(TraceContext.HEADER, traceId);
+
         ServerHttpRequest mutated = exchange.getRequest().mutate().headers(headers -> {
             /*
              * ★★ 第一步永远是【剥】。顺序不能和上面的「攒」以及下面的「写」调换 ——
              *   反过来的话客户端的头会覆盖网关写的（或两个值并存，
              *   下游取到哪个取决于实现），那就是
              *   「任何人加一个 -H "X-User-Id: 1" 都是管理员」。
+             *   ★ 剥的是【身份头】那一组（IdentityHeaders.ALL）；traceId 不参与
+             *     这次剥的原因见上面「③」那段。
              */
             IdentityHeaders.strip(headers::remove);
             identity.forEach(headers::set);

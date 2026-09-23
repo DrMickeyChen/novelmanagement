@@ -114,6 +114,71 @@
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
         </dependency>
 
+        <!--
+          ==================== 熔断降级（M5）====================
+          ★★ 只有 content / interaction / search 三个服务有这个依赖，
+             以及它需要的 feign.sentinel.enabled 开关。
+
+          ============================================================
+          判据：谁有【出站边】，谁才装熔断
+          ============================================================
+          · novel-auth —— 出站边 **0 条**（M3 把唯一那条换成了事务消息，
+            依赖、配置、@EnableFeignClients 整段一起删的，见它的
+            application-dev.yml）。★ 给它装熔断就是在暗示这里还有
+            往外调的东西。**刻意不装。**
+          · novel-gateway —— 它没有 Feign。而「在网关做限流/降级」
+            是一条**看得见但不选**的路：BOM 里确实有
+            sentinel-spring-cloud-gateway-adapter，但本期的验收口径是
+            **下游服务**，在网关再加一层会把「这次降级是谁做的」
+            变成两个地方都要查。**刻意不装。**
+
+          ★★★ 这条不变量是**可 grep 的**，但**别用关键词 grep**：
+             `grep -l openfeign` 会命中 4 个文件 —— novel-auth 那份
+             命中的是注释（「这里以前有一段 openfeign...」，M3 自己
+             记过这个坑）。**凡是讲「这里以前有什么」的注释都必然
+             写着那个词**，于是那种判据永远假阳性。
+             ★ 正确的判据钉在**真注解**上：
+                 grep -rnE "^[[:space:]]*@FeignClient" backend/
+                 → 必须恰好 5 个（content 2 / interaction 2 / search 1）
+             （★ 那条正则锚在行首，所以非 .java 的文件命中也无所谓。
+               ★ 顺带记一条本项目的既有习惯：**XML 注释里不能出现连续
+               两个减号**（那是语法错误，POM 直接解析不了），所以本仓库
+               XML 的分割线一律用等号、只有 YAML 才用减号连成的分割线。
+               这不是风格问题，是上一条规矩的成因。）
+             以及**拆开 jar 看 BOOT-INF/lib**（铁律 8：别用文本 grep
+             判断一个库在不在 classpath 上 —— 任何 Boot 应用的
+             autoconfigure 包里都含有所有技术的类名）。
+
+          ============================================================
+          ★ 两个不选的抽象层（BOM 里都在）
+          ============================================================
+          · spring-cloud-circuitbreaker-sentinel —— 它包一层
+            CircuitBreaker 接口，而本项目的 Feign 客户端是
+            「接口 + 注解」的形状，Feign 自带的 fallbackFactory
+            直接就能接上，多一层抽象换不到任何东西。
+          · sentinel-datasource-nacos —— 接上它就能在 dashboard 里改规则。
+            ★ 但实施它等于在 M5 顺手推翻 M0「不接 Nacos Config」的决定。
+            M5 的规则走**代码里 loadRules**，理由见 M5 文档 6.1：
+            代码加载**少一个只能靠读日志发现的失败模式**。
+
+          ============================================================
+          ★★ 副作用：本服务从此多监听一个 8719
+          ============================================================
+          starter 会拖进 sentinel-transport-simple-http（**非 optional**），
+          它起来后会监听 8719 —— 那是给 Sentinel dashboard 发指令用的端口。
+          ★ 「进程在监听哪些端口」这份清单变了，排查时会多一个
+            「8719 是谁的」的问题，所以记在 docs/环境配置.md 里。
+          ★ 生产上它必须和 8081~8084 一起被防火墙挡掉：它同样是一个
+            **对内网暴露的面**（能在运行时改规则）。
+
+          ★ 版本不写 —— 由 spring-cloud-alibaba-dependencies 管
+            （BOM 里 sentinel.version = 1.8.8）。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+        </dependency>
+
         <!-- ==================== 持久层 ==================== -->
         <dependency>
             <groupId>com.baomidou</groupId>

@@ -28,7 +28,8 @@ import java.time.Duration;
  *
  * <p>{@code AuditLogServiceImpl} 里那句 {@code UserContext.requireUserId()} 是
  * {@code OncePerRequestFilter} 填进去的，而 MQ 线程背后<b>根本没有请求</b>。
- * HTTP 时代身份能跨服务跳活下来，靠的是 {@code FeignIdentityConfig} 的出站拦截器
+ * HTTP 时代身份能跨服务跳活下来，靠的是
+ * {@code com.novel.common.internal.FeignIdentityConfig} 的出站拦截器
  * 重写 {@code X-User-*} 头、content 侧的过滤器再读回来 ——
  * <b>MQ 把这条第二通道整个拿掉了。</b>
  *

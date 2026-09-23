@@ -122,8 +122,17 @@ spring:
 
     # ---------------- Feign 超时（M2） ----------------
     #
-    # ★★ 不加这两行的后果，比「慢」严重得多：
-    #    Feign 默认【没有读超时】。对端只要不是干脆地拒绝连接，
+    # ★★ 不加这两行的后果，比「慢」严重得多。
+    #
+    # ★★ M5 订正一处事实（论点不变）：这里原来写的是
+    #    「Feign 默认【没有读超时】」—— 不准确。feign-core 的
+    #    Request.Options 无参构造给的是 **connect 10s / read 60s**
+    #    （13.3 的字节码实测：ldc2_w 10 / ldc2_w 60，单位都是 SECONDS）。
+    #    ★ 而【结论方向完全没错、下面一个字都不用改】：
+    #      60 秒对「占住 Tomcat 工作线程」来说和无限几乎没区别。
+    #      改的是数字，不是论点 —— 所以这段论证留着，只把数字说准。
+    #
+    #    对端只要不是干脆地拒绝连接，
     #    而是「连上了但不回」（进程假死、GC 卡住、网络半通），
     #    这个请求就会一直挂在那儿，把 Tomcat 的工作线程一起占住。
     #    占满之后本服务的所有接口都开始排队 ——
@@ -136,13 +145,86 @@ spring:
     #
     # ★ 2 秒 / 5 秒是【开发期】的取值：本机到本机的调用正常在 10ms 以内，
     #   2 秒没连上就是真的有问题。
-    #   生产（跨主机）应放宽到 1s / 3s 左右，并结合 M5 的熔断一起调。
+    #   生产（跨主机）应**收紧**到 1s / 3s 左右，并结合熔断一起调。
+    #   ★ M5 订正：这里原来写的是「**放宽**到 1s / 3s」—— 方向说反了。
+    #     2s/5s → 1s/3s 是【更短、更严】，不是更松。
+    #     要表达的意思其实一直是对的（生产要更快地失败，
+    #     否则被占住的 Tomcat 线程更多），只是动词用错了。
+    #   ★★ 生产取值这件事的落点在 docs/部署.md：仓库里没有
+    #      application-prod.yml（它在 .gitignore 里，部署时手建），
+    #      所以【这个文件里的数只对开发期负责】。
+    #
+    # ★★ 熔断的开关【不在这个文件里】—— 见 application.yml 的
+    #    `feign.sentinel.enabled`。它放上面那份是有理由的（那是结构性的
+    #    开关，不是每环境的取值），理由写在那一段注释里。
     openfeign:
       client:
         config:
           default:
             connect-timeout: 2000
             read-timeout: 5000
+
+    # ---------------- Sentinel 自己的日志（M5 / R14） ----------------
+    #
+    # ★★ 不配这一段的后果，是【日志被写到业务日志目录外面去】：
+    #    Sentinel 默认把它的日志写进 ${user.home}/logs/csp/，
+    #    也就是 C:\Users\<你>\logs\csp\ —— 实测确认过，
+    #    那里会冒出 command-center.log.* 和 novel-content-metrics.log.*。
+    #
+    #    症状不是报错，是【排查时以为熔断什么都没记】：
+    #    出事了先翻 backend/logs/novel-content.log，翻不到任何熔断相关的东西，
+    #    于是判断「规则没生效」—— 而它其实一直好好的，只是日志在别处。
+    #    ★ 这和 CLAUDE.md 里那条「日志路径跟着工作目录走、改了就静默换目录」
+    #      是同一类账：路径这件事出错永远没有报错。
+    #
+    # ★ 为什么是相对路径 `logs/csp`：和上面 logging.file.name 同源 ——
+    #   启动命令写的是 `java -jar target/novel-content.jar -WorkingDirectory backend`，
+    #   所以相对路径必然落到 backend/logs/csp/。
+    #   ★ 于是四个服务【共用同一个 logs/ 根目录】，这和 8081~8084 四份
+    #     日志文件放在一起是同一个安排。
+    #
+    # ★★ switch-pid 要开，理由和 logging.file.name 那条完全一样：
+    #    【几个进程不能写同一个文件】。三个服务共用 backend/logs/csp/
+    #    之后，command-center.log 这个名字是每个进程都会写的。
+    #
+    #    ★★ 实测（M5 S4，配这一项【之前】）—— 证据是 sentinel-block.log：
+    #
+    #        ls ~/logs/csp/
+    #          sentinel-block.log                        ← ★ 既没有 PID，也没有日期
+    #          sentinel-record.log.2026-09-23.0 / .0.1 / .0.2
+    #          command-center.log.2026-09-23.0 / .0.1 / .0.2
+    #          novel-content-metrics.log.2026-09-23 …
+    #          novel-interaction-metrics.log.2026-09-23 …
+    #          novel-search-metrics.log.2026-09-23 …
+    #
+    #      · metrics 那几个按 app 名分开，天然不冲突（它们带 .idx，是按大小滚的）；
+    #      · command-center / sentinel-record 各出现了三份 .0 / .0.1 / .0.2，
+    #        正好对应三个服务 —— 名字里【没有 PID】，是各自滚出来的序号；
+    #      · ★★ 而 sentinel-block.log 连序号都没有，**就是一个文件**。
+    #        被拦下来的请求记在这里，熔断排查第一个要看的就是它 ——
+    #        三个服务往同一个文件里写。
+    #
+    #    开了 switch-pid 之后文件名带 PID，上面三行全部天然分开。
+    #
+    # ★ 配置项的落点（这一段的键名是【对不上的】，所以写清楚映射关系）：
+    #
+    #     spring.cloud.sentinel.log.dir        → 系统属性 csp.sentinel.log.dir
+    #     spring.cloud.sentinel.log.switch-pid → 系统属性 csp.sentinel.log.use.pid
+    #
+    #   ★★ 注意第二行：【Spring 叫 switch-pid，Sentinel 叫 use.pid】，
+    #      两个名字不一样。写 Spring 那一侧就对，但排查时去 Sentinel 的
+    #      文档/源码里搜 switch-pid 会【搜不到】—— 那边只有 use.pid。
+    #      核实方式：javap SentinelApplicationContextInitializer，
+    #      能看到 ldc "csp.sentinel.log.use.pid" 紧跟着
+    #      invokevirtual SentinelProperties$Log.isSwitchPid()。
+    #
+    #   ★ 直接往 yml 里写 csp.sentinel.log.dir 是【无效】的 ——
+    #     它是 JVM 系统属性，Spring 不会把一个自定义键灌进去。
+    #     那两行映射是 SentinelApplicationContextInitializer 显式做的。
+    sentinel:
+      log:
+        dir: logs/csp
+        switch-pid: true
 
 # ---------------- 文件上传路径 ----------------
 # 作品封面（本服务写）存这里。开发期先存本地磁盘，
@@ -298,8 +380,11 @@ logging:
     name: logs/novel-content.log
 
   # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  # ★ M5 起这里也要带 traceId。console 和 file 是【两份独立】的 pattern，
+  #   只改 application.yml 那份的症状是「控制台有、文件里没有」——
+  #   而事后查日志看的恰恰是文件。两份必须同时改。
   pattern:
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
 
   # ★ 一定要封顶：这几个服务常年开着不重启，没有滚动策略的话
   #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。

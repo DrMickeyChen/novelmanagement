@@ -140,5 +140,12 @@ logging:
     root: info
     com.novel: debug
     org.springframework.web: info
+  # ★★ M5：traceId 进日志。键名必须和 TraceContext.MDC_KEY 逐字相同 ——
+  #   改了一个另一个不会报错，只会永远打空（Logback 找不到键就是空字符串）。
+  # ★ 字段顺序是「级别 → traceId → 线程 → logger → 消息」，即
+  #   从「这条多重要」到「哪一次请求」到「谁打的」到「说了什么」。
+  # ★ 非请求线程（启动日志 / MQ 消费 / 定时任务）没有 MDC，这一格显示成 [] ——
+  #   那是在说「这一行不属于任何一次请求」，不是错误；
+  #   反过来，一行处理请求的日志显示 [] 才值得去看。
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"

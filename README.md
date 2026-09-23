@@ -14,7 +14,7 @@
 |---|---|
 | 后端 | Spring Boot 3.2.12 · Java 21 · MyBatis-Plus · Spring Security + JWT · MySQL 8 · Redis 7 · Knife4j |
 | 前端 | Vue 3.5 · Vite 8 · Element Plus 2.14 · Pinia · Vue Router · Axios（三端同栈） |
-| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器） |
+| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器）<br>★ **M5 没有引入任何新中间件** —— Sentinel 是进程内库，traceId 是自己生成的（不上 SkyWalking，没有 `-javaagent`） |
 
 ---
 
@@ -60,6 +60,7 @@ novelManagement/
 │   ├── M2-摘出content.md                 # ★ 第二期 M2：摘出 content + 跨服务边改走 Feign
 │   ├── M3-引入MQ.md                      # ★ 第二期 M3：引入 RocketMQ，四条写路径改走消息
 │   ├── M4-摘出search.md                  # ★ 第二期 M4：摘出 search + ES 倒排检索 + 索引消息
+│   ├── M5-治理.md                        # ★ 第二期 M5：traceId + 熔断降级 + 并行化 + 索引别名/异步重建
 │   ├── 部署.md                          # 生产部署（Nginx / jar / 环境变量）
 │   ├── 环境配置.md                       # 虚拟机与 Docker 中间件搭建
 │   ├── mq-notes.md                      # 消息队列笔记（第二期配套）
@@ -239,6 +240,7 @@ npm run dev             # concurrently 同时起 reader / author / admin / proxy
 | 8082 | **内容服务**（M2 新增：作品/章节/分类/审核/AI，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
 | 8083 | **互动服务**（M2 由 novel-backend 改名：评论/书架/历史，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
 | 8084 | **搜索服务**（★ M4 新增：ES 检索 + 索引重建，不直接对外；★ 它没有数据库） | `/doc.html` → 接口文档（★ 不走网关） |
+| 8719 | **Sentinel transport**（★ M5 起，content / interaction / search **各占一个**，被占则向上探测） | 没有界面；★ 生产必须连同 8081~8084 一起挡掉 |
 | 9200 | **Elasticsearch**（★ M4 起，在中间件虚拟机上） | `/_cluster/health` → `green`；`/_cat/plugins` → `analysis-ik 8.13.4` |
 | 9876 | **RocketMQ namesrv**（M3 起，在中间件虚拟机上） | 无 HTTP 界面 |
 | 10909 / 10911 / 10912 | **RocketMQ broker**（M3 起；10911 是客户端连的那个，`RemotingTooMuchRequestException` 里那个地址就是它） | 无 HTTP 界面 |
@@ -312,9 +314,10 @@ curl -X POST http://localhost:8080/api/auth/register \
 | **M2** | **摘出 content：`modules/content`+`modules/ai` 搬进独立进程 `:8082`、`novel-backend` 改名 `novel-interaction` 退到 `:8083`、九条跨服务边全部改走 Feign、详情页跨服务取到作者信息** | [docs/M2-摘出content.md](docs/M2-摘出content.md) |
 | **M3** | **引入 RocketMQ：四条写路径改走消息（阅读量 / 阅读进度 / 收藏数评分 / 审核流水）、`NovelViewCounter` 与 30 秒定时回写整类删除、两个跨服务写回债（R8/R9）修掉、auth ⇄ content 那个服务级环用事务消息断开** | [docs/M3-引入MQ.md](docs/M3-引入MQ.md) |
 | **M4** | **摘出 search + 上 ES：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，相关性排序、简介进检索范围、IK 分词、ES 挂了自动降级回 `LIKE`、索引靠 MQ 增量 + 定时全量重建自愈** | [docs/M4-摘出search.md](docs/M4-摘出search.md) |
+| **M5** | **治理：全链路 traceId（网关生成/剥离 → MDC → 五个服务日志）、Sentinel 熔断 + `fallbackFactory` 分档降级（判据 =「消费方能不能诚实地渲染这个缺失」）、前端「失败」与「空」拆成两个状态、管理端审核日志的跨服务聚合改并行、`FeignIdentityConfig` 合并成单源、索引别名原子切换 + 重建改异步** | [docs/M5-治理.md](docs/M5-治理.md) |
 
-**第二期**（M5）继续：治理。
-**第三期**（E1~E3）AI 能力、限流熔断、移动端 App。
+**第二期**（M0~M5）已完成。
+**第三期**（E1~E3）AI 能力、移动端 App。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和
 > 「不这么做会怎样」。改代码之前值得先搜一下对应那一期，很多坑已经踩过了。

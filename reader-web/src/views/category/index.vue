@@ -59,6 +59,8 @@ const {
   size,
   loading,
   loaded,
+  isEmpty,
+  failed,
   load,
   changePage,
   changeSize,
@@ -82,6 +84,18 @@ onMounted(() => {
   loadCategoryName()
   load()
 })
+
+/**
+ * 失败态里那个「重试」。
+ *
+ * ★★ 必须在这里兜住 reject：`request.js` 的响应拦截器**提示完照样
+ *   把 Promise 拒出去**，模板里裸写 `@click="reload"` 就是一条
+ *   unhandledrejection —— 控制台一片红，接了上报工具会被当成真错误。
+ *   （评论区 / 搜索页各有一份同样的 `retry()`，三处保持一致。）
+ */
+function retry() {
+  reload().catch(() => {})
+}
 
 /**
  * ★★ 筛选条件变了要 reload()，【不能】直接 load()。
@@ -149,8 +163,19 @@ async function loadCategoryName() {
       <NovelCard v-for="novel in list" :key="novel.id" :novel="novel" />
     </div>
 
-    <!-- ★ loaded 才显示空态，否则首屏会出现「加载动画 + 暂无数据」同时显示 -->
-    <el-empty v-if="loaded && !list.length" description="这个分类下还没有作品" />
+    <!--
+      ★ loaded 才显示空态，否则首屏会出现「加载动画 + 暂无数据」同时显示
+
+      ★★ M5：失败态单独一支。M5 之前失败和空态共用这一行，于是
+        停掉 content 之后读者看到的是【「这个分类下还没有作品」】——
+        而真相是作品服务挂了。它看起来完全正常，所以没人会去报这个 bug。
+        `isEmpty` 里含 `!failed`，两支由构造互斥（见 usePagedList 文件头）。
+    -->
+    <el-empty v-if="isEmpty" description="这个分类下还没有作品" />
+    <el-empty v-else-if="failed" description="作品暂时加载失败">
+      <!-- ★ 拦截器弹的那条提示是瞬时的，关掉之后页面上得有个能再试一次的地方 -->
+      <el-button type="primary" plain @click="retry">重试</el-button>
+    </el-empty>
 
     <div v-if="total > size" class="pager">
       <el-pagination

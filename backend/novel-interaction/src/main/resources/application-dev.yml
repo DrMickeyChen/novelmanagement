@@ -103,8 +103,15 @@ spring:
 
     # ---------------- Feign 超时（M1 新增） ----------------
     #
-    # ★★ 不加这两行的后果，比「慢」严重得多：
-    #    Feign 默认【没有读超时】。对端 novel-auth 只要不是干脆地拒绝连接，
+    # ★★ 不加这两行的后果，比「慢」严重得多。
+    #
+    # ★★ M5 订正一处事实（论点不变）：原来写的是「Feign 默认
+    #    【没有读超时】」—— 不准确，feign-core 的 Request.Options
+    #    无参构造给的是 connect 10s / read 60s。★ 但 60 秒对
+    #    「占住 Tomcat 工作线程」来说和无限几乎没区别，所以下面
+    #    这段论证一个字都不用改，只是把数字说准。
+    #
+    #    对端 novel-auth 只要不是干脆地拒绝连接，
     #    而是「连上了但不回」（进程假死、GC 卡住、网络半通），
     #    这个请求就会一直挂在那儿，把 Tomcat 的工作线程一起占住。
     #    占满之后本服务的所有接口都开始排队 ——
@@ -113,8 +120,15 @@ spring:
     #
     # ★ 2 秒 / 5 秒是【开发期】的取值，给了足够的余量：
     #    本机到本机的调用正常在 10ms 以内，2 秒没连上就是真的有问题。
-    #    生产（跨主机、跨机房）应该放宽到 1s / 3s 左右，
-    #    并结合 M5 的熔断一起调 —— 见 docs/M1-摘出auth.md 的治理项。
+    #    生产（跨主机、跨机房）应该**收紧**到 1s / 3s 左右，
+    #    并结合熔断一起调 —— 见 docs/M1-摘出auth.md 的治理项，
+    #    以及 docs/部署.md 里生产超时的落点。
+    #    ★ M5 订正：原文写的是「放宽到 1s / 3s」—— 方向说反了：
+    #      2s/5s → 1s/3s 是更短、更严。要表达的意思一直是对的
+    #      （生产要更快失败），只是动词用错了。
+    #
+    # ★★ 熔断的开关【不在这个文件里】—— 见 application.yml 的
+    #    `feign.sentinel.enabled`。理由写在那一段注释里。
     #
     # ★ 宁可快速失败也不要挂住：本服务现在的降级策略是「抛 500」
     #   （见 ContentUserLookup 的类注释），这个策略只有在
@@ -125,6 +139,28 @@ spring:
           default:
             connect-timeout: 2000
             read-timeout: 5000
+
+    # ---------------- Sentinel 自己的日志（M5 / R14） ----------------
+    #
+    # ★★ 不配这一段，Sentinel 会把它的日志写进 ${user.home}/logs/csp/
+    #    （实测确认过，那里会冒出 command-center.log.* 和
+    #      novel-interaction-metrics.log.*），也就是【在 backend/logs/ 外面】。
+    #    症状不是报错，是排查时翻不到熔断相关的东西，于是误判「规则没生效」。
+    #
+    # ★ 两个键名在 Spring 和 Sentinel 两侧【不一样】，这是最容易写错的地方：
+    #     spring.cloud.sentinel.log.dir        → csp.sentinel.log.dir
+    #     spring.cloud.sentinel.log.switch-pid → csp.sentinel.log.use.pid
+    #
+    # ★ switch-pid 要开，理由和 logging.file.name 一样：几个进程不能写同一个文件。
+    #   三个服务的 Sentinel 日志目录是同一个，command-center.log 这个名字谁都会写。
+    #
+    # ★★ 完整论证（为什么用相对路径、实证的观测记录、映射关系的核实方式）
+    #    在 novel-content/src/main/resources/application-dev.yml 那一段里，
+    #    不在这里重复 —— 两个文件里的东西一字不差，只是那一份写全了。
+    sentinel:
+      log:
+        dir: logs/csp
+        switch-pid: true
 
 # ---------------- 文件上传路径 ----------------
 # 作品封面、用户头像存这里。开发期先存本地磁盘，
@@ -243,8 +279,11 @@ logging:
     name: logs/novel-interaction.log
 
   # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  # ★ M5 起这里也要带 traceId。console 和 file 是【两份独立】的 pattern，
+  #   只改 application.yml 那份的症状是「控制台有、文件里没有」——
+  #   而事后查日志看的恰恰是文件。两份必须同时改。
   pattern:
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
 
   # ★ 一定要封顶：这个后端常年开着不重启，没有滚动策略的话
   #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。

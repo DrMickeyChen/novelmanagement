@@ -93,14 +93,53 @@
             那里有一条 ★★ 注释解释「为什么 username/password 必须写在
             discovery 下面，而不是只写 spring.cloud.nacos 那一层」。
 
-          ★ 为什么【不加】spring-cloud-starter-loadbalancer：
-            单体是服务【提供方】，不是消费方 —— 它不需要去发现别人。
-            LB 是网关（消费方）的事，加在这里纯属多一个变量。
+          ★ 这里【只有】这一条：本服务作为**提供方**的注册。
+            它作为**消费方**要的那些（openfeign / loadbalancer）
+            在下面「服务间调用」那一段，**不在这里**。
+
+          ★★ M5 订正：这段注释原来写的是
+              「为什么【不加】spring-cloud-starter-loadbalancer：
+                单体是服务【提供方】，不是消费方 —— 它不需要去发现别人。」
+            —— 那是 **M0 的事实**，而 M2 给本服务加了两个 Feign 客户端
+            （AuthNicknameClient / ContentClient），**服务级角色已经翻了**：
+            它现在是提供方【同时】是消费方，loadbalancer 是【必须】的，
+            也确实已经加在下面了（漏了它启动就失败）。
+            ★ 留着原文比删掉更糟：下一个人读到「本服务不需要发现别人」
+              会去别处找一个不存在的解释。
         -->
         <!-- ★ artifactId 里必须带 starter（同 novel-gateway 那条注释） -->
         <dependency>
             <groupId>com.alibaba.cloud</groupId>
             <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 熔断降级（M5）====================
+          ★★ 只有 content / interaction / search 三个服务有这个依赖 ——
+             判据是「谁有**出站边**」，不是「谁重要」。
+             · novel-auth 出站边 0 条（M3 挣来的），**刻意不装**；
+             · novel-gateway 没有 Feign，而「在网关做限流降级」
+               是一条看得见但**不选**的路，**刻意不装**。
+
+          ★ 本服务的出站边正好 2 条，都指向别的服务：
+               interaction → auth   （AuthNicknameClient，取评论作者昵称）
+               interaction → content（ContentClient，取作品/章节主数据）
+            ★★ 这两条的性质**完全不同**，所以 M5 对它们的处置也不同：
+               auth 那条挂了 → 昵称位置显示 `—`（**可降级**）；
+               content 那条挂了 → 书架就是一排空壳（**没有降级可言**）。
+               完整的判据见 docs/M5-治理.md 判断 1 / 判断 4。
+
+          ★ 版本不写 —— 由 spring-cloud-alibaba-dependencies 管
+            （BOM 里 sentinel.version = 1.8.8）。
+
+          ★★ 副作用：本服务从此多监听一个 **8719**
+            （starter 拖进 sentinel-transport-simple-http，非 optional）。
+            生产上必须和 8081~8084 一起被防火墙挡掉。
+            详见 novel-content 的 pom 里那段完整论证。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
         </dependency>
 
         <!-- ==================== 持久层 ==================== -->

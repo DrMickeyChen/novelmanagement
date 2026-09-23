@@ -217,4 +217,23 @@ public final class RedisKeyConstant {
      * {@code NovelStatReconcileJob}（对账任务，计算型）。
      */
     public static final String LOCK_PREFIX = PREFIX + "lock:";
+
+    /* ==================== 异步任务的状态 ==================== */
+
+    /**
+     * 异步重建索引的任务状态（M5 · S9）。<b>一个 Hash，一个任务一把 key。</b>
+     *
+     * <p>★ 用法：{@code novel:reindex:task:{taskId}}，字段见 {@code ReindexTaskStore}。
+     *
+     * <p>★★ <b>为什么它必须在 Redis 里，而不是进程内的 Map</b>：
+     * 触发重建的是实例 A，来轮询的可能是实例 B（网关轮询，没有粘性）。
+     * 而 {@code IndexRebuildService} 自己用分布式锁这件事，
+     * <b>本来就已经承认了「本服务是多实例」这个前提</b> ——
+     * 再用一个内存 Map 存任务状态，就和那个前提自相矛盾了。
+     *
+     * <p>★ 有 TTL（见 {@code ReindexTaskStore#TASK_TTL}）：
+     * 任务状态是给「刚点过按钮的那个人」看的，不是审计记录 ——
+     * 无限堆积的运维痕迹属于日志，不属于 Redis。
+     */
+    public static final String REINDEX_TASK = PREFIX + "reindex:task:";
 }

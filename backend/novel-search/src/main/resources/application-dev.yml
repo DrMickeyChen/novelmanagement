@@ -121,8 +121,15 @@ spring:
 
     # ---------------- Feign 超时（M4） ----------------
     #
-    # ★★ 不加这两行的后果，比「慢」严重得多：
-    #    Feign 默认【没有读超时】。对端只要不是干脆地拒绝连接，
+    # ★★ 不加这两行的后果，比「慢」严重得多。
+    #
+    # ★★ M5 订正一处事实（论点不变）：原来写的是「Feign 默认
+    #    【没有读超时】」—— 不准确，feign-core 的 Request.Options
+    #    无参构造给的是 connect 10s / read 60s。★ 但 60 秒对
+    #    「占住 Tomcat 工作线程」来说和无限几乎没区别，所以下面
+    #    这段论证一个字都不用改，只是把数字说准。
+    #
+    #    对端只要不是干脆地拒绝连接，
     #    而是「连上了但不回」（进程假死、GC 卡住、网络半通），
     #    这个请求就会一直挂在那儿，把 Tomcat 的工作线程一起占住。
     #    占满之后本服务的所有接口都开始排队 ——
@@ -135,12 +142,42 @@ spring:
     #    也就是说 content 慢的时候，搜索会【先等 ES、再等 content】，
     #    总耗时是两者之和。2s + 5s 在开发期够用，
     #    但它正是 M5 要做熔断/降级的理由 —— M4 只记录，不处理。
+    #
+    # ★ M5 的结论：这条边的正确处置【不是降级，是熔断 + 快速失败】。
+    #   因为「ES 那条降级路径本身也要调 content」——
+    #   停 content 时搜索返回 500 是【预期行为】，不是要修的 bug。
+    #   见 docs/M5-治理.md 判断 4。
+    #
+    # ★★ 熔断的开关【不在这个文件里】—— 见 application.yml 的
+    #    `feign.sentinel.enabled`。理由写在那一段注释里。
     openfeign:
       client:
         config:
           default:
             connect-timeout: 2000
             read-timeout: 5000
+
+    # ---------------- Sentinel 自己的日志（M5 / R14） ----------------
+    #
+    # ★★ 不配这一段，Sentinel 会把它的日志写进 ${user.home}/logs/csp/
+    #    （实测确认过，那里会冒出 command-center.log.* 和
+    #      novel-search-metrics.log.*），也就是【在 backend/logs/ 外面】。
+    #    症状不是报错，是排查时翻不到熔断相关的东西，于是误判「规则没生效」。
+    #
+    # ★ 两个键名在 Spring 和 Sentinel 两侧【不一样】，这是最容易写错的地方：
+    #     spring.cloud.sentinel.log.dir        → csp.sentinel.log.dir
+    #     spring.cloud.sentinel.log.switch-pid → csp.sentinel.log.use.pid
+    #
+    # ★ switch-pid 要开，理由和 logging.file.name 一样：几个进程不能写同一个文件。
+    #   三个服务的 Sentinel 日志目录是同一个，command-center.log 这个名字谁都会写。
+    #
+    # ★★ 完整论证（为什么用相对路径、实证的观测记录、映射关系的核实方式）
+    #    在 novel-content/src/main/resources/application-dev.yml 那一段里，
+    #    不在这里重复 —— 两个文件里的东西一字不差，只是那一份写全了。
+    sentinel:
+      log:
+        dir: logs/csp
+        switch-pid: true
 
 # ---------------- 内部令牌 ----------------
 #
@@ -247,8 +284,11 @@ logging:
     name: logs/novel-search.log
 
   # 控制台只显示到毫秒，翻历史的时候分不清是哪天 —— 文件里带上完整日期
+  # ★ M5 起这里也要带 traceId。console 和 file 是【两份独立】的 pattern，
+  #   只改 application.yml 那份的症状是「控制台有、文件里没有」——
+  #   而事后查日志看的恰恰是文件。两份必须同时改。
   pattern:
-    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
 
   # ★ 一定要封顶：这几个服务常年开着不重启，没有滚动策略的话
   #   一个 debug 级别的日志文件能长到几个 G（ES 的 WIRE 日志尤其能刷）。

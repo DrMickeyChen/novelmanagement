@@ -25,7 +25,7 @@ import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { getNovelCatalog, getNovelChapters, getNovelDetail, reportNovelView } from '@/api/novel'
 import { addToShelf, getShelfStatus, removeFromShelf } from '@/api/shelf'
-import { formatDate, formatWordCount } from '@/utils/format'
+import { formatAuthorName, formatDate, formatWordCount } from '@/utils/format'
 import { loadProgress } from '@/utils/readerStorage'
 import { useUserStore } from '@/stores/user'
 import CommentSection from '@/components/CommentSection.vue'
@@ -118,19 +118,61 @@ const scoreValue = computed(() => Number(detail.value?.score) || 0)
 /* ==================== 加入书架 ==================== */
 
 /**
- * 这本书在不在我的书架。
+ * 这本书在不在我的书架。★★ M5 起是**三态**，`null` = 「不知道」：
  *
- * ★★ 状态**只由服务端给**，前端不猜：
+ *   true  —— 在书架里
+ *   false —— 不在书架里（服务端明确这么说的，或者根本没登录）
+ *   null  —— **问不到**（接口失败了）
+ *
+ * ★★ 为什么必须分出第三态：M5 之前的写法是「查不到就当不在书架」
+ *   （`catch` 里什么都不做，`onShelf` 停在 `false`）。于是停掉
+ *   interaction 之后，一本**明明在书架上**的书，按钮显示的是
+ *   【「加入书架」】—— 用户会以为自己的收藏丢了，然后去点它，
+ *   再失败一次。这比不显示更糟：它不只是缺信息，它是**错的**。
+ *   （这和 M5 后端那条降级判据是同一条规矩的前端版本：
+ *   缺失必须**看得见**，不能拿一个「看起来正常」的值顶上。）
+ *
+ * ★★ 不变量：**`null` 只有一个来源 —— 一次失败的查询。**
+ *   初始值刻意留 `false`（因为那时页面整体在 `v-loading` 下面，
+ *   按钮根本不可见），查询进行中由 `shelfLoading` 转圈挡住，
+ *   只有 `catch` 会把状态置成 `null`。所以「还没查」和
+ *   「查不到」在界面上**不可能混淆**。
+ *
+ * ★ 状态**只由服务端给**，前端不猜：
  *   点击之后用的是响应里的 `onShelf`，而不是把本地的翻转一下。
  *   两个接口都是幂等的 —— 对一本已在书架里的书再点「加入」，
  *   返回的仍然是 `onShelf: true`。自己翻转的话，这种情况下
  *   按钮会显示成「未加入」而书其实在书架里。
  *
- * ★ 匿名时保持 false：没登录就没有「我的书架」这回事。
+ * ★ 匿名时是 false（不是 null）：没登录就没有「我的书架」这回事，
+ *   这是一个**确定**的答案。
  *   （按钮仍然显示，点了提示去登录 —— 见 `toggleShelf`。）
  */
 const onShelf = ref(false)
 const shelfBusy = ref(false)
+
+/** 状态查询是否在路上。★ 只用来转圈 —— 它和 `shelfBusy`（点击动作）是两件事 */
+const shelfLoading = ref(false)
+
+/**
+ * ★ 状态**问不到**。为 true 时按钮禁用、文案显示 `—`、旁边给一条重试。
+ *
+ * ★ 必须带 `isLogin`：未登录时 `onShelf` 是 false，但万一将来
+ *   有人改了上面那行初始值，未登录的游客也不该看到一个禁用的按钮 ——
+ *   他要的是「点了提示去登录」，不是「这块坏了」。
+ */
+const shelfUnknown = computed(() => userStore.isLogin && onShelf.value === null)
+
+/**
+ * 按钮文案。
+ *
+ * ★ 三态各给一句不同的话，**没有兜底分支**：`null` 时写 `—` 而不是
+ *   回落成「加入书架」—— 那个回落正是 M5 要修的东西。
+ */
+const shelfText = computed(() => {
+  if (shelfUnknown.value) return '—'
+  return onShelf.value ? '已在书架' : '加入书架'
+})
 
 /**
  * 查书架状态。**只有登录时才发** —— 这个接口是 `/api/reader/**`，
@@ -141,13 +183,29 @@ async function loadShelfStatus() {
     onShelf.value = false
     return
   }
+  shelfLoading.value = true
   try {
     const res = await getShelfStatus(novelId.value)
-    // ★ `?? false`：onShelf 是包装类型，理论上可能整个 key 消失
-    onShelf.value = res?.onShelf ?? false
+    /*
+     * ★ M5：`?? false` 改成 `?? null`。
+     *   `onShelf` 是包装类型，全局 `non_null` 会让整个 key 消失 ——
+     *   而「key 消失」和「请求失败」是**同一件事**：我们不知道。
+     *   写成 `?? false` 就等于把「不知道」说成「不在书架」，
+     *   和下面 `catch` 里那个 bug 一模一样，只是换了条路径进来。
+     *   （后端目前保证它不会消失，但那是一条**承诺**，不是机制 ——
+     *    前端按「可能消失」写，成本是一个字。）
+     */
+    onShelf.value = res?.onShelf ?? null
   } catch {
-    /* 查不到就当不在书架 —— 比让按钮停在一个假状态上好。
-       拦截器已经弹过提示了。 */
+    /*
+     * ★★ M5：这里原来是空的（注释写着「查不到就当不在书架」），
+     *   而那正是这句谎话的来源。现在显式置 `null` ——
+     *   让「查不到」在界面上有自己的样子。
+     *   拦截器已经弹过提示了，这里不重复弹。
+     */
+    onShelf.value = null
+  } finally {
+    shelfLoading.value = false
   }
 }
 
@@ -165,6 +223,13 @@ async function loadShelfStatus() {
  *       且成功提示就写着「已移出书架」，用户立刻看得到 → 不弹。
  *   给一个一眼能看懂、一下能撤销的按钮加确认框，只会让「取消收藏」
  *   这件事变得很烦。
+ *
+ * ★ M5：`onShelf === null`（问不到）时**故意不在这里加分支** ——
+ *   那种情况下按钮是 `:disabled` 的，这个函数根本进不来。
+ *   写一个永远进不去的 `if (onShelf.value === null) return` 会让人
+ *   以为「这条路径被处理过了」，而它其实只会在将来某次改动
+ *   把禁用去掉之后才第一次被执行 —— 到那时没人记得它。
+ *   （和网关里那条刻意没写的 `headers.remove` 是同一种取舍。）
  */
 async function toggleShelf() {
   if (!userStore.isLogin) {
@@ -181,11 +246,21 @@ async function toggleShelf() {
 
   shelfBusy.value = true
   try {
-    const res = onShelf.value
+    const wasOnShelf = onShelf.value
+    const res = wasOnShelf
       ? await removeFromShelf(novelId.value)
       : await addToShelf(novelId.value)
-    onShelf.value = res?.onShelf ?? !onShelf.value
-    ElMessage.success(onShelf.value ? '已加入书架' : '已移出书架')
+    /*
+     * ★ M5：兜底从「把本地值翻转一下」改成「这次动作的目标状态」。
+     *   正常路径上两者结果相同（服务端一定回 `onShelf`），但
+     *   翻转**是在猜**——而上面那段类注释刚说过「前端不猜」。
+     *   既然要写兜底就写个语义对的：add 之后是「在架上」，
+     *   remove 之后是「不在架上」，与本地原来是什么无关。
+     */
+    onShelf.value = res?.onShelf ?? !wasOnShelf
+    // ★ 提示语跟着**动作**走，不跟着状态走 —— 状态可能是 null，
+    //   而「已移出书架」这句话在 null 时会说反
+    ElMessage.success(wasOnShelf ? '已移出书架' : '已加入书架')
   } catch {
     /* 失败原因由 request.js 的拦截器提示（含 2001「作品不存在或已下架」），
        这里只需要别让它变成 unhandledrejection */
@@ -333,7 +408,8 @@ async function resolveProgressChapter() {
         </div>
 
         <div class="meta">
-          <span class="author">{{ detail.authorName || '佚名' }}</span>
+          <!-- ★ M5：`—` 而不是「佚名」—— 判据见 utils/format.js 的 formatAuthorName -->
+          <span class="author">{{ formatAuthorName(detail.authorName) }}</span>
           <el-divider direction="vertical" />
           <router-link :to="`/category/${detail.categoryId}`" class="link">
             {{ detail.categoryName || '未分类' }}
@@ -395,9 +471,25 @@ async function resolveProgressChapter() {
             ★ 按钮文案跟着 `onShelf` 走，而不是「加入书架 / 取消收藏」两个
                意思相反的动词 —— 用户扫一眼就知道**现在是什么状态**，
                不需要靠推断自己刚才点没点过。
+
+            ★★ M5：状态**问不到**时按钮禁用、文案 `—`，旁边给一条重试。
+               为什么不是「禁用就完了」：禁用只回答了「不能点」，
+               没回答「怎么了」，也没给用户任何出路 ——
+               他会以为这个功能坏了，而不是「后端暂时不通」。
+               （`shelfLoading` 只负责转圈：查询在路上的那一小段
+               按钮文案还是 `false` 对应的「加入书架」，
+               但上面盖着 loading，看不到 —— 所以它不构成一句谎话。）
           -->
-          <el-button size="large" :loading="shelfBusy" @click="toggleShelf">
-            {{ onShelf ? '已在书架' : '加入书架' }}
+          <el-button
+            size="large"
+            :loading="shelfBusy || shelfLoading"
+            :disabled="shelfUnknown"
+            @click="toggleShelf"
+          >
+            {{ shelfText }}
+          </el-button>
+          <el-button v-if="shelfUnknown" link type="primary" @click="loadShelfStatus">
+            重试
           </el-button>
 
           <span v-if="isResuming" class="resume-hint">

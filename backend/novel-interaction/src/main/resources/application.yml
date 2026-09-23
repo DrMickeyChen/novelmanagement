@@ -88,6 +88,33 @@ spring:
   # 在 GlobalExceptionHandler 里接住它即可，不用动任何配置。
 
 # ============================================================
+# 熔断降级开关（M5）
+# ============================================================
+#
+# ★★★ 键名是 feign.sentinel.enabled ——【顶级 feign】，不是
+#     spring.cloud.openfeign.sentinel.enabled。
+#     SCA 读它的是一行 @ConditionalOnProperty(name = "feign.sentinel.enabled")，
+#     那是 SCA 自己的注解、不是 SCOF 的 @ConfigurationProperties，
+#     所以 `feign.* → spring.cloud.openfeign.*` 那次迁移动不到它。
+#
+# ★★ 写成「看起来更对」的那个前缀 = 没有任何类读它 =
+#     应用正常启动、零报错、fallbackFactory 永远不被调用。
+#     完整论证写在 novel-content 的 application.yml 同一节里。
+#
+# ★ 为什么在 application.yml 而不是 application-dev.yml：
+#     dev 的超时取值是「每环境不同的数」，这个开关是「结构性选择」；
+#     而仓库里【没有】application-prod.yml（部署时才建），
+#     只写进 dev 就会让生产静默关闭熔断。
+#
+# ★ 本服务的两条出站边在 M5 的处置【刻意不同】：
+#     → novel-auth    （取评论作者昵称）  失败时昵称显示 `—`，**降级**；
+#     → novel-content （取作品/章节主数据）失败时书架是一排空壳，**没有降级可言**。
+#   见 docs/M5-治理.md 判断 1 / 判断 4。
+feign:
+  sentinel:
+    enabled: true
+
+# ============================================================
 # JWT
 # ============================================================
 novel:
@@ -205,5 +232,12 @@ logging:
     root: info
     com.novel: debug                    # 自己写的代码开 debug，方便排查
     org.springframework.web: info
+  # ★★ M5：traceId 进日志。键名必须和 TraceContext.MDC_KEY 逐字相同 ——
+  #   改了一个另一个不会报错，只会永远打空（Logback 找不到键就是空字符串）。
+  # ★ 字段顺序是「级别 → traceId → 线程 → logger → 消息」，即
+  #   从「这条多重要」到「哪一次请求」到「谁打的」到「说了什么」。
+  # ★ 非请求线程（启动日志 / MQ 消费 / 定时任务）没有 MDC，这一格显示成 [] ——
+  #   那是在说「这一行不属于任何一次请求」，不是错误；
+  #   反过来，一行处理请求的日志显示 [] 才值得去看。
   pattern:
-    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"

@@ -6,6 +6,7 @@ import com.novel.common.enums.AuditAction;
 import com.novel.common.enums.AuditTargetType;
 import com.novel.common.result.PageResult;
 import com.novel.common.security.UserContext;
+import com.novel.content.config.AuditAggExecutorConfig;
 import com.novel.modules.content.entity.AuditLog;
 import com.novel.modules.content.entity.Chapter;
 import com.novel.modules.content.entity.Novel;
@@ -19,6 +20,8 @@ import com.novel.modules.content.service.ContentUserLookup;
 import com.novel.modules.content.vo.AuditLogVO;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -27,6 +30,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 
 /**
  * 审核流水实现。全项目最简单的一个 Service —— 只有一条 INSERT。
@@ -83,6 +88,26 @@ public class AuditLogServiceImpl implements AuditLogService {
      * 写在 {@link CommentTextLookup} 的类注释里。
      */
     private final CommentTextLookup commentTextLookup;
+
+    /**
+     * <b>★★ M5（S7）：渲染一页日志时，那三次跨服务取值在这个池上并行跑。</b>
+     *
+     * <p>为什么值得单独开一个池、池参数为什么是那几个数，
+     * 全写在 {@code AuditAggExecutorConfig} 的类注释里 —— <b>改这里之前先读那一段</b>
+     * （尤其是「为什么绝不能用 {@code ForkJoinPool.commonPool}」和
+     * 「{@code CallerRunsPolicy} 与 {@link com.novel.common.concurrent.ContextPropagatingTaskDecorator}
+     * 是一对」）。
+     *
+     * <p>★★ <b>为什么是 {@code @Qualifier} 而不是按类型注入</b>：本服务里
+     * {@code ThreadPoolTaskExecutor} 有<b>两个</b>（另一个是 AI 的 {@code aiStreamExecutor}），
+     * 按类型注入会直接报「找到多个候选」。★ 项目里的同类先例是
+     * {@code AiController} 的构造参数 —— 那里写的是显式构造 + 参数上的 {@code @Qualifier}。
+     * 这里用字段上的，靠 Lombok 把注解复制到生成的构造参数上（Lombok 的内置可复制注解名单里
+     * 有 {@code @Qualifier}）。★ <b>万一哪天它不复制了，症状是启动直接失败</b>
+     * （{@code NoUniqueBeanDefinitionException}）—— 是响的，不是静默的，所以这个依赖可以接受。
+     */
+    @Qualifier(AuditAggExecutorConfig.BEAN_NAME)
+    private final ThreadPoolTaskExecutor auditAggExecutor;
 
     @Override
     public void record(AuditTargetType targetType, Long targetId, AuditAction action, String remark) {
@@ -252,7 +277,46 @@ public class AuditLogServiceImpl implements AuditLogService {
          *   和作品 / 章节完全一致，这是【有意接受】的结果：
          *   为了补出已删除对象的标题而绕过逻辑删除是错误的修法。
          */
-        Map<Long, CommentBriefDTO> commentBriefs = commentTextLookup.briefsOf(commentIds);
+        /*
+         * ★★★ M5（S7）：三次跨服务取值【一起发出去】，不再一次一次等。
+         *
+         *   改造前这三行是串行的，一页日志要等三个往返：
+         *     commentTextLookup.briefsOf        → interaction   （1 跳）
+         *     userLookup.authorApplyTitlesOf    → auth          （★ 内部自己就 2 跳，见那个方法）
+         *     userLookup.nicknamesOf            → auth          （1 跳）
+         *   ★ 而它们【互相之间没有任何依赖】—— 纯粹是白等。
+         *
+         *   ★★ 为什么不是「快一点而已」：这三个方法的失败语义在 S5 已经分过档
+         *   （briefsOf / authorApplyTitlesOf 失败仍然抛，nicknamesOf 降级成空 Map），
+         *   而【它们的耗时都等于下游的响应时间】。下游一慢，串行的代价是三倍，
+         *   正好落在「用户以为页面卡死了」的那个区间。
+         *
+         *   ★ 池的参数与拒绝策略见 AuditAggExecutorConfig；池线程上
+         *   traceId / 登录态怎么过去的，见 ContextPropagatingTaskDecorator。
+         *   ★★ 那两个不是配套设施，是【前提】：少了装饰器，这里发出去的
+         *   Feign 调用会变成匿名的（且不报错）。
+         */
+        CompletableFuture<Map<Long, CommentBriefDTO>> briefsFuture =
+                CompletableFuture.supplyAsync(() -> commentTextLookup.briefsOf(commentIds),
+                        auditAggExecutor);
+        CompletableFuture<Map<Long, String>> applyTitlesFuture =
+                CompletableFuture.supplyAsync(() -> userLookup.authorApplyTitlesOf(applyIds),
+                        auditAggExecutor);
+        CompletableFuture<Map<Long, String>> operatorNamesFuture =
+                CompletableFuture.supplyAsync(
+                        () -> userLookup.nicknamesOf(logs.stream().map(AuditLog::getOperatorId).toList()),
+                        auditAggExecutor);
+
+        /*
+         * ★ 先等评论素材 —— 不是因为它最慢，是因为【下面两次本地查询依赖它】。
+         *
+         *   等它的这段时间里另外两个任务在池线程上继续跑，所以这段等待不是白等；
+         *   反过来先等那两个的话，「等远程」和「查本地库」就排成了两段，
+         *   三次远程调用实际上还是两批。★ 顺序在这里是有性能含义的，
+         *   不是随手挑的。（★ R9：这只影响【什么时候拿到数据】，
+         *   不影响最终 list 的顺序 —— 见方法末尾那个 stream。）
+         */
+        Map<Long, CommentBriefDTO> commentBriefs = joinOrRethrow(briefsFuture);
 
         /*
          * ★ 章评的 target_id 是 chapterId，得先有章节才知道它挂在哪本书上，
@@ -310,10 +374,21 @@ public class AuditLogServiceImpl implements AuditLogService {
          *   所以这里【没有】第二个 CommentTextLookup 那样的接口，
          *   直接走 ContentUserLookup —— 它本来就是这个模块望向 system 的窗口。
          */
-        Map<Long, String> applyTitles = userLookup.authorApplyTitlesOf(applyIds);
+        /*
+         * ★ 到这里本地两次查询已经做完，才回来取这两个还没到的结果。
+         *   多数情况下它们【早就回来了】（上面那两次本地查询正好盖住了这两段的网络时间），
+         *   所以这两行通常是零等待 —— 这正是「先等谁」那个顺序换来的东西。
+         *
+         * ★★ 失败语义【和改造前一模一样】，一个都没有被这次并行化动过：
+         *     applyTitles 失败 → 抛（S5 刻意不降级：它的空值在页面上会渲染成
+         *     「作者申请 #5（已删除）」，而那条申请并没有被删）
+         *     operatorNames 失败 → 空 Map → 操作人显示成「用户 #1」（S5 判定这是真话，可降级）
+         *   ★ 而且归因顺序也没变：briefsFuture 先被 join，所以「多个下游同时挂掉」
+         *   时冒出来的仍然是同一个异常 —— 异常类型和消息都照旧。
+         */
+        Map<Long, String> applyTitles = joinOrRethrow(applyTitlesFuture);
 
-        Map<Long, String> operatorNames = userLookup.nicknamesOf(
-                logs.stream().map(AuditLog::getOperatorId).toList());
+        Map<Long, String> operatorNames = joinOrRethrow(operatorNamesFuture);
 
         return logs.stream().map(l -> {
             /*
@@ -344,6 +419,49 @@ public class AuditLogServiceImpl implements AuditLogService {
             };
             return AuditLogVO.of(l, title, operatorNames.get(l.getOperatorId()));
         }).toList();
+    }
+
+    /**
+     * ★★ <b>等一个异步结果，并且把异常【还原成它本来的样子】再抛。</b>
+     *
+     * <p>这是 S7 里唯一一处「写错了能编译、能跑、测试还是绿的、但行为已经变了」的地方：
+     * {@code CompletableFuture.join()} 抛的<b>不是</b>任务里那个异常，
+     * 而是 {@link CompletionException} <b>包着</b>它。就这么让它冒出去，症状是：
+     *
+     * <pre>
+     *   改造前：briefsOf 失败 → BusinessException(2001/9999…)
+     *                        → 全局异常处理器认得它        → 客户看到那句话
+     *   改造后：同一个失败     → CompletionException 包着它
+     *                        → 全局处理器【不认识这个类型】 → 落到兜底分支
+     * </pre>
+     *
+     * <p>★ <b>两者都是 500</b>，所以「状态码对不对」这种验收完全看不出来 ——
+     * 变的是响应体里那句话、以及日志里堆栈的第一行。
+     * <b>「能跑通但说错了原因」正是本项目反复强调的那类错误</b>（同 S5 的
+     * 「（已删除）」、判断 4 里那个把「content 挂了」说成「ES 挂了」的 catch），
+     * 所以这里显式展开，不用「反正都是 500」放过它。
+     *
+     * <p>★ 只展开 {@code RuntimeException}：这三个任务体里跑的全是 Feign 调用，
+     * 抛出来的一律是运行时异常。真冒出受检异常的话（本类的三个任务都不会），
+     * 说明有人往池里塞了新东西 —— 那就不猜了，{@code CompletionException} 原样抛，
+     * 至少让人看见「这里有个我不认识的失败」。
+     *
+     * <p>★ 顺带一条：这三个 {@code CompletableFuture} <b>不需要 join 完</b>。
+     * 上面第一个 join 就抛出去时，另外两个任务仍在池线程上跑到底 ——
+     * 它们是无副作用的读，跑完的结果没人取，也不会有线程泄漏。
+     * <b>不需要（也不该）为它们加取消逻辑</b>：取消一个已经在飞的 HTTP 调用省不下什么，
+     * 反而多一条要维护的路径。
+     */
+    private static <T> T joinOrRethrow(CompletableFuture<T> future) {
+        try {
+            return future.join();
+        } catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw e;
+        }
     }
 
     /**

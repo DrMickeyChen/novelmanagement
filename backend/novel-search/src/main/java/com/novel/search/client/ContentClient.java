@@ -74,7 +74,9 @@ import java.util.Map;
  *
  * @author MickeyChen
  */
-@FeignClient(name = "novel-content")
+/* ★★ M5：这条边【没有降级可言】（没有 content 就没有书），见 ContentClientFallbackFactory */
+@FeignClient(name = "novel-content",
+        fallbackFactory = ContentClientFallbackFactory.class)
 @Component
 public interface ContentClient {
 

@@ -54,6 +54,20 @@ const loading = ref(false)
 const loaded = ref(false)
 
 /**
+ * ★★ M5：本次加载是不是**失败**了。
+ *
+ * ★ 本页刻意不用 `usePagedList`（榜单不分页，见上面那段），
+ * 所以拿不到它那对 `isEmpty` / `failed` —— 这里自己存一个，
+ * 语义和 `usePagedList` 里的 `failed` 完全一致。
+ *
+ * ★ M5 之前 `catch` 里只做了 `list = []`，于是停掉 content 之后
+ *   榜单页显示的是【「榜单上还没有作品」】—— 而真相是服务挂了。
+ *   而且榜单页尤其像真的：一个「还没有作品」的排行榜，
+ *   听起来完全可能是「站里还没数据」。
+ */
+const failed = ref(false)
+
+/**
  * 当前 Tab —— 【从 URL 推导】，不是独立的 ref。
  *
  * ★★ 这是这个页面最关键的一处：如果把 activeTab 做成 ref，
@@ -98,16 +112,26 @@ function handleTab(key) {
 
 async function load() {
   loading.value = true
+  // ★ 和 usePagedList 的 load() 一样：每次开查都先把上一次的失败清掉，
+  //   否则重试成功之后页面还停在失败态上
+  failed.value = false
   try {
     list.value = (await getRankList({ type: activeTab.value, limit: RANK_LIMIT })) || []
   } catch {
-    // 拦截器已经弹过提示了，这里保持空列表、走空态
+    // 拦截器已经弹过提示了。★ 但「弹过提示」不等于页面可以说谎 ——
+    // 下面那一行才是让失败在界面上有自己样子的东西
     list.value = []
+    failed.value = true
   } finally {
     loading.value = false
     // ★ 和 usePagedList 里的 loaded 一个道理：区分「还没查」和「查过但为空」
     loaded.value = true
   }
+}
+
+/** 失败态里那个「重试」。★ 必须兜住 reject，理由见各列表页同名的那个函数 */
+function retry() {
+  load().catch(() => {})
 }
 </script>
 
@@ -147,7 +171,17 @@ async function load() {
       </div>
     </div>
 
-    <el-empty v-if="loaded && !list.length" description="榜单上还没有作品" />
+    <!--
+      ★★ M5：失败态单独一支。这一页尤其像真的 ——
+        「榜单上还没有作品」听起来完全可能是「站里还没数据」，
+        所以它比别的页面更难被发现是谎话。
+        ★ 判据和 `usePagedList` 的 `isEmpty` 一致：`!failed` 那半个
+          条件不能少，因为 catch 里 list 也被清空了。
+    -->
+    <el-empty v-if="loaded && !failed && !list.length" description="榜单上还没有作品" />
+    <el-empty v-else-if="failed" description="榜单暂时加载失败">
+      <el-button type="primary" plain @click="retry">重试</el-button>
+    </el-empty>
   </div>
 </template>
 

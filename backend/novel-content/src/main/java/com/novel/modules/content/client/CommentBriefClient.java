@@ -54,7 +54,9 @@ import java.util.Map;
  *
  * @author MickeyChen
  */
-@FeignClient(name = "novel-interaction", path = "/internal")
+/* ★★ M5：fallbackFactory 的两个必要条件（这里 + feign.sentinel.enabled），见 AuthUserClient */
+@FeignClient(name = "novel-interaction", path = "/internal",
+        fallbackFactory = CommentBriefClientFallbackFactory.class)
 public interface CommentBriefClient {
 
     /**

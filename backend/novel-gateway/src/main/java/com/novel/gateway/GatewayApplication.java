@@ -45,10 +45,19 @@ import org.springframework.context.annotation.Import;
  *       <td>实现 spring-security-web 的接口（网关没有那个 jar）</td></tr>
  *   <tr><td>{@code HeaderAuthenticationFilter}</td>
  *       <td>{@code extends OncePerRequestFilter} → 要 {@code jakarta.servlet.Filter}</td></tr>
+ *   <tr><td>★ M5 新增：{@code TraceIdFilter} / {@code TraceIdFilterConfig}</td>
+ *       <td>同上（一个 {@code extends OncePerRequestFilter}，
+ *           另一个引用了 {@code FilterRegistrationBean}）</td></tr>
  *   <tr><td>{@code UploadProperties}</td>
  *       <td>{@code @Component} + {@code @ConfigurationProperties}，
  *           缺 {@code novel.upload.*} 时可能直接抛异常</td></tr>
  * </table>
+ *
+ * <p><b>★★ 这张表是【会过期】的，所以它必须每加一个 common 类就更新一次。</b>
+ * 表里少写一个的后果不是「文档不准」，而是：下一个人把扫描范围放宽到
+ * {@code com.novel} 时，<b>这张本该拦住他的表看起来是「全的」</b> ——
+ * 于是一道「不会失败的护栏」。M5 加 {@code TraceIdFilter} 时
+ * 就是照着这个规矩补的。
  *
  * <p><b>★★ 这个坑的症状值得单独说：</b>报错会说「找不到某个类」或
  * 「某个 bean 创建失败」，<b>指向的是那个被误扫的类</b>，

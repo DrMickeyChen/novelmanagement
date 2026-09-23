@@ -141,6 +141,33 @@
         </dependency>
 
         <!--
+          ==================== 熔断降级（M5）====================
+          ★★ 只有 content / interaction / search 三个服务有这个依赖 ——
+             判据是「谁有**出站边**」：novel-auth 是 0 条（M3 挣来的，
+             刻意不装），novel-gateway 没有 Feign（也刻意不装）。
+
+          ★ 本服务【只有一条】出站边：search → content
+            （ContentClient，`/internal/novels/index-docs` 等 3 个端点，
+            M4 新增的那条）。它挂了的处置和别的接缝都不一样：
+            **ES 那条降级路径本身也要调 content** —— 所以
+            「停 content 时搜索返回 500」是**预期行为**，不是 M5 要修的 bug。
+            完整的论证见 docs/M5-治理.md 判断 4。
+
+          ★ 版本不写 —— 由 spring-cloud-alibaba-dependencies 管
+            （BOM 里 sentinel.version = 1.8.8）。
+
+          ★★ 副作用：本服务从此多监听一个 **8719**
+            （starter 拖进 sentinel-transport-simple-http，非 optional）。
+            ★ 本服务本来就已经有一个「不属于业务」的端口讨论
+              （ES 的 9200 在对面的虚拟机上、这个是本机的），
+              记在 docs/环境配置.md 里以免排查时对不上号。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+        </dependency>
+
+        <!--
           ==================== 缓存（★ 和 content 同一个陷阱，但理由不同） ====================
 
           ★★ 这一条【不写就起不来】，理由和 content 的 pom 里那段一模一样：

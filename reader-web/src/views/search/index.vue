@@ -43,13 +43,23 @@ const keyword = computed(() => String(route.query.keyword || '').trim())
  */
 const hasKeyword = computed(() => keyword.value.length > 0)
 
-const { list, total, page, size, loading, loaded, load, changePage, reload } = usePagedList(
-  (params) => searchNovels(params),
-  {
+const { list, total, page, size, loading, loaded, isEmpty, failed, load, changePage, reload } =
+  usePagedList((params) => searchNovels(params), {
     pageSize: 10,
     params: () => ({ keyword: keyword.value }),
-  },
-)
+  })
+
+/**
+ * 重试。
+ *
+ * ★★ 必须在这里兜住 reject：`request.js` 的响应拦截器**提示完照样
+ *   把 Promise 拒出去**，模板里裸写 `@click="reload"` 就是一条
+ *   unhandledrejection —— 控制台一片红，接了上报工具会被当成真错误。
+ *   （评论区那份 `retry()` 是同一个写法，两处保持一致。）
+ */
+function retry() {
+  reload().catch(() => {})
+}
 
 /**
  * ★ 关键词变了就重新搜，并回到第 1 页（reload 的职责）。
@@ -92,7 +102,8 @@ onMounted(() => {
         <h2 class="title">
           「<span class="kw">{{ keyword }}</span>」的搜索结果
         </h2>
-        <span v-if="loaded" class="count">共 {{ total }} 本</span>
+        <!-- ★ M5：失败时不显示本数（catch 里 total 被清成 0，否则会写着「共 0 本」） -->
+        <span v-if="loaded && !failed" class="count">共 {{ total }} 本</span>
       </div>
 
       <div v-loading="loading" class="grid">
@@ -102,11 +113,29 @@ onMounted(() => {
       <!--
         ★ 空态文案里带上关键词。只说「暂无数据」的话，
           用户会怀疑是不是没搜出去（尤其是网络慢的时候）。
+
+        ★★ M5：失败态和空态是两个分支。M5 之前这里只有下面那一个
+          `el-empty`，判据是 `loaded && !list.length` —— 而 `catch`
+          里 `list` 被清空，所以**停掉 search 或 content 时，
+          用户看到的是「没有找到与「x」有关的作品，换个书名或
+          作者名试试」**：一个语气笃定、还给了下一步建议的谎话。
+          它不只是缺信息，它把用户支使去改关键词 ——
+          而换个词当然还是搜不到。
+
+        ★ 为什么不在失败文案里带上 `error.message`（后端/拦截器那句
+          具体原因）：那条原因拦截器已经弹过一次了，而这里的职责是
+          **持久状态 + 一条出路**。把原始错误串铺在页面上，
+          在「后端 500」时显示的是一句技术文案，收益不抵多出来的
+          一个面。（真正需要「原因不能被吞掉」的是 SSE 那条通道 ——
+          `sse.js` 的 `Accept` 那个坑，M5 没有新增那种请求。）
       -->
       <el-empty
-        v-if="loaded && !list.length"
+        v-if="isEmpty"
         :description="`没有找到与「${keyword}」有关的作品，换个书名或作者名试试`"
       />
+      <el-empty v-else-if="failed" description="搜索暂时不可用" image-size="80">
+        <el-button type="primary" plain @click="retry">重试</el-button>
+      </el-empty>
 
       <div v-if="total > size" class="pager">
         <el-pagination

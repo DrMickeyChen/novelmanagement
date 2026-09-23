@@ -152,6 +152,30 @@ M2 之后仓库里有**三份互为副本**的 `FeignIdentityConfig`：
 （最多 5 次尝试）会在超时时重发。★ 实际上那两处写的都是**绝对值**（不是 `+1`），
 所以重发幂等 —— **但这是运气，不是设计**，所以仍然关掉。
 
+> ### ★★ M5 订正（**只订正、不改写上面这段** —— 它记的是 M2 当时的事实）
+>
+> 上面那句「Feign 默认的 `Retryer.Default`（最多 5 次尝试）」**对 Spring Cloud OpenFeign 而言是错的**，
+> 上表的「content = **无**（用 Feign 默认重试）」也**跟着错**。两条一起订正：
+>
+> `spring-cloud-openfeign` 的 `FeignClientsConfiguration` **自己就注册了**：
+>
+> ```java
+> @Bean
+> @ConditionalOnMissingBean
+> public Retryer feignRetryer() { return Retryer.NEVER_RETRY; }
+> ```
+>
+> 也就是说 **Spring Cloud OpenFeign 的默认【本来就是】不重试**（自 `2.2.6` 起）。
+> `Retryer.Default`（最多 5 次尝试）是**裸 Feign** 的默认 —— M2 当时把两者当成一回事了。
+>
+> ★★ **这不是「M2 想多了」，是「M2 为一个不存在的危险买了保险」**：
+> interaction 那个 `@Bean` 只是**重复声明了框架默认值**，行为上**等于什么都没改**。
+> 它**不是一道护栏，是一行让人以为有护栏的注释**（铁律 8 的又一种形状）。
+> ★ 连带影响：上表「无 / 有」那一列**没有任何行为差异**，真正的差异只有「有没有显式写出来」。
+>
+> ★ 完整论证与后续处置（合并成单源、为什么读接口**仍然**不开重试、
+> 以及「重试与熔断相互放大」）在 `docs/M5-治理.md` §8.2 —— **M5 只订正，不在 M2 的文档里改结论。**
+
 ### 决定 C：**消费方各自声明自己用得到的 Feign 接口**，不做「一个共享客户端」
 
 `AuthUserClient` 原来住在 `modules/content/client`，4 个方法。M2 之后 interaction **也需要**调 auth

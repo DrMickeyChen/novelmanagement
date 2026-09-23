@@ -9,12 +9,39 @@
  * ------------------------------------------------------------
  * ★ 用法
  * ------------------------------------------------------------
- *   const { list, total, page, size, loading, loaded, load, changePage, changeSize, reload }
+ *   const { list, total, page, size, loading, loaded, isEmpty, failed,
+ *           load, changePage, changeSize, reload }
  *     = usePagedList(
  *         ({ page, size }) => getNovelList({ ...route.query, page, size }),
  *         { pageSize: 12, params: () => ({ sort: sort.value }) },
  *       )
  *   onMounted(load)
+ *
+ * ------------------------------------------------------------
+ * ★★ 「暂时拿不到」和「本来就没有」是两件事 —— 用 `failed` / `isEmpty` 分开
+ * ------------------------------------------------------------
+ * 这一条是 M5 加的，起因是一次实测：停掉后端服务，搜索页显示的是
+ * 【「没有找到相关的作品」】—— 一个彻头彻尾的谎话，而且它长得和
+ * 「这个词真的搜不到东西」一模一样，**用户没有任何办法分辨**。
+ *
+ * 根源是 `catch` 把失败写成了「空」（`list=[]`），而页面只看 `list.length`。
+ * 修法不是在每个页面里写 `v-if="!error"` —— 49 个调用点里迟早有一个忘掉
+ * 那半个条件，而「忘掉」不会有任何报错，只是那个页面又开始说谎。
+ * 所以这里直接给出**两个互斥的判据**：
+ *
+ *     <el-empty v-if="isEmpty" description="还没有作品" />
+ *     <el-empty v-else-if="failed" description="暂时加载失败">
+ *       <el-button @click="reload">重试</el-button>
+ *     </el-empty>
+ *
+ * ★ 互斥是**由构造保证**的（`isEmpty` 里带了 `!failed`），不是靠调用方自觉。
+ * ★ 两个都带 `loaded`：它们回答的是「查完之后是什么结果」，
+ *   首次进入（还没查）时两个都是 false，于是「加载中」不会和
+ *   「没有数据」同时出现 —— 和 `loaded` 本身存在的理由是同一条。
+ *
+ * ★★ 这不是「降级」—— `usePagedList` 管的都是**主数据**（作品列表、
+ *   评论列表），主数据没有「降级值」可给，只能如实显示失败。
+ *   真正的降级（拿不到就少显示一个字段）在后端做，见 M5 的降级判据。
  *
  * ------------------------------------------------------------
  * ★ 设计上刻意做的三个决定
@@ -38,7 +65,7 @@
  *    请求会带着 page=13 发出去，而总数据只有 15 页 → 第 13 页空了，
  *    列表空白但总数显示得很大，第一反应是「后端分页算错了」。
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 export function usePagedList(fetcher, options = {}) {
   const {
@@ -72,12 +99,43 @@ export function usePagedList(fetcher, options = {}) {
    *
    * 所以页面的写法应该是：
    *     v-loading="loading"
-   *     <el-empty v-if="loaded && !list.length" />
+   *     <el-empty v-if="isEmpty" />        ← ★ M5 起改用 isEmpty，见文件头
+   *     <el-empty v-else-if="failed">…重试…</el-empty>
    */
   const loaded = ref(false)
 
-  /** 最近一次失败。页面可以据此显示重试按钮（拦截器已经弹过提示了） */
+  /**
+   * 最近一次失败的原因（`request.js` 的拦截器已经把提示弹过了，
+   * 这里留着是给**页面**用的 —— 它要据此决定渲染失败态而不是空态）。
+   *
+   * ★ M5 之前这个 ref 已经存在，但三端 49 个调用点**零消费者** ——
+   *   注释写着「页面可以据此显示重试按钮」，而没有一个页面这么做。
+   *   「加了一个 ref 但没人用」和「没有这道护栏」是等价的。
+   *   ★ 现在的消费方式是下面那两个 computed，页面**不该直接读它**：
+   *   直接读就要自己写 `loaded` 的判断，写漏了就退回到说谎的老样子。
+   */
   const error = ref(null)
+
+  /**
+   * ★ 查完了、而且失败了。失败态与空态**互斥**，见文件头。
+   *
+   * ★★ 它是 `loaded && error` 而不是只看 `error`：`error` 在每次
+   *   `load()` 开头就被清成 null，但「清成 null」和「查成功了」
+   *   在首次进入时长得一样 —— 少了 `loaded` 就会在请求发出前
+   *   先闪一下失败态。
+   */
+  const failed = computed(() => loaded.value && !!error.value)
+
+  /**
+   * ★ 查完了、成功了、但是一条都没有 —— **「本来就没有」**。
+   *
+   * ★★ `!error` 这半个条件是它存在的理由：`catch` 里 `list` 被清空、
+   *   于是「失败」和「空」的 `list.length` 都是 0。少了它，
+   *   页面就会把失败说成「还没有作品」—— 正是 M5 要修的那个谎话。
+   *   把它写在这里而不是让 49 个调用点各写一遍，是因为
+   *   **忘写不会有任何报错**，只会有某个页面悄悄开始说谎。
+   */
+  const isEmpty = computed(() => loaded.value && !error.value && list.value.length === 0)
 
   /**
    * 请求序号，用于丢弃【过期响应】。
@@ -129,6 +187,13 @@ export function usePagedList(fetcher, options = {}) {
        *   置为 true 之后页面至少会走到空态，配上拦截器弹过的错误提示，
        *   用户知道是失败了而不是还在加载。
        *   （list 清空：上一次的数据留着会让「失败」看起来像「成功了但没变化」。）
+       *
+       * ★★ 但「走到空态」这句话在 M5 之前是**字面意思** —— 页面只有
+       *   `list.length` 可看，于是它渲染出来的是「还没有作品」。
+       *   现在 `error` 非空 → `failed` 为 true → 页面渲染失败态。
+       *   ★ 清空 list 这件事**保留**：`failed` 与「残留着上一页数据」
+       *   同时成立会让每个页面都要多写一层判断。代价是失败时看不到
+       *   上一页的内容 —— 但那是**诚实**的代价，不是 bug。
        */
       error.value = e
       list.value = []
@@ -179,6 +244,11 @@ export function usePagedList(fetcher, options = {}) {
     size,
     loading,
     loaded,
+    /** ★ 失败态。与下面的 isEmpty 互斥，页面用这两个，别直接用 error */
+    failed,
+    /** ★ 空态（查成功了但没有数据）。见文件头那张写法 */
+    isEmpty,
+    /** 原始错误对象。★ 只有需要「按失败原因分流」的页面才读它（如搜索页） */
     error,
     load,
     changePage,

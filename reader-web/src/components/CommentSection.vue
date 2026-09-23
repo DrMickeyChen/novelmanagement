@@ -70,15 +70,29 @@ const MAX_LENGTH = 500
  * ★ `fetcher` 里现取 `props.chapterId`：书评区和章评区是两个不同的
  *   组件实例，但就算将来同一个实例被复用了，这里拿到的也是当前值。
  */
-const { list, total, page, size, loading, loaded, load, reload, changePage } = usePagedList(
-  ({ page, size }) =>
-    props.chapterId
-      ? getChapterComments(props.novelId, props.chapterId, { page, size })
-      : getNovelComments(props.novelId, { page, size }),
-  { pageSize: 10 },
-)
+const { list, total, page, size, loading, loaded, isEmpty, failed, load, reload, changePage } =
+  usePagedList(
+    ({ page, size }) =>
+      props.chapterId
+        ? getChapterComments(props.novelId, props.chapterId, { page, size })
+        : getNovelComments(props.novelId, { page, size }),
+    { pageSize: 10 },
+  )
 
 onMounted(load)
+
+/**
+ * 重试。
+ *
+ * ★★ 必须在这里兜住 reject，不能在模板里裸写 `@click="reload"`：
+ *   `request.js` 的响应拦截器**提示完照样把 Promise 拒出去**，
+ *   裸调用就是一条 unhandledrejection —— 控制台一片红，
+ *   接了上报工具会被当成真错误报上去，而它其实只是「刚才没请求到」。
+ *   （详情页 `reportNovelView` 和 `handleDeleted` 都是同一个坑，写法保持一致。）
+ */
+function retry() {
+  reload().catch(() => {})
+}
 
 /* ==================== 发表 ==================== */
 
@@ -179,7 +193,12 @@ watch(
   <el-card shadow="never" class="section">
     <template #header>
       <span class="section-title">{{ isChapterComment ? '章评' : '书评' }}</span>
-      <span v-if="loaded" class="section-sub">共 {{ total }} 条</span>
+      <!--
+        ★ M5：失败时不显示条数。`catch` 里 total 被清成 0，
+          少了这个条件就会在加载失败时写着【共 0 条】——
+          和下面那个「还没有人评」是同一句谎话的两种说法。
+      -->
+      <span v-if="loaded && !failed" class="section-sub">共 {{ total }} 条</span>
     </template>
 
     <!--
@@ -219,15 +238,34 @@ watch(
     </div>
 
     <!--
-      ★ 空态必须等 `loaded` —— 只用 `!list.length` 的话，首次进入时
-        请求还没发（loading 也是 false），「加载中」和「还没有评论」
-        会同时出现，然后数据回来再闪一下。见 `usePagedList` 的 `loaded` 注释。
+      ★★ M5：失败态和空态是两个分支，**顺序不能反**。
+        它俩由 `usePagedList` 保证互斥（`isEmpty` 里带了 `!failed`），
+        所以写 `v-else-if` 和写两个独立的 `v-if` 在渲染上等价 ——
+        但仍然写 `v-else-if`：把「互斥」这件事**写进模板**，
+        让下一个读代码的人不必回到 composable 里去确认。
+
+      ★ 在 M5 之前这里只有下面那一个 `el-empty`，判据是
+        `loaded && !list.length`。停掉 interaction 之后，
+        读者看到的是【「还没有书评，来抢沙发」】——
+        而真相是评论服务挂了。★ 更糟的是它看起来完全正常，
+        没人会去报这个 bug。
+
+      ★ 空态仍然必须等 `loaded`（这一点 M5 没改）—— 只用 `!list.length`
+        的话，首次进入时请求还没发（loading 也是 false），
+        「加载中」和「还没有评论」会同时出现，然后数据回来再闪一下。
     -->
     <el-empty
-      v-if="loaded && !list.length"
+      v-if="isEmpty"
       :description="isChapterComment ? '还没有人评这一章' : '还没有书评，来抢沙发'"
       :image-size="60"
     />
+    <el-empty v-else-if="failed" description="评论暂时加载失败" :image-size="60">
+      <!--
+        ★ 必须给重试入口：拦截器弹的那条提示是**瞬时**的，
+           用户关掉它之后页面上就没有任何「能再做点什么」的地方了。
+      -->
+      <el-button type="primary" plain @click="retry">重试</el-button>
+    </el-empty>
 
     <div v-if="total > size" class="pager">
       <el-pagination

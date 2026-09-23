@@ -82,7 +82,7 @@ backend/
 │   ├── service/IndexService.java             ← ensureIndex / 重建 / ★dropQuietly
 │   ├── service/IndexRebuildService.java      ← 全量重建
 │   ├── client/ContentClient.java             ← ★ 接口定义在消费方（铁律 1）
-│   ├── client/FeignIdentityConfig.java       ← 注册代码的第 4 份 → M5 债
+│   ├── client/FeignIdentityConfig.java       ← 注册代码的第 3 份 → M5 债（★ 见 §十二 订正）
 │   └── mq/consumer/NovelIndexConsumer.java
 ├── novel-content/
 │   ├── controller/ReaderSearchController.java  ← ★ 整个删除（搬去 search）
@@ -1475,6 +1475,14 @@ echo "up after ${i}0s"
 
 - ★★ **服务级环 #2 `novel-content ⇄ novel-interaction` 仍在** —— 要解需要「审核时把评论正文快照写进 `audit_log`」（DDL）→ M5
 - **`FeignIdentityConfig` 从三份副本变成四份**（新增 search 那份）→ M5 治理
+  - ★★ **M5 订正：这个数字是错的，实测是「两份变三份」。**
+    `find backend -name FeignIdentityConfig.java`（M5 开工前）→ **3 个**：content / interaction / search。
+    **auth 那份在 M3 就随整条边一起删掉了** —— M4 那句话把**已经删掉的那一份算了进来**。
+    ★ 差别的来源：M4 是**照 M2 的结论往后推**的（M2 时确实是三份），
+    而 M3 删 auth 的 Feign 依赖时**没有回头改 M2 那句话**。
+    ★ 教训与铁律 8 同源：**「份数」这种判据要现数，不要从前一期的文档里继承** ——
+    它会在中间某一期被别的改动顺手改掉，而**没有任何东西会报错**。
+  - ★ M5 之后这 3 份合并成了 `novel-common` 里的**单源 1 份**（见 `docs/M5-治理.md` §8.2）。
 - ★★ **`HeaderAuthenticationFilter` 本身【不是】副本** —— 它全项目只有一份，住在
   `novel-common/.../common/security/filter/`。重复的是**每个服务 `SecurityConfig` 里注册它的那几行**
   （`addFilterBefore` + `FilterRegistrationBean`）。★ 写成「过滤器有 4 份副本」是错的，

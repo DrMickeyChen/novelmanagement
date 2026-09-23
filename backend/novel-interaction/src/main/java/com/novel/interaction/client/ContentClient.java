@@ -47,7 +47,8 @@ import java.util.Map;
  * {@code /api/**} 之下，而网关的路由表只有 {@code /api/**} 和
  * {@code /uploads/**} 两类前缀 —— <b>网关在结构上就转发不出这些接口</b>。
  * <p>★ 所以 {@code path = "/internal"} 这一行不是「省得写」，
- * 它和 {@link FeignIdentityConfig} 里那个内部令牌是一套东西：
+ * 它和 {@code com.novel.common.internal.FeignIdentityConfig} 里那个内部令牌
+ * 是一套东西（★ M5 起那份配置只有一份，住在 novel-common）：
  * <b>网络隔离是第一道锁，共享密钥只是第二道</b>（见 {@code docs/M1} R9）。
  *
  * <p>★ {@code name = "novel-content"} 交给 Nacos + LoadBalancer 解析，
@@ -61,7 +62,9 @@ import java.util.Map;
  *
  * @author MickeyChen
  */
-@FeignClient(name = "novel-content", path = "/internal")
+/* ★★ M5：这条边【没有降级可言】（content 是主数据源），见 ContentClientFallbackFactory */
+@FeignClient(name = "novel-content", path = "/internal",
+        fallbackFactory = ContentClientFallbackFactory.class)
 public interface ContentClient {
 
     /* ==================== 校验类 ==================== */

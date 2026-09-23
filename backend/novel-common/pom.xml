@@ -160,6 +160,60 @@
         </dependency>
 
         <!--
+          ★★ M5 新增：跨服务调用【失败】时用来归因的两个类型。
+              见 com.novel.common.internal.FallbackSupport。
+
+          ============================================================
+          为什么归因这件事住在 common、却只给三个服务用
+          ============================================================
+          五个 Feign 客户端的「失败长什么样」是同一件事，所以归类逻辑
+          只该有一份；但它要 instanceof 的那三个类分别是：
+
+              com.alibaba.csp.sentinel.slots.block.BlockException   ← 熔断
+              feign.RetryableException                              ← 连不上 / 读超时
+              feign.FeignException                                  ← 下游返回了非 2xx
+
+          ★ 这两个依赖【故意不是 starter】：
+            sentinel-core 是裸的 API 库，不含任何自动配置 ——
+            自动配置在 spring-cloud-starter-alibaba-sentinel 里，
+            那个由 content / interaction / search 三个服务【自己声明】。
+            如果 common 引的是 starter，auth 和网关会跟着被激活 Sentinel，
+            这是铁律 1 那条「服务边界单向」在依赖层面的又一次越界。
+
+          ============================================================
+          ★★★ 为什么必须是 optional —— 不标会【弄坏一条已验证的不变量】
+          ============================================================
+          M5 的 6.0 定了一条可 grep 的不变量：
+          「只有 content / interaction / search 有出站边，所以只有这三个
+           装 Sentinel」。它的判据是 R4：拆开 jar 看 BOOT-INF/lib，
+          novel-content 里有 sentinel、novel-gateway 里【没有】。
+
+          ★ novel-auth 和 novel-gateway 的 classpath 上不该出现 sentinel-core：
+              · 网关 —— 它没有 Feign，装 Sentinel 是纯噪音（而网关做限流
+                是另一条【刻意不选】的路，理由记在 M5 文档 6.0）；
+              · novel-auth —— 它的出站边是 0 条，那是 M3 好不容易挣来的。
+                多一个能熔断的库，就是在暗示「这里还有往外调的东西」。
+
+          ★★ 而 optional 正好只做这一件事：本模块编译时看得到，
+             一个字节都不传给下游。上面那一大段注释把同一个道理
+             讲过一遍了，这里是它在 M5 的第二个适用者。
+
+          ★ 漏标会怎样：网关的 jar 里出现 sentinel → R4 的阴性对照
+            （「网关里没有」）当场变假，而那条对照正是判断「谁装了熔断」的
+            唯一依据。★ 症状不会自己冒出来 —— 只有人去看 jar 才发现。
+        -->
+        <dependency>
+            <groupId>com.alibaba.csp</groupId>
+            <artifactId>sentinel-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-core</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
           ==================== JWT ====================
           ★ 这一组【不标 optional】—— 它们是真正要传到运行时的。
 

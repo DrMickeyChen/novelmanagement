@@ -48,7 +48,9 @@ import java.util.Map;
  *
  * @author MickeyChen
  */
-@FeignClient(name = "novel-auth", path = "/internal")
+/* ★★ M5：fallbackFactory 的两个必要条件（这里 + feign.sentinel.enabled），见 AuthUserClientFallbackFactory */
+@FeignClient(name = "novel-auth", path = "/internal",
+        fallbackFactory = AuthNicknameClientFallbackFactory.class)
 public interface AuthNicknameClient {
 
     /**
