@@ -1,5 +1,6 @@
 package com.novel.modules.content.vo;
 
+import com.novel.common.vo.NovelVO;
 import com.novel.modules.content.entity.Novel;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
@@ -17,7 +18,7 @@ import java.time.LocalDateTime;
  * <ul>
  *   <li>那两个 DTO 各 6 个字段，<b>抄一遍的成本接近零</b>，而它们的分化是
  *       <b>可预见的</b>（「书名通过审核后不允许再改」只会加在编辑上）。</li>
- *   <li>这两个 VO 有 14 个字段完全重合，抄一遍的代价是
+ *   <li>这两个 VO 有 15 个字段完全重合，抄一遍的代价是
  *       「以后 {@code NovelVO} 加一个字段（比如『是否已收藏』），
  *       详情页忘了跟着加」—— <b>这种漏改在继承下不可能发生</b>。</li>
  * </ul>
@@ -33,14 +34,22 @@ import java.time.LocalDateTime;
  * 只会给一条编译警告 —— 而这条警告淹没在构建输出里，几乎没人看。
  *
  * <p><b>本项目只有两处 VO 用继承，就是这一对和 {@code ChapterDetailVO}：
- * 「列表项 → 详情」这一种关系。</b>两处都遵循同一套写法，照着抄即可：
- * <pre>
- *   父类：protected void fillFrom(实体, ...)   // 父类字段只在这一处赋值
- *   子类：&#64;EqualsAndHashCode(callSuper = true) + &#64;ToString(callSuper = true)
- *         of() 里先调 fillFrom(...)，再 set 自己独有的字段
- * </pre>
+ * 「列表项 → 详情」这一种关系。</b>
  * <b>不要扩散到别处</b> —— 没有这层「详情就是在列表项上多几个字段」的关系时，
  * 继承只会让「哪些字段到底从哪来」变得难查。
+ *
+ * <p>★★ <b>但 M4 之后这两对的写法【不再一样】了，抄之前先看清是哪一对：</b>
+ * <pre>
+ *   ChapterDetailVO 那对（父类 ChapterVO 没搬走）：
+ *     父类：protected void fillFrom(实体, ...)   // 父类字段只在这一处赋值
+ *     子类：of() 里先调 fillFrom(...)，再 set 自己独有的字段
+ *
+ *   ★ NovelDetailVO 这一对（父类 NovelVO 在 M4 搬去了 novel-common）：
+ *     父类：没有 fillFrom —— 它在 common，【不认识 Novel 实体】
+ *     子类：of() 里先调 NovelVos.fill(vo, ...)（同包的工具类），再 set 自己独有的字段
+ * </pre>
+ * ★ 两对的共同点仍然成立且才是重点：<b>父类字段的赋值只有一处</b>。
+ * 差别只在那一处住在哪 —— 住在父类里，还是住在父类<b>够不着实体</b>时另立的工具类里。
  *
  * <p><b>什么时候该把继承拆掉：</b>如果哪天要「给列表 VO 删掉一个字段」，
  * 子类会跟着丢。但删列表字段会同时影响三个端点的列表页，本来就不该随手删。
@@ -124,9 +133,15 @@ public class NovelDetailVO extends NovelVO {
      */
     public static NovelDetailVO of(Novel entity, String categoryName, String authorName) {
         NovelDetailVO vo = new NovelDetailVO();
-        // ★ 父类那 14 个字段走父类的 fillFrom，这里一个字都不重复 ——
+        // ★ 父类那 15 个字段走 NovelVos.fill，这里一个字都不重复 ——
         //   以后 NovelVO 加字段，详情自动就有（这正是用继承的意义所在）
-        vo.fillFrom(entity, categoryName, authorName);
+        //
+        // ★ M4：这一行原来是 vo.fillFrom(...)（父类的 protected 实例方法）。
+        //   NovelVO 搬去 novel-common 之后，父类不能再认识 Novel 实体，
+        //   于是「填父类字段」这个动作移到了同包的 NovelVos.fill。
+        //   ★ 方法名从 fillFrom 改成 fill，是因为它不再是「自己填自己」——
+        //     它收一个目标对象，所以 fill(vo, ...) 才是它的真实形状。
+        NovelVos.fill(vo, entity, categoryName, authorName);
         // 以下是详情独有的
         vo.setIntro(entity.getIntro());
         vo.setTags(entity.getTags());

@@ -9,6 +9,7 @@ import com.novel.common.enums.ChapterStatus;
 import com.novel.common.enums.NovelStatus;
 import com.novel.common.exception.BusinessException;
 import com.novel.common.result.PageResult;
+import com.novel.common.result.MybatisPageResults;
 import com.novel.common.result.ResultCode;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.modules.content.dto.ChapterCreateDTO;
@@ -331,7 +332,7 @@ public class ChapterServiceImpl implements ChapterService {
 
         /*
          * ★ selectPage 已经带了 total/current/pages，这里不能再自己 count 一次。
-         * 用 PageResult.of(page, converter) 而不是手拼构造器 —— 手拼的话
+         * 用 MybatisPageResults.of(page, converter) 而不是手拼构造器 —— 手拼的话
          * current/size 用的是入参，而 MP 实际用的是兜底之后的值，
          * 传 ?page=0 时返回体里的 current 会和真实页码对不上。
          *

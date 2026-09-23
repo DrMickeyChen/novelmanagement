@@ -272,7 +272,14 @@ public class ContentSecurityConfig {
                          *   GET /api/novels/{id}/chapters           章节目录（分页）
                          *   GET /api/novels/{id}/catalog            完整目录
                          *   GET /api/novels/{id}/chapters/{cid}     章节正文（阅读器核心）
-                         *   GET /api/search                         搜索
+                         *
+                         * ★★ M4：`GET /api/search` 已从这份白名单里【删掉】——
+                         *    搜索整体搬去了 novel-search，这个服务不再有那条路径。
+                         *    ★ 白名单和接口必须同时增删：留着一个已经不存在的路径
+                         *      不会报错，只是让这份清单**悄悄地说了假话**
+                         *      （下一个人照着它去 content 里找搜索接口，会找不到）。
+                         *    ★ 路径下面那条 `GET /api/categories` 仍然在，
+                         *      分类树没有搬走。
                          *
                          * ★ 为什么每条都要写「裸路径 + 带通配」两遍（比如
                          *   /api/novels 和 /api/novels/** 都要）：
@@ -284,7 +291,6 @@ public class ContentSecurityConfig {
                          *     因为列表的路径正好是那个没有子路径的裸路径。
                          */
                         .requestMatchers(HttpMethod.GET, "/api/categories").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/api/search").permitAll()
 
                         .requestMatchers(HttpMethod.GET, "/api/novels").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/novels/rank").permitAll()

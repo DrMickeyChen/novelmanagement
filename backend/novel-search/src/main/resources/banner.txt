@@ -1,0 +1,11 @@
+${AnsiColor.BRIGHT_CYAN}
+   _   _  _____ __     __ _____ _
+  | \ | |/ _ \ \ \   / /| ____| |
+  |  \| | | | |\ \ / / | |__ | |
+  | |\  | | | | \ V /  |  __|| |
+  | | \ | |_| |  \_/   | |___| |___
+  |_|  \_\___/          |_____|_____|
+
+${AnsiColor.BRIGHT_BLACK}  小说管理系统 · 后端服务
+${AnsiColor.BRIGHT_GREEN}  Spring Boot ${spring-boot.version}${AnsiColor.BRIGHT_BLACK} | Java ${java.version} | Profile: ${spring.profiles.active}
+${AnsiColor.RESET}

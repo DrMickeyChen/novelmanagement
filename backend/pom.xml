@@ -57,7 +57,26 @@
 
           ★ 至此四个进程的形状与大纲 §四目录结构一致：
               网关 8080 → auth 8081 / content 8082 / interaction 8083
-            M3 摘 interaction、M4 摘 search 时，这里还会继续长。
+
+      ★★ M3 没有新增模块 —— 这一条和上面那句预测对不上，要写清楚为什么：
+          M0 那句写的是「M3 摘 interaction、M4 摘 search 时，这里还会继续长」。
+          ★ 但 interaction 在 M2 就已经是独立进程了，M3 的实质【只有 MQ】
+            （见 docs/M3-引入MQ.md 开头），一个模块都没加。
+          ★★ 于是「模块数」这条线是 M0(+2) → M1(+1) → M2(+0，只是把
+             novel-backend 改名叫 novel-interaction) → M3(+0) → M4(+1)。
+             凭「每期加一个模块」去数期数会数错。
+          ★ 那句预测不改掉，也不假装它应验了 —— 留着它 + 这行对照，
+            比改成「M4 摘 search 时这里还会继续长」诚实。
+
+      ★★ M4 新增第五个模块（第二个「从来不是单体的一部分」的服务）：
+          novel-search      应用 —— 8084，全新的搜索服务，读写 Elasticsearch
+
+          ★ 它和 auth / content / interaction 有一个本质区别：
+            那三个是从第一期的单体里【搬】出来的（业务代码一行没改），
+            novel-search 是【新写的】—— 第一期那个 ReaderSearchController
+            只是个壳，真正的实现（ES 检索 + 索引同步）M4 才有。
+          ★★ 它也是【唯一一个不连数据库的服务】—— 这一点直接导致了
+             novel-common 里 5 个类需要加条件注解，见那些类自己的注释。
 
       ★ 为什么不让网关直接依赖 novel-common：
           gateway 是 WebFlux 的，classpath 上只要出现 spring-webmvc 就
@@ -82,6 +101,8 @@
         <module>novel-interaction</module>
         <module>novel-gateway</module>
         <module>novel-auth</module>
+        <!-- ★ M4 新增。★ 放最后不是随意的：它依赖 novel-common，排在其后读起来顺 -->
+        <module>novel-search</module>
     </modules>
 
     <properties>
@@ -274,10 +295,15 @@
                      2.3.2 起才修（RocketMQ 改了包路径）。
                   取 2.3.6 = 本机镜像仓库里的最新 release，两条下限都远在身后。
 
-              ★★ 只有 auth / content / interaction 三个服务会引用它。
+              ★★ M3 时有 auth / content / interaction 三个服务引用它；
+                  ★ M4 起是【四个】—— novel-search 也引（它要消费 NOVEL_INDEX）。
                   novel-common 【不引】，novel-gateway 【也不引】——
                   见那两个 pom 里各自的说明。这样网关的 classpath
                   结构上就不可能因为 M3 而变化。
+                  ★ 网关那条结论 M4 仍然成立：它至今没碰过 MQ。
+                  ★★ 但「新增一个引 MQ 的服务」这件事本身值得记一笔：
+                     它说明这条依赖【不是】某三个服务的专属，而是一条
+                     普通的业务依赖 —— 否则每次拆服务都要回来重新论证一次。
             -->
             <dependency>
                 <groupId>org.apache.rocketmq</groupId>

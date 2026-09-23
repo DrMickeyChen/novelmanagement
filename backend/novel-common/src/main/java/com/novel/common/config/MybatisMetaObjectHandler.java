@@ -3,6 +3,7 @@ package com.novel.common.config;
 import com.baomidou.mybatisplus.core.handlers.MetaObjectHandler;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.ibatis.reflection.MetaObject;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -23,10 +24,26 @@ import java.time.LocalDateTime;
  * 用的是数据库服务器时区。而这里的 {@code LocalDateTime.now()} 用的是应用时区，
  * 两者在跨时区部署时会不一致。统一由应用填充，时间口径就只有一个。
  *
+ * <h3>★★ M4：{@code @ConditionalOnClass} 是给 novel-search 加的</h3>
+ *
+ * <p><b>★ 这个类比 {@code MybatisPlusConfig} 更早炸，而且更有迷惑性：</b>
+ * 它<b>实现了</b> {@code MetaObjectHandler} 这个接口。JVM 加载一个类时要先解析
+ * 它的接口和父类 —— 所以只要 search 的 classpath 上没有 mybatis-plus-core，
+ * 组件扫描<b>读到这个类的一瞬间</b>就抛 {@code NoClassDefFoundError}，
+ * 连「要不要实例化它」都轮不到。
+ *
+ * <p>★ 计划里我一开始把这一条判成「它只实现接口、不注入 DataSource，大概率不炸」——
+ * <b>那是错的</b>，错在只看了「它依赖什么」，没看「它是什么」。
+ * 判据应当是<b>「这个类本身能不能被加载」</b>，而不是「它的字段能不能被注入」。
+ * 同类隐患：任何 {@code implements} 了第三方库接口的 common 类，都是同一个形状。
+ *
+ * <p>★ 对原本那四个服务是 no-op（它们本来就有 MyBatis-Plus）。</p>
+ *
  * @author MickeyChen
  */
 @Slf4j
 @Component
+@ConditionalOnClass(MetaObjectHandler.class)
 public class MybatisMetaObjectHandler implements MetaObjectHandler {
 
     /**

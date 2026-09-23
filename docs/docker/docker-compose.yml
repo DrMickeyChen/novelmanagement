@@ -140,8 +140,33 @@ services:
   # ★ 单节点模式 + 关闭安全认证，仅用于本地开发
   #   生产环境绝对不能这么配
   # ----------------------------------------------------------
+  # ★★ M4：从「拉官方镜像」改成「构建自建镜像」，唯一目的是装 IK 中文分词。
+  #    官方镜像不含任何中文分词器，只有 standard。
+  #    ★ 装 IK 的理由是【相关性】，不是【能不能搜到】—— 这个区别很容易说错：
+  #      standard 对中文是【逐字切分】（「斗破苍穹」→ 斗/破/苍/穹），
+  #      而 match 是 OR 语义，所以不装 IK 照样搜得到「斗破苍穹」。
+  #      IK 多给的是「苍穹 / 修仙 / 咸鱼」这类真词，直接决定 _score 排序质量。
+  #    完整理由（含实测数据，以及为什么不能在容器里临时装）见 Dockerfile-es 的头部注释。
+  #
+  # ★ build: 和 image: 必须【同时】写，少一个都不行：
+  #     只写 build:  → 构建出来的镜像没有名字（<none>:<none>），
+  #                    `docker images` 里堆一排悬空镜像，清理时不敢删。
+  #     只写 image:  → 就是 M0~M3 那样，直接拉官方镜像，IK 又没了。
+  #
+  # ★★ 刻意【不】沿用官方那个 tag：
+  #    把 docker.elastic.co/... 这个 tag 重新指向本地构建的内容之后，
+  #    「本机这个 tag 到底是官方的还是自建的」就永远说不清了；
+  #    更要紧的是下次不带 --build 时，compose 会认为本地已有该镜像而直接复用，
+  #    于是 IK 有没有装变成了「取决于这台机器上一次构建过什么」。
+  #
+  # ★ 首次执行要联网下载 IK（4.6MB，来自 get.infini.cloud）。
+  #   构建失败【不会影响正在跑的旧容器】—— compose 在构建成功前不碰它，
+  #   所以这一步可以放心重试。
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    build:
+      context: .
+      dockerfile: Dockerfile-es
+    image: novel-es:8.13.4-ik
     container_name: novel-es
     restart: unless-stopped
     environment:

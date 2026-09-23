@@ -217,6 +217,48 @@ public final class MqConstant {
      */
     public static final String TAG_AUDIT_RECORD = "AUDIT_RECORD";
 
+    /**
+     * 小说索引重建（M4）：<b>「这本书的索引可能过期了」</b>。
+     *
+     * <p>★ 方向：<b>novel-content → novel-search</b>。
+     *
+     * <h3>★★ 为什么叫 {@code NOVEL_INDEX} 而不是大纲里的 {@code CHAPTER_PUBLISHED}</h3>
+     *
+     * <p>大纲把这条设计成「章节发布」触发。★ 但只做章节发布的话，<b>新书上架后搜不到</b> ——
+     * 新书还没有任何章节发布事件。而把发送点挂在 {@code syncNovelStat} 的调用点上也是错的：
+     * <b>那是 4 个调用点，不是触发点全集</b>。参与检索的列有 5 组，
+     * 而 {@code title} / {@code intro}（改书名）、{@code status}（上下架）、{@code deleted}（逻辑删除）
+     * <b>都不经过它</b>。
+     * ★★ 挂错的后果是三条<b>永久不会自愈</b>的错：下架的书在索引里永远是「已上架」、
+     * 改名后搜新名搜不到、逻辑删除只对 MySQL 生效
+     * （{@code @TableLogic} 是 MyBatis 往 WHERE 里注入条件，<b>ES 完全不知道有 {@code deleted} 这回事</b>）。
+     * <p>所以 Tag 的语义是「<b>这本书的索引可能过期了</b>」——
+     * <b>推事实，不推数据</b>。判据：<b>参与检索的列被写的地方</b>，而不是「哪个方法看着像入口」。
+     *
+     * <h3>★★★ 铁律 7 框架下的【第五种形态】—— 而且是唯一一条「幂等免费」的</h3>
+     *
+     * <table border="1">
+     *   <caption>四条 M3 消息 + 这一条，各自的载荷与正确性来源</caption>
+     *   <tr><th>消息</th><th>载荷</th><th>靠什么保证正确</th></tr>
+     *   <tr><td>{@code VIEW_REPORT}</td><td>增量 {@code +N}</td><td>累加与顺序无关</td></tr>
+     *   <tr><td>{@code PROGRESS_REPORT}</td><td>绝对值</td><td>★ ORDERLY（全项目唯一）</td></tr>
+     *   <tr><td>{@code NOVEL_STAT}</td><td>绝对值</td><td>时间戳单调写</td></tr>
+     *   <tr><td>{@code AUDIT_RECORD}</td><td>事实</td><td>{@code SETNX} 幂等</td></tr>
+     *   <tr><td><b>{@code NOVEL_INDEX}</b></td><td><b>只有一个 id</b></td>
+     *       <td>★★ <b>幂等天然、顺序无关</b> —— 不需要 SETNX、不需要时间戳</td></tr>
+     * </table>
+     *
+     * <p>★ 为什么这么省：<b>载荷里没有数据，消费者读的是【当时的真值】。</b>
+     * 两条乱序的消息各自触发一次重建，两次都读同一份当前状态、写同一个文档 → 结果一样；
+     * 重复消费也一样。<b>它推的是「去重算一次」这个指令，而不是算好的结果。</b>
+     * <pre>
+     *   ★ 顺带一个反例（记下来免得将来有人「优化」）：如果哪天为了省一次查询，
+     *   把 title/intro 直接塞进载荷 —— 这条消息立刻退化成「绝对值」，
+     *   于是必须补上时间戳或顺序消费。**省一次查询，换来一整套防乱序机制。**
+     * </pre>
+     */
+    public static final String TAG_NOVEL_INDEX = "NOVEL_INDEX";
+
     /* ==================== 消费组 ==================== */
     /* ★ 一个 (服务, Tag) 一个组 —— 理由见类注释开头。四个组不要合并。 */
 
@@ -231,6 +273,28 @@ public final class MqConstant {
 
     /** content 消费 {@link #TAG_AUDIT_RECORD}（审核流水，并发 + SETNX 幂等） */
     public static final String GROUP_CONTENT_AUDIT = "group-content-audit";
+
+    /**
+     * ★★ <b>search 消费 {@link #TAG_NOVEL_INDEX}（索引重建，并发 + 幂等天然）。</b>
+     *
+     * <p>★★ <b>这是全项目【唯一】一个由非 content/interaction/auth 的服务持有的消费组</b> ——
+     * 它属于 {@code novel-search}。
+     *
+     * <p>★★★ <b>「谁消费」在这里是承重的设计决定，不是实现细节</b>：
+     * 消费方必须是 search。如果反过来让 content 消费再调 search 推文档，
+     * 就凭空造出一条 <b>content → search 的【同步】边</b>，
+     * 而 {@code search → content} 的同步边本来就存在（检索要回 content 装配）——
+     * <b>两条合起来就是服务级环 #3</b>。
+     * ★ 按 M3 判断 C 用的定义（<b>服务级环 = 同步调用的环，MQ 不算边</b>），
+     * 现在这条 {@code content →(MQ) search} <b>不构成环</b>。
+     *
+     * <p>★ 名字按大纲 §12.1 的写法（{@code group-search-index}）保留。
+     * ★ 大纲里跟它并列的那个 {@code group-content-stat} <b>M4 没有建</b> ——
+     * 它要干的事（{@code word_count} / {@code chapter_count} 冗余字段更新）
+     * 本来就是 content 自己一个事务里的本地写，改成「发消息 → 自己消费 → 再写」
+     * 是把一个原子操作<b>降级</b>成最终一致。<b>那是大纲里一条不该存在的设计。</b>
+     */
+    public static final String GROUP_SEARCH_INDEX = "group-search-index";
 
     /* ==================== 生产者组 ==================== */
 

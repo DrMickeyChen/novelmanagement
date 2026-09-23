@@ -6,6 +6,7 @@ package com.novel.common.config;
 import com.novel.common.upload.UploadProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
@@ -44,11 +45,24 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 猜不到别人的图 —— 但这不是安全边界，只是「不可枚举」。
  * 真正敏感的东西（未上架作品的正文）从来不走这个目录。
  *
+ * <h3>★ M4：{@code @ConditionalOnProperty} 是给 novel-search 加的</h3>
+ *
+ * <p>和 {@link com.novel.common.upload.ImageStorage} 同样的位置和同样的理由：
+ * {@code uploadProperties} 是构造器注入，那个 bean 被跳过时这里就起不来。
+ *
+ * <p><b>★ 但本类比 ImageStorage 更该被跳掉</b>，因为跳掉它是有<b>实际效果</b>的：
+ * 它会往 search 里注册一条 {@code /uploads/**} 的静态资源映射。
+ * 而 search 在网关的路由表里<b>根本收不到</b> {@code /uploads/**}
+ * （那条在 order 10，指向 novel-interaction）—— 于是它是一条
+ * <b>永远不会被命中的路由</b>。★ 一条不会被命中的路由不会报错，
+ * 它只会在将来有人查「到底谁在提供 /uploads/」时多出一个假答案。
+ *
  * @author MickeyChen
  */
 @Slf4j
 @Configuration
 @RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "novel.upload", name = "path")
 public class WebMvcConfig implements WebMvcConfigurer {
 
     /** 封面图基本不变，而 URL 里的 UUID 保证「换了图就是换了 URL」，所以可以放心长缓存 */

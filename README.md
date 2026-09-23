@@ -14,7 +14,7 @@
 |---|---|
 | 后端 | Spring Boot 3.2.12 · Java 21 · MyBatis-Plus · Spring Security + JWT · MySQL 8 · Redis 7 · Knife4j |
 | 前端 | Vue 3.5 · Vite 8 · Element Plus 2.14 · Pinia · Vue Router · Axios（三端同栈） |
-| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二、三期）<br>★ RocketMQ 自 **M3** 起已启用（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径） |
+| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器） |
 
 ---
 
@@ -22,13 +22,16 @@
 
 ```
 novelManagement/
-├── backend/                 # Maven 多模块（M0 起）。后端 M2 起是四个进程（网关 + auth + 内容 + 互动）
+├── backend/                 # Maven 多模块（M0 起）。后端 M2 起四个进程，M4 起五个（网关 + auth + 内容 + 互动 + 搜索）
 │   ├── pom.xml              # 聚合 POM（novel-parent）★ 打包打的是它，不是子模块
 │   ├── novel-common/        # 公共设施：Result / 异常 / 安全 / 上传 / config（库，不是可执行 jar）
 │   │                        #   ★ M1 起 config/ 里的技术配置（Redis/MyBatis/Jackson…）住这里，
 │   │                        #     各服务共用一份 —— 复制第二份就是序列化漂移的开始
 │   ├── novel-auth/          # ★ M1 新增，:8081，整个 modules/system（登录/用户/角色菜单/公告/作者申请）
-│   ├── novel-content/       # ★ M2 新增，:8082，modules/content + modules/ai（作品/章节/分类/审核/搜索/AI）
+│   ├── novel-content/       # ★ M2 新增，:8082，modules/content + modules/ai（作品/章节/分类/审核/AI）
+│   │                        #   ★ M4 起「搜索」不在它这儿了 —— /api/search 搬去 novel-search；
+│   │                        #     它还留着两个角色：降级路径的数据源 + 索引/装配的数据源（/internal/**）
+│   ├── novel-search/        # ★ M4 新增，:8084，ES 检索 + 索引重建；★ 它【没有数据库】
 │   ├── novel-interaction/   # ★ M2 由 novel-backend 【改名】而来，:8083，只剩 modules/interaction
 │   │   └── src/main/        #   （评论 / 书架 / 阅读历史）
 │   │       ├── java/com/novel/
@@ -41,7 +44,9 @@ novelManagement/
 │   └── novel-gateway/       # Spring Cloud Gateway，:8080 的唯一入口
 │                            #   ★ M1 起它【还要验 JWT】：验签 + 查 Redis → 写身份头 → 转发
 │                            #   ★ M2 起路由要区分 content / interaction：/api/novels/** 和
-│                            #     /api/admin/** 是两边【共享】的，靠 order 分先后（4 < 5）
+│                            #     /api/admin/** 是多边【共享】的，靠 order 分先后。
+│                            #     ★ M4 起判据是「与 content 的这两个前缀重叠的具体路由，
+│                            #       order 必须严格小于 5」：interaction=4、search=3、兜底=20
 │
 ├── reader-web/              # 阅读端   → 挂 /reader/   dev :5173
 ├── author-web/              # 创作中心 → 挂 /author/   dev :5174
@@ -54,10 +59,13 @@ novelManagement/
 │   ├── M1-摘出auth.md                    # ★ 第二期 M1：摘出 auth 服务 + 网关接管 JWT
 │   ├── M2-摘出content.md                 # ★ 第二期 M2：摘出 content + 跨服务边改走 Feign
 │   ├── M3-引入MQ.md                      # ★ 第二期 M3：引入 RocketMQ，四条写路径改走消息
+│   ├── M4-摘出search.md                  # ★ 第二期 M4：摘出 search + ES 倒排检索 + 索引消息
 │   ├── 部署.md                          # 生产部署（Nginx / jar / 环境变量）
 │   ├── 环境配置.md                       # 虚拟机与 Docker 中间件搭建
 │   ├── mq-notes.md                      # 消息队列笔记（第二期配套）
 │   ├── docker/                          # docker-compose.yml + broker.conf + .env.example
+│   │                                    #   ★ M4 起多一个 Dockerfile-es（ES 官方镜像不含 IK 分词器，
+│   │                                    #     只能自建；compose 的 es 段也从 image: 改成 build:）
 │   └── sql/
 │       ├── schema.sql                   # 建表（21 张，自带建库语句）
 │       └── seed.sql                     # 种子数据（分类、菜单、账号、12 本演示作品）
@@ -101,7 +109,19 @@ docker compose up -d mysql redis
 >
 > ★ **`broker.conf` 的 `brokerIP1`** 起 RocketMQ 之前必须填成虚拟机局域网 IP（M0 已填好）。
 > 另外 `defaultTopicQueueNums = 4` 是 M3 显式加的，别删 —— 顺序消息的讨论每次都要说清队列数。
-> `sudo sysctl -w vm.max_map_count=262144` 是给 Elasticsearch 用的，M3 仍然不需要。
+>
+> ★★ **M4 起需要 Elasticsearch**：`sudo sysctl -w vm.max_map_count=262144`（这条现在真的要做了）
+> 然后 `docker compose up -d --build elasticsearch`。
+> ★ **注意 `--build`** —— ES 的官方镜像**不含 IK 中文分词器**，M4 为此加了 `docs/docker/Dockerfile-es`，
+> compose 里的 `es` 段也从 `image:` 改成了 `build:`（这是 `docs/docker/` 第一次不是「零改动」）。
+> ★★ **验收不能只看容器 `Up`**：`_analyze` 要拿 `ik_max_word` 和 `standard` **各跑一遍比输出**
+> ——「斗破苍穹」前者出 `斗/破/苍穹`、后者出 `4 个单字`。**只跑 IK 的话两种结果都「像对的」。**
+> 三条坑（`vm.max_map_count` / bind mount 的 uid 1000 / `docker.elastic.co` 不在 Docker Hub）
+> 与实测记录见 [docs/环境配置.md](docs/环境配置.md) 和 [docs/M4-摘出search.md](docs/M4-摘出search.md)。
+>
+> ★★ **起来的顺序：RocketMQ 必须先于 novel-search / content** —— M4 实测，
+> namesrv 不可达时 search **起不来**（MQ 挂在**注册路径**上）；
+> 而 **ES 挂掉时服务照常能起**（ES 挂在**请求路径**上，有降级兜底）。
 
 ### 2. 建库灌数据
 
@@ -117,9 +137,9 @@ mysql -uroot -p < seed.sql
 > 重复执行只会打印一堆 `Duplicate entry` 警告，不影响结果。`seed.sql` 结尾自带断言，会打印
 > `novels_should_be_12 / chapters_should_be_47 / contents_should_be_47` 和 `finished_should_be_2` —— 对得上就说明数据是好的。
 
-### 3. 改配置 + 打包 + 起四个进程
+### 3. 改配置 + 打包 + 起五个进程
 
-★ **M2 起有四个 `application-dev.yml`**（`novel-gateway` / `novel-auth` / `novel-content` / `novel-interaction`），
+★ **M2 起有四个 `application-dev.yml`，M4 起五个**（`novel-gateway` / `novel-auth` / `novel-content` / `novel-interaction` / `novel-search`），
 **每一个**里面的 `192.168.127.137` 都要改成你的虚拟机 IP
 （`spring.datasource.url`、`spring.data.redis.host`、`spring.cloud.nacos.discovery.server-addr`）。
 漏改一个的症状是那个服务起不来或注册不上 —— 网关那个漏了就是全站 503。然后：
@@ -216,13 +236,15 @@ npm run dev             # concurrently 同时起 reader / author / admin / proxy
 | 5175 | 管理端 | 302 → `/admin/` |
 | 8080 | **网关**（第二期 M0 起的唯一入口，M1 起还负责验 JWT） | `/api/ping` → 200 |
 | 8081 | **auth 服务**（M1 新增，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
-| 8082 | **内容服务**（M2 新增：作品/章节/分类/审核/搜索/AI，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
+| 8082 | **内容服务**（M2 新增：作品/章节/分类/审核/AI，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
 | 8083 | **互动服务**（M2 由 novel-backend 改名：评论/书架/历史，不直接对外） | `/doc.html` → 接口文档（★ 不走网关） |
+| 8084 | **搜索服务**（★ M4 新增：ES 检索 + 索引重建，不直接对外；★ 它没有数据库） | `/doc.html` → 接口文档（★ 不走网关） |
+| 9200 | **Elasticsearch**（★ M4 起，在中间件虚拟机上） | `/_cluster/health` → `green`；`/_cat/plugins` → `analysis-ik 8.13.4` |
 | 9876 | **RocketMQ namesrv**（M3 起，在中间件虚拟机上） | 无 HTTP 界面 |
 | 10909 / 10911 / 10912 | **RocketMQ broker**（M3 起；10911 是客户端连的那个，`RemotingTooMuchRequestException` 里那个地址就是它） | 无 HTTP 界面 |
 
-> ★★ **直连 8081 / 8082 / 8083 要带内部令牌**（`X-Internal-Token`），否则身份头一律被忽略、当**匿名**。
-> 这是有意的：那三个端口在生产上只对内网开放，直连只是排错手段。令牌值见各自的 `application-dev.yml`。
+> ★★ **直连 8081 / 8082 / 8083 / 8084 要带内部令牌**（`X-Internal-Token`），否则身份头一律被忽略、当**匿名**。
+> 这是有意的：那四个端口在生产上只对内网开放，直连只是排错手段。令牌值见各自的 `application-dev.yml`。
 
 ★ 四个端口都设了 `strictPort: true` —— 端口被占时**直接启动失败**，不会静默换到 3001。
 少了这个，打开 `:3000` 看到的会是**上一个还活着的进程**转发出来的旧内容，页面能开、接口能通，
@@ -289,8 +311,9 @@ curl -X POST http://localhost:8080/api/auth/register \
 | **M1** | **摘出 auth：`modules/system` 搬进独立进程 `:8081`、网关接管 JWT 校验、下游只读身份头、两条跨服务边改走 Feign** | [docs/M1-摘出auth.md](docs/M1-摘出auth.md) |
 | **M2** | **摘出 content：`modules/content`+`modules/ai` 搬进独立进程 `:8082`、`novel-backend` 改名 `novel-interaction` 退到 `:8083`、九条跨服务边全部改走 Feign、详情页跨服务取到作者信息** | [docs/M2-摘出content.md](docs/M2-摘出content.md) |
 | **M3** | **引入 RocketMQ：四条写路径改走消息（阅读量 / 阅读进度 / 收藏数评分 / 审核流水）、`NovelViewCounter` 与 30 秒定时回写整类删除、两个跨服务写回债（R8/R9）修掉、auth ⇄ content 那个服务级环用事务消息断开** | [docs/M3-引入MQ.md](docs/M3-引入MQ.md) |
+| **M4** | **摘出 search + 上 ES：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，相关性排序、简介进检索范围、IK 分词、ES 挂了自动降级回 `LIKE`、索引靠 MQ 增量 + 定时全量重建自愈** | [docs/M4-摘出search.md](docs/M4-摘出search.md) |
 
-**第二期**（M4~M5）继续：摘出 search + ES，最后做治理。
+**第二期**（M5）继续：治理。
 **第三期**（E1~E3）AI 能力、限流熔断、移动端 App。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和

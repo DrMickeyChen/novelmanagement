@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.novel.common.constant.CommonConstant;
 import com.novel.common.exception.BusinessException;
 import com.novel.common.result.PageResult;
+import com.novel.common.result.MybatisPageResults;
 import com.novel.common.result.ResultCode;
 import com.novel.modules.system.dto.NoticeSaveDTO;
 import com.novel.modules.system.entity.SysNotice;
@@ -101,7 +102,7 @@ public class NoticeServiceImpl implements NoticeService {
         Page<SysNotice> result = noticeMapper.selectPage(buildPage(page, size), wrapper);
 
         /*
-         * ★ 用 PageResult.of(page, 转换函数)，不手写 new PageResult<>(...)。
+         * ★ 用 MybatisPageResults.of(page, 转换函数)，不手写 new PageResult<>(...)。
          *   后者要按 (records, total, current, size, pages) 的【位置】传五个参数，
          *   其中 total / current / size / pages 全是 Long —— 传错顺序编译器
          *   一句话都不会说，只会在前端分页器上表现为「总共 10 条、共 1 页」。
@@ -112,7 +113,7 @@ public class NoticeServiceImpl implements NoticeService {
          *   （对照 AuthorApplyServiceImpl#toVOList：那里一次 IN 查完申请人，
          *    逐条查就是经典的 N+1，而且结果完全正确、功能测试永远发现不了。）
          */
-        return PageResult.of(result, NoticeVO::forAdmin);
+        return MybatisPageResults.of(result, NoticeVO::forAdmin);
     }
 
     @Override

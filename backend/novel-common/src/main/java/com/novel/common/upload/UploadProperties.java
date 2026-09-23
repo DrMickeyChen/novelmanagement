@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -56,6 +57,38 @@ import java.nio.file.Paths;
  * {@code AuthorUploadController} 里，因为它们和「文件存哪」无关。
  * 这里只管「存哪」和「怎么拼成 URL」。
  *
+ * <h3>★★ M4：{@code @ConditionalOnProperty} 是给 novel-search 加的</h3>
+ *
+ * <p><b>★ 这个类和 {@code MybatisPlusConfig} 是同一类问题，但根因完全不同</b>，
+ * 正因如此才要分开处置 —— 判断「该加哪种条件注解」的准则在这里现成：
+ * <ul>
+ *   <li>{@code MybatisPlusConfig} 的条件取决于<b>「有没有这个库」</b> → {@code @ConditionalOnClass}</li>
+ *   <li>本类的条件取决于<b>「别人配没配」</b> → {@code @ConditionalOnProperty}</li>
+ * </ul>
+ * ★ 本类的类路径在 search 里是【齐的】（它只用 Spring 和 JDK 的类），
+ * 缺的是 {@code novel.upload.path} 这个值。而 {@link #init()} 见到空值会
+ * <b>刻意抛异常</b>（那个异常本身是对的，见它的注释）→ search 启动失败。
+ *
+ * <p><b>★ 为什么不是「给 search 的 yml 也配上 novel.upload.path」：</b>
+ * 那条路更省事（少改三个类），但它是<b>在配置里写一句不真的话</b> ——
+ * search 一个字都不往那个目录写。更要紧的是它<b>有副作用</b>：
+ * {@link #init()} 会建目录，{@code WebMvcConfig} 会注册一条 {@code /uploads/**}
+ * 静态资源映射。于是 search 会对外提供一个它根本不该有的资源路径。
+ * ★★ 判据：<b>一个「只读配置、无副作用」的空转，可以靠填值糊过去；
+ * 一个会建目录、注册路由的组件不行。</b>
+ * （对照：content 的 {@code novel.jwt.secret} 就是「填值糊过去」那一种 ——
+ *  JwtUtil 只读配置、不产生任何副作用，所以那边配一句就够了。两种处置都对，
+ *  区别在于<b>被跳过的组件会不会留下痕迹</b>。）
+ *
+ * <p><b>★★ 三个类必须同时加，少一个就炸：</b>本类被跳过后，
+ * {@code ImageStorage} 和 {@code WebMvcConfig} 都靠构造器注入它
+ * （{@code @RequiredArgsConstructor}）—— 只跳本类的话，它们会因为
+ * 「找不到 UploadProperties 这个 bean」而启动失败。
+ * <b>条件注解是成套的，不能只改被依赖的那一个。</b>
+ *
+ * <p>★ 对原本那三个服务是 no-op：已核实 auth / content / interaction 的
+ * {@code application-dev.yml} 里都写了 {@code novel.upload.path}。</p>
+ *
  * @author MickeyChen
  */
 @Slf4j
@@ -63,6 +96,7 @@ import java.nio.file.Paths;
 @Setter
 @Component
 @ConfigurationProperties(prefix = "novel.upload")
+@ConditionalOnProperty(prefix = "novel.upload", name = "path")
 public class UploadProperties {
 
     /**

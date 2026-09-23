@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.novel</groupId>
+        <artifactId>novel-parent</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>novel-search</artifactId>
+    <name>novel-search</name>
+    <description>小说管理系统 · 搜索服务（Elasticsearch 全文检索 + 索引同步），第二期 M4 起独立成服务 :8084</description>
+
+    <!--
+      ============================================================
+      这个模块的来历：M4 新建 —— 全项目第一个【不是从单体里搬出来】的服务
+      ============================================================
+      M0     ：backend/ 拆成父 POM + novel-common + novel-backend + novel-gateway。
+      M1     ：modules/system 摘走 → novel-auth:8081。
+      M2     ：modules/content + modules/ai 摘走 → novel-content:8082；
+               novel-backend 改名 → novel-interaction:8083。
+      M3     ：★ 一个模块都没加（实质只有 MQ，见 docs/M3-引入MQ.md 开头）。
+      ★ M4   ：这里。搜索从 content 里摘出来，同时把 MySQL LIKE 换成 ES。
+
+      ★★ 它和前面三个服务有一个本质区别，这个区别贯穿整个模块的每一处注释：
+           auth / content / interaction 是【搬】出来的 —— 业务代码一行没改，
+           只是换了个进程跑；novel-search 是【新写】的。
+           第一期那个 ReaderSearchController 只是个壳（一个 Controller
+           加一个 Service 方法），真正的搜索实现 M4 才有。
+
+      ★★ 于是它对「什么代码能跑起来」的假设和前三个完全不同：
+           ★ 它【不连数据库】—— 这是全项目唯一一个这样的服务。
+             它读写 ES，其它数据靠 Feign 从 content 取。
+             ★★ 这一个事实直接导致 novel-common 里 5 个类需要加条件注解
+                （MybatisPlusConfig / MybatisMetaObjectHandler 靠 @ConditionalOnClass，
+                 UploadProperties / ImageStorage / WebMvcConfig 靠 @ConditionalOnProperty）——
+                那些类在过去四期里被四个服务无差别扫到，一直没出过问题，
+                因为那四个服务【恰好】都满足它们的条件。
+                见那些类各自的注释。
+
+      ★★ 包名是 com.novel.search.*，【不】沿用 com.novel.modules.* ——
+         看起来像不一致，其实是精确的：
+           modules.* 这个前缀的含义是「第一期那个单体的一个业务模块」，
+           而 novel-search 里的东西一天都没在单体里住过。
+           ★ 反过来说，如果这里也叫 modules.search，会让人以为
+             「去 git 历史里找找它原来长什么样」—— 而那条历史不存在。
+    -->
+
+    <dependencies>
+
+        <!-- 第一期的公共件（Result / 异常 / JWT / 上传 / 技术配置 / 共享枚举）。
+             版本由父 pom 的 dependencyManagement 给 -->
+        <dependency>
+            <groupId>com.novel</groupId>
+            <artifactId>novel-common</artifactId>
+        </dependency>
+
+        <!-- ==================== Web ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!--
+          参数校验：@NotNull / @Size 这些注解靠它。
+          ★ 本服务的用法很轻（只有管理端重建索引的入参要校验），
+            但这一条【不能因为「用得少」就省】——
+            novel-common 的 GlobalExceptionHandler 里有
+            @ExceptionHandler(MethodArgumentNotValidException.class)，
+            而那个异常类来自 spring-web，不需要这个 starter；
+            真正需要它的是 DTO 上的 jakarta.validation 注解本身。
+            ★ 漏了的症状不是编译失败，是「@NotNull 被静默忽略」——
+              校验注解在类路径上没有实现，Spring 就当它不存在。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!--
+          ==================== Elasticsearch（M4 的核心依赖） ====================
+
+          ★★ 版本【一个都不用写】—— 由 Spring Boot 3.2.12 的 BOM 管。
+             ★★★ 实际解析出来的版本是【实测】的，不是推出来的
+                 （mvn compile 的下载日志里逐条可见）：
+
+               spring-boot-starter-data-elasticsearch  3.2.12
+                 → spring-data-elasticsearch           5.2.12
+                 → co.elastic.clients:elasticsearch-java   8.10.4
+                 → org.elasticsearch.client:elasticsearch-rest-client  8.10.4
+
+             ★★ 注意这里【不是】同一个小版本：客户端 8.10.4 vs 服务端 8.13.4。
+                计划初稿写的是「8.13.x，与容器同小版本」—— 那是【推】出来的
+                （「Boot 3.2 应该配 ES 8.13 吧」），实测推翻了。
+                ★ 教训与 M4 里另外几处一模一样：**依赖树里的版本要读出来，
+                  不能顺着「Boot 版本 → ES 版本」的直觉写。**
+
+             ★ 那这个组合能不能跑？大版本相同（都是 8.x），
+               按 Elastic 的兼容策略，客户端可以与【同年或更新的】服务端
+               通信（客户端发 compatible-with=8 的 Accept 头，
+               服务端据此降级到双方都懂的那套 API）。
+               ★★ 但 M4 的态度是【不许猜】—— 这一条由 S2 探针的第 3 步实测：
+                  起服务 + 真发一次检索，看它通不通。
+                  退路写在这里：万一 8.10 客户端对 8.13 服务端有问题，
+                  就在父 pom 里显式抬 elasticsearch-java 的版本
+                  —— ★ 代价是打破「BOM 管版本」这条规矩，
+                    所以只在实测失败时才做。
+
+          ★★ 这与 M3 的 RocketMQ 恰好相反，值得对照着记：
+               M3 是唯一一个【被迫自己管版本】的依赖 ——
+               SCA BOM 不管 rocketmq-spring-boot-starter（它管的是 client），
+               所以父 pom 里才有那段「属性名不能叫 rocketmq.version」的长注释。
+               M4 这条是正常情况：Boot 的 BOM 管就什么都不用写。
+               ★ 判据：先在父 pom 的 dependencyManagement 里找，
+                 找不到才自己声明版本 —— 不要一上来就抄一个版本号进来。
+
+          ★ 为什么用 starter 而不是手写 co.elastic.clients:elasticsearch-java：
+            我们要的是 ElasticsearchOperations（做检索 + 装配），starter 顺手
+            把连接池、健康检查、JsonpMapper 都配好了。
+            ★ 它的退路（万一运行时和 Boot 3.2 不兼容）就是直接引
+              elasticsearch-java 自己 new 一个 client bean —— 那是个纯 Java 库，
+              不含任何 Spring 假设。S2 的探针会实测 starter 能不能用。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-elasticsearch</artifactId>
+        </dependency>
+
+        <!-- ==================== 注册中心 ==================== -->
+        <!--
+          ★ 只加这一个依赖，本服务就变成 Nacos 上的一个实例，
+            网关的 lb://novel-search 才找得到它。
+          ★ 配置在 application-dev.yml 的 spring.cloud.nacos.discovery 下。
+        -->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+        </dependency>
+
+        <!--
+          ==================== 缓存（★ 和 content 同一个陷阱，但理由不同） ====================
+
+          ★★ 这一条【不写就起不来】，理由和 content 的 pom 里那段一模一样：
+              novel-common 的 com.novel.common.config.RedisConfig 是个 @Configuration，
+              里面唯一那个 @Bean 是
+                  redisTemplate(RedisConnectionFactory connectionFactory)
+              而本服务的启动类在 com.novel 包下，默认组件扫描【一定】扫得到它。
+              少了 spring-boot-starter-data-redis，Spring Boot 就不会自动配置
+              RedisConnectionFactory，于是那个 @Bean 找不到参数 →
+              ★ 启动直接失败，报错指向「RedisConfig 缺一个 bean」，
+                【不指向】「你少加了一个依赖」。
+
+          ★★ 但本服务和 content 有一个区别，值得写清楚 ——
+             content 是「本来就在用 Redis，顺便满足了 common」；
+             本服务是「本来就要用 Redis」，理由是【全量重建的分布式锁】：
+               定时全量重建是【计算型】任务，按 SchedulingConfig 自己定的规矩
+               必须加锁（LOCK_PREFIX + SET NX EX，照 NovelStatReconcileJob 的先例）。
+             ★ 反过来说：如果将来有人觉得「搜索服务要 Redis 干嘛」想删掉它，
+               他会先撞上启动失败，然后可能选择「给 RedisConfig 加个条件注解」
+               —— ★ 那是【错的】方向：真正需要保留的理由是那把锁，
+                 删了它多实例下会同时重建索引，症状是 ES 集群被反复 DELETE/PUT。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-redis</artifactId>
+        </dependency>
+
+        <!-- Lettuce 连接池：不加它 Redis 每次操作都新建连接 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
+        <!-- ==================== 接口文档 ==================== -->
+        <!--
+          ★ 接口文档直连 http://localhost:8084/doc.html，它【不走网关】——
+            原因见 docs/M0-骨架搭建.md「为什么文档不进网关」。
+            ★★ M4 起有【四个】文档入口：8081 / 8082 / 8083 / 8084。
+        -->
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-openapi3-jakarta-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ==================== 工具 ==================== -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- ==================== 认证授权 ==================== -->
+        <!--
+          ★★ spring-boot-starter-security 一旦引入就【自动拦截所有接口】，
+             放行规则写在 com.novel.search.config.SearchSecurityConfig。
+             这两者必须同时存在，单独加依赖 = 全站 401。
+
+          ★★ 和 M2 之后的所有下游服务一样：本服务【不验 JWT】——
+             验证已经全部收敛在网关（M1 决策）。
+             SecurityConfig 里只保留「读身份头 + 按 URL 前缀鉴权」那一段。
+
+          ★ 本服务的白名单比 content 短得多，但有一处必须照抄：
+             /api/search 必须 permitAll —— 匿名搜索是产品要求，
+             而且它现在【换了个进程】，所以那条放行规则要从 content
+             搬到本服务的 SecurityConfig 来（content 那边做减法）。
+             ★★ 这是 M4 最容易漏的一处：漏了不会 500，只会 401,
+                而 401 看起来像「没登录」，不像「白名单搬漏了」。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+
+        <!-- ==================== 消息队列（M4） ==================== -->
+        <!--
+          ★ 版本在父 pom 的 dependencyManagement 里（rocketmq-spring.version）。
+
+          ★★ 本服务是 NOVEL_INDEX 这条消息的【唯一消费方】。
+             载荷只有 novelId（推事实不推数据），见 MqConstant 的注释。
+
+          ★★ 本服务【不发】任何消息 —— 它是全项目第一个纯消费的服务。
+             ★ 这一点是有意的，不是还没做完：让 content 消费再调 search 推文档，
+               就造出了 content → search 的【同步】边，而 search → content
+               已经有一条了 —— 那就成了一个服务级的环（铁律 1 附则）。
+               消息从 content 直接发、由 search 直接收，环就不成立。
+        -->
+        <dependency>
+            <groupId>org.apache.rocketmq</groupId>
+            <artifactId>rocketmq-spring-boot-starter</artifactId>
+        </dependency>
+
+        <!-- ==================== 服务间调用（M4） ==================== -->
+        <!--
+          ★★ OpenFeign：本服务【只有一个】对端 —— novel-content。
+               用途有两个，都定义在 com.novel.search.client.ContentClient：
+                 ① 拿装配数据（NovelVO）—— ES 只给 id，正文/作者名/分类名在 MySQL
+                 ② ★ 降级路径：ES 挂了就调 content 的 /internal/search 走 LIKE
+
+          ★★ 接口定义在【消费方】（本服务），不在提供方（content）——
+             这是铁律 1 在 M1 之后的新表述：接口实现住在消费方
+             （就是「发一次 Feign 调用」），提供方只暴露 URL、不暴露类型。
+             ★ 违反它的症状是：content 那边多一个能编译、能被扫描、
+               永远不会被调用的死 bean。四个服务的 Feign 客户端都遵守这条。
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+        </dependency>
+
+        <!--
+          ★★ loadbalancer 必须【显式】加，它不是 openfeign 的传递依赖。
+             漏了的症状：启动就失败，报
+               「No Feign Client for loadBalancing defined.
+                 Did you forget to include spring-cloud-starter-loadbalancer?」
+        -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+        </dependency>
+
+        <!-- ==================== 测试 ==================== -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          ==================== ★★ 刻意【不】加的依赖 ====================
+
+          ★ mybatis-plus-spring-boot3-starter / mybatis-plus-jsqlparser
+          ★ mysql-connector-j
+
+            本服务不连任何数据库。加了它们不只是「多余」——
+            加了之后 novel-common 那两个 MyBatis 类的条件注解
+            （@ConditionalOnClass）就会【成立】，于是本服务会去建
+            MybatisPlusInterceptor 和 DataSource 相关的一整套东西，
+            而它没有 datasource 配置 → 又变成启动失败。
+            ★★ 也就是说：那两条依赖和那两个条件注解是【一对】，
+               要撤一起撤、要加一起加。S2 的探针会同时验这两面。
+        -->
+
+    </dependencies>
+
+    <build>
+        <!--
+          ★ finalName 决定 jar 名：启动命令是
+              java -jar novel-search/target/novel-search.jar
+            日志文件名、docs/部署.md 里的产物清单都要跟它一致。
+        -->
+        <finalName>novel-search</finalName>
+        <plugins>
+            <!-- ★ 在父 pom 的 pluginManagement 里有配置，这里声明一次来激活它 -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

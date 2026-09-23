@@ -10,11 +10,16 @@ import com.novel.common.enums.ChapterStatus;
 import com.novel.common.enums.NovelStatus;
 import com.novel.common.exception.BusinessException;
 import com.novel.common.internal.NovelCollectCountDTO;
+import com.novel.common.internal.NovelIndexDoc;
+import com.novel.common.mq.NovelIndexMessage;
 import com.novel.common.result.PageResult;
+import com.novel.common.result.MybatisPageResults;
 import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.common.vo.NovelBriefVO;
 import com.novel.common.vo.ChapterBriefVO;
+import com.novel.common.vo.NovelVO;
+import com.novel.content.mq.producer.NovelIndexNotifier;
 import com.novel.modules.content.dto.NovelCreateDTO;
 import com.novel.modules.content.dto.NovelUpdateDTO;
 import com.novel.modules.content.entity.Chapter;
@@ -31,7 +36,7 @@ import com.novel.modules.content.service.NovelAccessGuard;
 import com.novel.modules.content.service.NovelService;
 import com.novel.modules.content.vo.ChapterVO;
 import com.novel.modules.content.vo.NovelDetailVO;
-import com.novel.modules.content.vo.NovelVO;
+import com.novel.modules.content.vo.NovelVos;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -45,6 +50,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 /**
  * 作品服务实现。
@@ -103,6 +109,13 @@ public class NovelServiceImpl implements NovelService {
     private final ContentUserLookup userLookup;
     private final AuditLogService auditLogService;
     private final NovelAccessGuard guard;
+    /**
+     * ★ M4：通知 search「这本书的索引可能过期了」。
+     * <p>★★ <b>下面四个落点全部显式写在本类里、不抽公共方法</b> ——
+     * 这样 {@code grep -n "indexNotifier"} 就能一次核对全，不会漏。
+     * 判据（「参与检索的列被写的地方」）写在 {@link NovelIndexNotifier#notifyIndex} 上。
+     */
+    private final NovelIndexNotifier indexNotifier;
 
     /* ================================================================
      *  读者端
@@ -194,6 +207,30 @@ public class NovelServiceImpl implements NovelService {
         return Math.min(limit, RANK_MAX_LIMIT);
     }
 
+    /**
+     * 全站搜索 —— {@code LIKE} 版。<b>★★ M4 起它的身份变了：从「唯一实现」变成「降级路径」。</b>
+     *
+     * <p>★★★ <b>这个方法一行逻辑都没改，改的只是它被谁调用。</b>
+     * M4 之前它对外的门是 {@code GET /api/search}（{@code ReaderSearchController}）；
+     * M4 之后那条路径归 {@code novel-search}，走 ES。
+     * 它自己搬到 {@code GET /internal/search}，由 search 在
+     * <b>ES 不可达 / 索引不存在时</b>回头调用 —— 完整论证见
+     * {@code SearchService#degradeToLike}。
+     *
+     * <p>★ <b>为什么是「原件续用」而不是「重写一个降级实现」</b>：
+     * 这段代码在上面那个门后面跑了整个一期，它的括号陷阱、空关键词短路、
+     * {@code IN ()} 兜底都已经被人踩过、被注释记下来了。
+     * 重写一份新的，就是把那些坑重新踩一遍的机会 ——
+     * 而降级路径<b>平时一次都不跑</b>，坏了也没人知道。
+     * ★★ <b>「平时不跑的代码」的正确做法是尽量少写，不是写得漂亮。</b>
+     *
+     * <p>★★ <b>降级路径的能力退化是已知且接受的</b>：它只搜书名 + 作者昵称，
+     * <b>不搜简介</b>（M4 决定 2 新增的字段只有 ES 那边有）。
+     * 症状是「搜一个只在简介里出现过的词，ES 在线时有结果、ES 挂了没结果」——
+     * 这是可接受的：<b>从「搜得到但排序退化」变成「少一类结果」，好过整个 500。</b>
+     * ★ 验收时要拿它当<b>降级生效的标记</b>用：那个词在降级路径下<b>必须为空</b>，
+     * 不空就说明根本没在降级、ES 还活着。
+     */
     @Override
     public PageResult<NovelVO> search(String keyword, long page, long size) {
         /*
@@ -261,8 +298,22 @@ public class NovelServiceImpl implements NovelService {
          * 回答不了「谁更相关」（书名完全等于关键词的和只在简介里提了一句的，
          * 在这个查询里完全一样）。热度至少让「搜出来的第一本是本有名的书」。
          *
-         * ★ 二期 M4 上 ES 之后，这里会换成真正的相关性打分（书名命中 > 作者名命中、
-         *   完全匹配 > 前缀匹配），那时这两行注释就该删掉。
+         * ★★★ 这里原本写着「二期 M4 上 ES 之后，这里会换成真正的相关性打分，
+         *   那时这两行注释就该删掉」。M4 到了，而这条预言只兑现了【一半】，
+         *   所以这两行注释【保留】—— 但要说清为什么：
+         *
+         *     · 兑现的那半：主路径（search 服务的 ES 检索）确实换成了相关性打分
+         *       （判断 4：`title^3 / authorName^2 / intro^1`）。
+         *     · 没兑现的那半：**这个方法本身没有被删掉**，它成了降级路径。
+         *       而降级路径里 view_count 仍然是【对的】——
+         *       它的前提是「LIKE 只能回答命中/不命中」，
+         *       这个前提在降级路径里【一个字都没变】。
+         *
+         * ★★ 也就是说：预言里那句「那时就该删掉」隐含了一个假设 ——
+         *   「M4 之后这个方法就不存在了」。**假设没成立时不照做，才是对的。**
+         *   照做着删掉的话，降级路径会退回一个没有排序兜底的查询，
+         *   翻页会看到重复或漏掉的书，而这条路径平时根本不跑。
+         *
          * ★ 末尾 id 兜底，理由同 rank / applyReaderSort：view_count 并列时
          *   MySQL 不保证顺序稳定，翻页会看到重复或漏掉的书。
          */
@@ -322,7 +373,7 @@ public class NovelServiceImpl implements NovelService {
                         .eq(Chapter::getStatus, ChapterStatus.PUBLISHED)
                         .orderByAsc(Chapter::getChapterNo));
 
-        return PageResult.of(result, c -> ChapterVO.of(c, novel.getTitle()));
+        return MybatisPageResults.of(result, c -> ChapterVO.of(c, novel.getTitle()));
     }
 
     @Override
@@ -484,6 +535,23 @@ public class NovelServiceImpl implements NovelService {
 
         novelMapper.insert(novel);
 
+        /*
+         * ★★ M4：这里【故意没有】indexNotifier.notifyIndex(...)，而这是对的，别顺手补上。
+         *
+         * 按「参与检索的列被写的地方」那条判据（见 NovelIndexNotifier），
+         * 新建显然也写了 title / intro / status —— 但新建出来的书 status 恒为
+         * {@link NovelStatus#DRAFT}（就在上面几行，不接受入参），
+         * 而索引侧的 filter 是 term(status=2) → <b>它在索引里是永远搜不到的</b>。
+         * ★ 所以这里发消息只会让每个新作品白白触发一次「读真值 + 写一条查不到的文档」。
+         *
+         * ★★ 它的第一次入索引由「落点 ①」带入：上架走 transitStatus →
+         *   索引里凭空多出这条文档，不需要 create 事先铺一条。
+         *   两者之间【没有缝】—— 中间那些状态（提交 / 驳回 / 撤回）本来就搜不到。
+         *
+         * ★ 真正要小心的是【将来】：哪天新建允许直接指定 PUBLISHED
+         *   （比如导入功能），这里就必须补一条，否则新书搜不到 ——
+         *   而那种漏法和「下架漏发」不同，它连一次重建机会都没有。
+         */
         log.info("新建作品 | id={} title={} authorId={}", novel.getId(), novel.getTitle(), novel.getAuthorId());
         return novel.getId();
     }
@@ -549,6 +617,19 @@ public class NovelServiceImpl implements NovelService {
 
         novelMapper.updateById(novel);
 
+        /*
+         * ★ M4 落点 ②：改书名 / 简介。
+         *
+         * ★★ 这条是「只挂 syncNovelStat 会永久漏发」的典型 ——
+         *   update 根本不经过 syncNovelStat（它只改 title / intro / cover / categoryId / tags / isFinish，
+         *   一个统计字段都不碰），所以漏了它，症状是【改完书名，搜新名字搜不到、旧名字还搜得到】。
+         * ★ 而且这个症状看起来像 ES 的缓存问题，实际上少的是一行调用。
+         *
+         * ★ 只在事务提交后才发（AfterCommit 在 notifier 内部）——
+         *   消费者要回 content 读这本书的真值，提前发会让它读到未提交的旧值。
+         */
+        indexNotifier.notifyIndex(id, NovelIndexMessage.Reason.UPDATE);
+
         log.info("编辑作品 | id={} title={} status={}", id, novel.getTitle(), novel.getStatus());
     }
 
@@ -613,6 +694,18 @@ public class NovelServiceImpl implements NovelService {
                 .eq(OutlineNode::getNovelId, id));
 
         novelMapper.deleteById(id);
+
+        /*
+         * ★ M4 落点 ③：逻辑删除。
+         *
+         * ★★ 这条最容易被漏，因为「删了」在 MySQL 侧看起来已经完事了 ——
+         *   `@TableLogic` 会把每个查询自动补上 `deleted = 0`，所以 content 自己
+         *   再也查不到这本书了。★★ 但 `@TableLogic` 是【MyBatis 的 WHERE 注入】，
+         *   ES 根本不知道 `deleted` 这一列存在，那条文档会原样留在索引里。
+         *   ★ 后果不是「内容泄露」（装配端查不到它，用户拿到的是空洞），
+         *     而是 total 虚高 + 页内空洞 —— 见 NovelIndexNotifier 的判断 3 讨论。
+         */
+        indexNotifier.notifyIndex(id, NovelIndexMessage.Reason.DELETE);
 
         log.info("删除作品 | id={} title={}", id, novel.getTitle());
     }
@@ -792,6 +885,21 @@ public class NovelServiceImpl implements NovelService {
 
         novelMapper.update(null, update);
 
+        /*
+         * ★ M4 落点 ④：统计字段变化（发章节 / 删章节 / 退章节 / 上架）。
+         *
+         * ★ 挂在这里能一次覆盖 syncNovelStat 的【四个调用点】
+         *   （ChapterServiceImpl:222 / 307 / 531 与 transitStatus 内部那一处），
+         *   因为它们是同一个方法 —— 这正是「挂在这里」比「挂四个调用点」省的地方。
+         * ★★ 但反过来【不成立】：syncNovelStat 的四个调用点 ≠ 参与检索的列被写的全部地方。
+         *   title / intro / status / deleted 都不经过它，所以另外三个落点必须单独写。
+         *   两者的差集就是「只挂 syncNovelStat 会永久漏发」的那三条。
+         *
+         * ★ 它在 log.debug 之前发，只是为了让「发了消息」和「记了日志」两行的顺序
+         *   和阅读顺序一致；消息本身走 AfterCommit，实际发送在方法返回之后。
+         */
+        indexNotifier.notifyIndex(novelId, NovelIndexMessage.Reason.SYNC_STAT);
+
         log.debug("重算作品冗余字段 | novelId={} chapterCount={} wordCount={} lastChapterId={}",
                 novelId, count, words, last == null ? null : last.getId());
     }
@@ -916,6 +1024,30 @@ public class NovelServiceImpl implements NovelService {
         }
 
         auditLogService.record(AuditTargetType.NOVEL, novel.getId(), action, auditRemark);
+
+        /*
+         * ★ M4 落点 ①：状态流转 —— 这是四个落点里唯一「必须无条件发」的一个。
+         *
+         * ★★ 因为 status 是【唯一】一个既参与 ES 过滤、又参与装配端判断的字段
+         *   （判断 5：ES 的 filter: term(status=2) + content 的 eq(status, PUBLISHED)）。
+         *   漏了它，症状按方向分成两种，且都不报错：
+         *     上架漏发 → 新书在用户眼里【搜不到】（索引里那条 status 还是旧值）
+         *     下架漏发 → 下架的书【仍然搜得到】（ES 那道闸门放行，靠装配端过滤成空洞）
+         *   ★★ 后一种就是我们最想消掉的那个「索引陈旧」方向，而它是安全的
+         *     （只空洞、不泄露）—— 这正是判断 3 里「两道闸门」的兑现。
+         *
+         * ★ 放在方法【出口】而不是两个调用点（adminTransitStatus / submit / withdraw…）：
+         *   状态机是整个项目里改 status 的唯一入口，挂在这里天然覆盖全部路径，
+         *   而且不可能有「新加一条流转路径时忘了加通知」这个坑。
+         *   ★ 代价是 DRAFT→PENDING 这种「两头都不在索引可见范围内」的流转也会发一次 ——
+         *     无害（幂等天然），且它让索引里的 status 始终是真值。
+         *
+         * ★★ 上架时会【发两次】：这里一次 TRANSIT_STATUS，
+         *   上面 syncNovelStat 内部再一次 SYNC_STAT。
+         *   ★ 这个重复是刻意保留的、不去重 —— 理由见 NovelIndexMessage 的类注释
+         *   （为了消掉它得引入「谁已经发过了」的状态，而那个状态本身就是新的故障源）。
+         */
+        indexNotifier.notifyIndex(novel.getId(), NovelIndexMessage.Reason.TRANSIT_STATUS);
     }
 
     /* ================================================================
@@ -1075,7 +1207,7 @@ public class NovelServiceImpl implements NovelService {
     /**
      * 把分页结果里的实体批量转成 VO。
      *
-     * <p><b>★ 不能直接用 {@code PageResult.of(page, this::toVO)}：</b>
+     * <p><b>★ 不能直接用 {@code MybatisPageResults.of(page, this::toVO)}：</b>
      * 那个重载的转换函数是<b>逐条</b>调用的，在它里面查作者昵称和分类名
      * 就是 N+1（一页 20 条 → 40 次查询）。这里先收集所有 id、
      * 两次批量查完，再逐条组装。
@@ -1107,7 +1239,9 @@ public class NovelServiceImpl implements NovelService {
                 records.stream().map(Novel::getCategoryId).toList());
 
         return records.stream()
-                .map(n -> NovelVO.of(n, categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId())))
+                // ★ M4：NovelVO 搬去了 novel-common，装配点改成 content 这边的 NovelVos
+                //   （它收 Novel 实体，所以只能留在 content —— 见 NovelVos 的类注释）
+                .map(n -> NovelVos.of(n, categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId())))
                 .toList();
     }
 
@@ -1245,5 +1379,225 @@ public class NovelServiceImpl implements NovelService {
         return page.getRecords().stream()
                 .map(novel -> new NovelCollectCountDTO(novel.getId(), novel.getCollectCount()))
                 .toList();
+    }
+
+    /* ==================== 供 search 建索引调用（M4） ==================== */
+
+    /**
+     * 批量取索引数据。★ <b>只返回查得到的 id</b> —— 完整论证（为什么「缺失 = 删」、
+     * 为什么不看 {@code status}、为什么是 Map 不是 List）在
+     * {@link NovelService#indexDocsOf} 的接口注释里，这里只讲实现。
+     */
+    @Override
+    public Map<Long, NovelIndexDoc> indexDocsOf(Collection<Long> novelIds) {
+        /*
+         * ★ 空集合短路是必须的，不是优化：下面那个 .in() 拿到空集合会生成
+         *   IN () —— SQL 语法错误、报 500。同一个坑在 briefsOf / search 里
+         *   各踩过一次（search 那次的详细论证在它自己的注释里）。
+         *   这里没有「布尔开关」那条路可走，因为 .in() 没有条件重载。
+         */
+        if (novelIds == null || novelIds.isEmpty()) {
+            return Map.of();
+        }
+
+        /*
+         * ★ 只 select 索引用得上的 6 列：novel 表有十余列，
+         *   其中 cover 是长 URL、tags / audit_remark 也不短 —— 选进来纯属白搬，
+         *   而这条链路是【每次检索都要走】的（装配那一跳）。
+         *
+         * ★★ 注意 select 里【没有 id】也没关系 —— MyBatis-Plus 的 selectPage /
+         *   selectList 会把主键补回来，实体上 getId() 一定拿得到。
+         *   这里仍然显式写上，是为了让这段投影自解释：调用方要的就是这 6 个字段。
+         *
+         * ★ 不是单列投影，所以不踩「可空列 → List 里塞 null 元素」那个坑
+         *   （docs/P5 实施记录 ⑥）—— 那个坑只有【单】列投影才有。
+         *   这里的 intro / last_update_time 确实可空，但它们是实体字段，不是列表元素。
+         */
+        List<Novel> novels = novelMapper.selectList(new LambdaQueryWrapper<Novel>()
+                .select(Novel::getId, Novel::getTitle, Novel::getIntro,
+                        Novel::getAuthorId, Novel::getStatus, Novel::getLastUpdateTime)
+                .in(Novel::getId, novelIds));
+
+        if (novels.isEmpty()) {
+            return Map.of();
+        }
+
+        /*
+         * ★★ 一次批量取昵称（一次 IN 查询），不是每条记录查一次。
+         *   这里没有分类名 —— 索引里刻意不含 categoryName，理由见 NovelIndexDoc 的类注释。
+         */
+        Map<Long, String> authorNames = userLookup.nicknamesOf(
+                novels.stream().map(Novel::getAuthorId).toList());
+
+        /*
+         * ★ 用 LinkedHashMap 而不是 HashMap：这里的顺序【没有契约意义】
+         *   （调用方按 ES 返回的 id 顺序自己取），但保持「和 SQL 返回同序」
+         *   让日志和调试时的观感稳定 —— 而顺序随机的 Map 在排查时
+         *   会让人以为「数据变了」。
+         */
+        Map<Long, NovelIndexDoc> result = new LinkedHashMap<>();
+        for (Novel novel : novels) {
+            result.put(novel.getId(),
+                    toIndexDoc(novel, authorNames.get(novel.getAuthorId())));
+        }
+        return result;
+    }
+
+    /**
+     * 全量重建的数据源。★ <b>游标分页、按 id 升序、含所有状态</b>，
+     * 三条都是刻意的 —— 完整论证在 {@link NovelService#indexPageAfter} 的接口注释里。
+     */
+    @Override
+    public List<NovelIndexDoc> indexPageAfter(Long afterId, Integer size) {
+        /*
+         * ★★ 和 collectCountsAfter 一样用 LambdaQueryWrapper 而不是手写 @Select：
+         *   Wrapper 会自动补 deleted = 0（@TableLogic），手写 SQL 不会。
+         *   这条对全量重建尤其要紧 —— 重建是「先删索引再灌」，
+         *   手写 SQL 漏了 deleted 就等于【把墓碑重新灌回索引】，
+         *   而那些书在 MySQL 里已经不存在了。
+         *   （这正是 @TableLogic 对 ES 不起作用、要靠这条约定兜的那件事。）
+         *
+         * ★ gt 不用 ge：ge 会让下一页重复返回上一页的最后一个 id，
+         *   而调用方又拿它当新游标 —— 死循环，且每一轮都重灌同一个文档。
+         *
+         * ★ afterId 为 null 时兜成 0 而不是跳过条件：理由同 collectCountsAfter ——
+         *   让「从头开始」有一个明确的语义，而不是让 SQL 形态取决于参数。
+         */
+        LambdaQueryWrapper<Novel> wrapper = new LambdaQueryWrapper<Novel>()
+                .select(Novel::getId, Novel::getTitle, Novel::getIntro,
+                        Novel::getAuthorId, Novel::getStatus, Novel::getLastUpdateTime)
+                .gt(Novel::getId, afterId == null ? 0L : afterId)
+                .orderByAsc(Novel::getId);
+
+        Page<Novel> page = novelMapper.selectPage(buildPage(1, size == null ? 0 : size), wrapper);
+
+        if (page.getRecords().isEmpty()) {
+            return List.of();
+        }
+
+        /*
+         * ★★ 这里也有一次批量取昵称 —— 一页 100 本，如果逐条查就是 100 次
+         *   跨进程调用（M1 之后 N+1 的新形态，比 100 次 SQL 更贵）。
+         *   ★ 顺带：全量重建【每个周期都会跑】，所以这里的 N+1 不是「偶尔慢一下」，
+         *     是每次重建都在烧。
+         */
+        Map<Long, String> authorNames = userLookup.nicknamesOf(
+                page.getRecords().stream().map(Novel::getAuthorId).toList());
+
+        return page.getRecords().stream()
+                .map(novel -> toIndexDoc(novel, authorNames.get(novel.getAuthorId())))
+                .toList();
+    }
+
+    /**
+     * 检索装配：给一组 id，返回读者看得到的那些，<b>按传入顺序</b>。
+     *
+     * <p>★★ <b>和 {@link #indexDocsOf} 的 status 口径刻意相反</b>，
+     * 完整论证（它就是第二道闸门本体）在
+     * {@link NovelService#visibleVosOf} 的接口注释里。
+     */
+    @Override
+    public List<NovelVO> visibleVosOf(Collection<Long> novelIds) {
+        if (novelIds == null || novelIds.isEmpty()) {
+            return List.of();
+        }
+
+        /*
+         * ★ 去重 + 保序：distinct() 保留首次出现的顺序（它内部用 LinkedHashSet），
+         *   所以这一步既去重又不打乱 ES 给的相关性排序。
+         * ★ 去重是必要的：ES 理论上不会给重复 id，但「同样的 id 传两次」
+         *   会让下面那个 Map 查找把同一条数据塞两遍 —— 结果里出现重复的书。
+         */
+        List<Long> orderedIds = novelIds.stream()
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        if (orderedIds.isEmpty()) {
+            return List.of();
+        }
+
+        /*
+         * ★★ 这里【刻意不做 .select() 列投影】，和上面两个索引方法不一样 ——
+         *   因为装配 NovelVO 要 12 列，而 NovelVos.fill 加一个字段时
+         *   投影列表不会跟着变，结果是【静默填 null】（编译期不报、运行期不报，
+         *   只是某个字段永远是空）。
+         * ★ 判据：投影列表是「第二处必须和新字段同步的地方」，
+         *   而它失败的方式是静默的 —— 那就不要它。索引那边可以投影，
+         *   因为 NovelIndexDoc 的字段是【显式声明】的，改它必然要改 toIndexDoc。
+         *
+         * ★★ .eq(Novel::getStatus, PUBLISHED) 就是第二道闸门。
+         *   它必须在这里、而不是在调用方 —— 见接口注释。
+         */
+        List<Novel> novels = novelMapper.selectList(new LambdaQueryWrapper<Novel>()
+                .in(Novel::getId, orderedIds)
+                .eq(Novel::getStatus, NovelStatus.PUBLISHED));
+
+        if (novels.isEmpty()) {
+            /*
+             * ★★★ 铁律 8：这条 WARN 必须【能失败】，否则它是个摆设。
+             *   能触发它的场景是具体的：手工往 ES 塞一条已下架的书的文档，
+             *   然后搜它 —— 用户搜不到（闸门生效），而这行 WARN 出现（信号出现）。
+             *   阳性对照见 docs/M4-摘出search.md 的验收记录。
+             */
+            log.warn("检索装配：请求的 {} 个 id 在 content 这边【一个都不可见】—— "
+                            + "索引里可能有已下架 / 已删除 / 状态已变的陈旧文档（= 索引陈旧的信号）| ids={}",
+                    orderedIds.size(), orderedIds);
+            return List.of();
+        }
+
+        /*
+         * ★ 按传入顺序重排：MySQL 的 IN 不保证顺序，不重排的话
+         *   用户看到的顺序是随机的 —— 而它看起来完全正常，只是不相关。
+         */
+        Map<Long, Novel> byId = novels.stream()
+                .collect(Collectors.toMap(Novel::getId, n -> n, (a, b) -> a, LinkedHashMap::new));
+        List<Novel> ordered = orderedIds.stream()
+                .map(byId::get)
+                .filter(Objects::nonNull)
+                .toList();
+
+        if (ordered.size() < orderedIds.size()) {
+            /*
+             * ★ 部分被过滤：这一页会【不满】。正常运行时不会走到这里
+             *   （两道闸门都在 ⇒ ES 里的可见文档 = content 这边的可见作品）。
+             *   ★ 它和上面那条 WARN 是同一件事的两种程度，分开报是为了
+             *     让「全被过滤」和「少了几条」在日志里一眼能分辨。
+             */
+            log.warn("检索装配：请求 {} 个 id，只有 {} 个可见 —— 这一页会不满。"
+                            + "多数情况是索引里有已下架 / 已删除的陈旧文档 | 缺失数={}",
+                    orderedIds.size(), ordered.size(), orderedIds.size() - ordered.size());
+        }
+
+        return toVOList(ordered);
+    }
+
+    /**
+     * 实体 → 索引文档。<b>全项目唯一一处</b>这个映射 —— 两个取数方法都走它。
+     *
+     * <p>★ 为什么要有这个方法：{@code indexDocsOf} 和 {@code indexPageAfter}
+     * 的投影字段是同一份（都是那 6 列），如果各自写一遍 set，
+     * 下次加一个检索字段就会<b>只改一处</b>，而症状是
+     * 「增量重建灌进去的文档有那个字段、全量重建灌的没有」——
+     * 表现为「刚改完书名的能搜到、过了 6 小时反而搜不到了」，
+     * 是这个设计里最难查的一类 bug。
+     *
+     * @param authorName 由调用方批量查好传进来；查不到可为 {@code null}
+     */
+    private NovelIndexDoc toIndexDoc(Novel novel, String authorName) {
+        NovelIndexDoc doc = new NovelIndexDoc();
+        doc.setId(novel.getId());
+        doc.setTitle(novel.getTitle());
+        doc.setAuthorName(authorName);
+        doc.setIntro(novel.getIntro());
+        /*
+         * ★ status 存【数字码】不存枚举 —— 理由见 NovelIndexDoc 的类注释
+         *   （索引侧只拿它做 term 过滤，枚举在那边没有任何用处）。
+         * ★ null 状态理论上不该出现（status 有默认值），这里不兜 ——
+         *   真要出现，索引里留个 null，ES 的 term 过滤会把它排除掉，
+         *   也就是「搜不到」，比静默当成已上架安全。
+         */
+        doc.setStatus(novel.getStatus() == null ? null : novel.getStatus().getCode());
+        doc.setLastUpdateTime(novel.getLastUpdateTime());
+        return doc;
     }
 }

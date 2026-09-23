@@ -103,9 +103,15 @@ spring:
       #   之后逐条核对的，漏一条的症状是：那个接口 404（像路径写错了）
       #   或打到了错的服务。
       #
-      # ★★★ 【不变式】任何与 /api/novels/** 或 /api/admin/** 重叠的
-      #     interaction 路由，order 必须【严格小于】content 的对应规则。
-      #     现在写死成 4 < 5，改动时必须一起改，而且必须保持严格小于 ——
+      # ★★★ 【不变式】任何与 content 的 /api/novels/** 或 /api/admin/** 重叠的
+      #     【其它服务】路由，order 必须【严格小于】content 的 5。
+      #     ★ M2 写这条时它只适用于 interaction 一家（4 < 5）；
+      #       M4 摘出 search 之后有了【第二个】适用者 —— search 的
+      #       /api/search 与 /api/admin/search/** 同样压在 content 的前缀底下，
+      #       同样靠 order 3 < 5 抢下来。
+      #     ★★ 判据要按【形状】记，不要按服务名记（"interaction 要在 content 前面"
+      #        这种写法，加第三个服务时就得重新推导一遍）：
+      #        「与 content 的具体前缀重叠 ⇒ order 必须严格小于 5」。
       #     理由见下面 order 那一段。
       #
       # ★★ order 必须【显式写死】，不依赖 YAML 里的书写顺序：
@@ -113,8 +119,13 @@ spring:
       #     RouteDefinition 不写 order 时默认是 0 —— 于是只要有一条忘了写，
       #     它会排在所有显式 order 的路由【前面】，把流量抢走。
       #
-      #     ★★★ M2 起的分段：【1】auth 具体前缀 →【4】interaction 抢占
-      #         →【5】content 具体前缀 →【10】/uploads/** →【20】兜底。
+      #     ★★★ M2 起的分段：【1】auth 具体前缀 →【3】search 抢占
+      #         →【4】interaction 抢占 →【5】content 具体前缀
+      #         →【10】/uploads/** →【20】兜底。
+      #     ★ M4 把 search 放在 3 而不是和 interaction 一样用 4：两者并不重叠，
+      #       同序其实"能用"，但那会重新引入「同序内部顺序无保证」这个隐患 ——
+      #       而它恰恰是 M2 花力气挪兜底（10 → 20）时消掉的那个。
+      #       ★★ 「同序碰巧没事」不是设计，是运气；运气在下一次加路由时就会用完。
       #     为什么要给兜底留出 1~19 这一整段：order 相同时 Spring Cloud Gateway
       #     的命中顺序【没有保证】（它按 order 排序，但同序内部不可依赖）。
       #     M1 时兜底是 10、具体路由是 1，看似够用；M2 一下子加了 7 条具体路由，
@@ -143,8 +154,8 @@ spring:
       #   用服务名，网关去 Nacos 问「novel-content 现在在哪」，
       #   服务拆几个实例、部署在哪台机器，这里都不用动。
       #
-      # ★★ M2 起有三个服务名必须和各自的 spring.application.name 逐字相同：
-      #   lb://novel-auth / lb://novel-content / lb://novel-interaction。
+      # ★★ M2 起有【四】个服务名必须和各自的 spring.application.name 逐字相同：
+      #   lb://novel-auth / lb://novel-content / lb://novel-interaction / lb://novel-search。
       #   写错的症状是 `Unable to find instance for novel-xxx`（503），
       #   而它【不会】在启动时报错 —— 要等第一次请求。
       routes:
@@ -228,7 +239,66 @@ spring:
             - Path=/api/admin/author-applies,/api/admin/author-applies/**
 
         # ============================================================
-        # 二、novel-interaction（:8083）【抢占】—— order: 4
+        # 二、novel-search（:8084）【抢占】—— order: 3
+        #     必须严格小于下面 content 的 order: 5
+        # ============================================================
+        #
+        # ★★★ M4 新增。它和 interaction 那三条属于【同一类】：都在抢 content 的前缀。
+        #
+        #   重叠点有两个，而这两个的性质并不一样，别合并成一句话：
+        #
+        #     /api/search        —— content 的 content-misc 里【曾经】也写着它。
+        #                           M4 已把那一段从 content-misc 里删掉，
+        #                           所以这条现在是【独占】而不是抢占。
+        #                           ★ 但 order 仍必须 < 5：万一漏删了 content-misc 那一段，
+        #                             两条路由会同时命中，3 赢 5 ——
+        #                             于是【症状消失、而配置是错的】，
+        #                             要等下次有人把这里改成 order: 6 才会爆出来。
+        #
+        #     /api/admin/search  —— content 的 /api/admin/** 天然覆盖它，
+        #                           这条是【真·抢占】，和 interaction 的
+        #                           /api/admin/comments 一模一样。
+        #
+        # ★★ 三种漏法的症状完全相同（都是 404），所以必须【同一个原子步骤】改完：
+        #     ① content-misc 里没删 /api/search    → 老路由把请求转给 content，
+        #        而 ReaderSearchController 已经搬走了 → 404
+        #     ② /api/admin/search 忘了加 / order ≥ 5 → 被 content 的
+        #        /api/admin/** 抢走 → 404
+        #     ③ 只写 /api/search/** 不写裸路径      → 裸路径掉进 order 20 的兜底
+        #        （interaction）→ 404
+        #
+        # ★★★ 判定性验证（一次就够，别逐条 curl）：
+        #     停掉 novel-search → /api/search 系列【全部非 2xx】，
+        #                         /api/novels 仍然【200】。
+        #     ★ 两条【同时】成立才有信息量：只看前面那条的话，网关整个挂了也一样。
+        #     ★★ 再分别打 /api/search 与 /api/search/ 各一次 —— 这是第 ③ 条的专用探针
+        #        （裸路径和带斜杠是两种不同的 PathPattern 形状）。
+        #
+        # ★★★ 已实测（S9）：那个状态码是【500】，不是 503 —— 别按 503 去验。
+        #     停进程之后 Nacos 摘除是滞后的，实例还挂在注册表里 → 网关照样去连 →
+        #     `Connection refused: /127.0.0.1:8084` 被 AbstractErrorWebExceptionHandler 兜成 500。
+        #     ★ 这与本文件开头「实例在 Nacos 里【有】但连不上 → 500」那条辨析是同一件事
+        #       （503 的语义是「一个实例都没有」，停一个进程到不了那个状态）。
+        #     ★★ 所以判据要写成「非 2xx」，不要写死 503 ——
+        #       写死 503 的话，下一个人跑出 500 会去查「路由是不是没配好」，方向直接跑偏。
+        #     ★ 实测还顺带闭掉了第 ③ 条：/api/search/ 与裸路径【同生共死】（一起 500）。
+        #       若带斜杠那条掉进了 order 20 的兜底，停 novel-search 它不会有任何变化
+        #       （interaction 活着）—— 它跟着变，说明 /api/search/** 确实吃掉了它。
+
+        - id: search-query
+          uri: lb://novel-search
+          order: 3
+          predicates:
+            - Path=/api/search,/api/search/**
+
+        - id: search-admin
+          uri: lb://novel-search
+          order: 3
+          predicates:
+            - Path=/api/admin/search,/api/admin/search/**
+
+        # ============================================================
+        # 三、novel-interaction（:8083）【抢占】—— order: 4
         #     必须严格小于下面 content 的 order: 5
         # ============================================================
         #
@@ -279,7 +349,7 @@ spring:
             - Path=/api/admin/comments,/api/admin/comments/**
 
         # ============================================================
-        # 三、novel-content（:8082）—— order: 5
+        # 四、novel-content（:8082）—— order: 5
         # ============================================================
         # ★★ 这里【必须】排在 interaction 那三条之后（5 > 4）。
         #    反过来的话 interaction 的评论接口会全部落到 content → 404。
@@ -319,19 +389,24 @@ spring:
           predicates:
             - Path=/api/admin,/api/admin/**
 
-        # --- 分类树 / 搜索 / AI 创作助手（含 SSE 流式）---
+        # --- 分类树 / AI 创作助手（含 SSE 流式）---
         #   ★ /api/categories 是方法级裸路径（同 /api/notices 那个坑）。
         #   ★★ /api/ai/** 是 SSE 流式输出，M2 起多了一跳（网关 → content）。
         #      流式要真的逐块到达才算通过，不能只看「最后整体返回了」——
         #      网关默认会缓冲响应体的话，症状是「AI 面板转很久然后一次性吐出全文」。
+        #   ★★★ M4：`/api/search` 已从这一行【删掉】，搜索改由 order 3 的
+        #      search-query 转给 novel-search（见上面第二节）。
+        #      ★ 这一行和「删掉 ReaderSearchController」是【同一个原子步骤】：
+        #        只删 Controller 不删这一行，请求会被转到 content 上一个
+        #        已经不存在的接口 → 404，而它看起来像「网关路由写错了」。
         - id: content-misc
           uri: lb://novel-content
           order: 5
           predicates:
-            - Path=/api/categories,/api/search,/api/ai,/api/ai/**
+            - Path=/api/categories,/api/ai,/api/ai/**
 
         # ============================================================
-        # 四、上传的静态文件（作品封面、用户头像）—— order: 10
+        # 五、上传的静态文件（作品封面、用户头像）—— order: 10
         # ============================================================
         # ★ 这条必须单独有：/uploads/** 不在 /api/** 里。
         #   它由 novel-common 的 WebMvcConfig 映射到磁盘目录，
@@ -357,7 +432,7 @@ spring:
             - Path=/uploads/**
 
         # ============================================================
-        # 五、兜底 —— order: 20（★ M2 从 10 挪到 20）
+        # 六、兜底 —— order: 20（★ M2 从 10 挪到 20）
         # ============================================================
         # ★★ 这一条【必须排在最后】。上面没命中的 /api/** 全部落到这里。
         #

@@ -5,6 +5,7 @@ import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -64,11 +65,22 @@ import java.util.UUID;
  * 那是项目铁律明令禁止的（二期要先摘 auth，反了就有双向依赖拆不开）。
  * 磁盘 IO 既不属于「内容」也不属于「认证」，它是基础设施。
  *
+ * <h3>★ M4：{@code @ConditionalOnProperty} 是给 novel-search 加的</h3>
+ *
+ * <p>本类的 {@code uploadProperties} 字段是 {@code final} + {@code @RequiredArgsConstructor}，
+ * 也就是<b>构造器注入</b>。{@link UploadProperties} 一旦被 {@code @ConditionalOnProperty}
+ * 跳过，这里就找不到可注入的 bean → <b>启动失败</b>。
+ *
+ * <p>★ 所以这个注解不是「顺手加的」，它是<b>那套条件的另一半</b>：
+ * 跳过提供者就必须同时跳过所有消费者。search 里没有人会调 {@code store(...)}
+ * —— 它既不收封面也不收头像 —— 所以跳掉它是准确的，不是将就。
+ *
  * @author MickeyChen
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
+@ConditionalOnProperty(prefix = "novel.upload", name = "path")
 public class ImageStorage {
 
     /** 日期目录格式：{@code cover/2026/09/20/} —— 按天分目录，避免单目录堆几十万个文件 */

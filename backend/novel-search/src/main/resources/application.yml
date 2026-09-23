@@ -1,0 +1,273 @@
+# ============================================================
+# 小说管理系统 · 搜索服务主配置
+# ============================================================
+# 这里只放【所有环境都一样】的配置。
+# ES 地址、Redis 密码这类会变的，全部放 application-dev.yml。
+#
+# ★ M4 新建。它是全项目第一个【不连数据库】的服务 ——
+#   这一点在这个文件里最直观：往下翻，没有 spring.datasource，
+#   也没有 mybatis-plus 那一段。★ 那不是漏了，是必须没有：
+#   有的话就会去建 DataSource 和 MybatisPlusInterceptor，而本服务
+#   压根没有库可连 → 启动失败。见 SearchApplication 的类注释。
+#
+# ★★ 这个文件和 novel-content / novel-interaction 的 application.yml
+#    是【手抄】关系，不是共享的：凡是标了 "★★ 镜像" 的段落，
+#    各服务之间必须逐字一致 —— 漏改一边不会报错，
+#    只会让同一个字段在这个接口有、在那个接口没有，前端得写两套解析。
+#    找齐：grep -rn "★ 镜像" backend/novel-*/src/main/resources/application.yml
+# ============================================================
+
+server:
+  # ★★ 第二期 M4 起，本服务独立成进程，端口 8084。
+  #
+  #    8084 这个数字不是随便挑的：大纲 §四目录结构写的是
+  #    auth 8081 / content 8082 / interaction 8083 / search 8084。
+  #
+  #    ★ 本服务【不直接对外】。浏览器 :3000 → dev-proxy → :8080 网关
+  #      → lb://novel-search → 这里（:8084）。开发期要直连是可以的
+  #      （比如排错时绕过网关），但正常入口只有 :3000 一个。
+  port: 8084
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true      # 强制请求和响应都用 UTF-8，否则中文会乱码
+
+spring:
+  application:
+    # ★★ 这个名字有四处硬绑定，改它必须同时改：
+    #      ① 网关 application.yml 的 lb://novel-search（M4 新增的两条路由）
+    #      ② 本模块 pom 的 artifactId / finalName（jar 名）
+    #      ③ package.json 的 dev:search
+    #      ④ 本服务的 Feign 客户端【不】用它 —— ContentClient 指的是
+    #         novel-content。★ 也就是说本服务既是新名字的【提供方】，
+    #         又是旧名字（novel-content）的【消费方】，两个名字都要对。
+    #    查一遍：grep -rn "novel-search" backend/*/src/ package.json
+    name: novel-search
+
+  profiles:
+    active: dev        # ★ 默认用 dev（连你虚拟机上的 ES / Redis / Nacos）
+
+  # ★★ 镜像：novel-content / novel-interaction 的 application.yml 里也有一模一样的一段。
+  jackson:
+    # ⚠️ 这里【故意不写】date-format。
+    #
+    # 很多人会写 date-format: yyyy-MM-dd HH:mm:ss，然后发现完全没生效 ——
+    # 时间依然输出成 "2026-09-19T23:56:13.2551421"。
+    # 因为它【只对 java.util.Date 有效】，而项目里用的是 java.time.LocalDateTime，
+    # 走的是 Jackson 的 JavaTimeModule，根本不看这一项。而且不报错、不警告。
+    #
+    # 真正生效的配置在 com.novel.common.config.JacksonConfig（给 LocalDateTime
+    # 这个类型注册了序列化器）。那边改一处，全项目的时间格式都跟着变。
+    #
+    # ★★ 下面三行是【手抄的】，和另外两个服务的 application.yml 里
+    #    那三行必须逐字一致。JacksonConfig 管的是「LocalDateTime 怎么序列化」，
+    #    而「null 要不要返回」「时区是什么」只有 yml 能配，它没有代码形态。
+    time-zone: GMT+8
+    default-property-inclusion: non_null   # 值为 null 的字段直接不返回，前端少判断
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+
+  # ============================================================
+  # Elasticsearch（M4 的核心配置）
+  # ============================================================
+  elasticsearch:
+    # ★★★ 这一行【必须显式写】—— 这是 M4 最值得记的一条 ★★★
+    #
+    #    不写的话 Spring Boot 会【静默】连到 localhost:9200：
+    #    ElasticsearchAutoConfiguration 有默认值，而且它【懒连接】——
+    #    启动时不会去连，只在第一次真正查询时才连。
+    #
+    #    ★★ 于是「没配」的症状是：服务启动成功、日志干净、
+    #       第一搜索请求才炸（连不上 localhost:9200），
+    #       而错误信息里写着 localhost —— 让人以为「ES 没起来」，
+    #       实际上 ES 好好地跑在虚拟机上。
+    #
+    #    ★ M4 的 S2 探针专门验这一条：把 uris 故意写错到 127.0.0.1:9999，
+    #      看服务【能不能照常启动】（预期：能，第一次查询才失败）——
+    #      它证明的是「启动成功」这个信号【验不到 ES 通不通】，
+    #      所以不能拿「服务起来了」当作 ES 配对了的证据。
+    #
+    # ★ 不给默认值，和 novel.jwt.secret / novel.internal.token 同一条规矩：
+    #   生产没配就启动失败，而不是悄悄连到开发机的 192.168.127.137。
+    #   开发环境的实际值在 application-dev.yml。
+    uris: ${ES_URIS}
+
+  # 【关于 404 处理】不需要在这里配任何东西。
+  #
+  # 网上老教程会说：要加
+  #     throw-exception-if-no-handler-found: true
+  #     web.resources.add-mappings: false
+  # 才能让 404 走统一响应体 —— 那是 Spring Boot 3.2 之前的做法。
+  #
+  # ★ 而且 add-mappings: false 会把【静态资源映射整个关掉】，
+  #   而 Knife4j 的 /doc.html 正是靠静态资源映射提供的，结果文档页直接 404。
+  #
+  # Spring Boot 3.2 起，访问不存在的路径会抛 NoResourceFoundException，
+  # 在 GlobalExceptionHandler 里接住它即可，不用动任何配置。
+
+# ============================================================
+# 内部令牌
+# ============================================================
+novel:
+  internal:
+    # ★★★ 【故意不给默认值】★★★
+    #
+    # 它是网关到下游、以及服务与服务之间的共享密钥，防的是
+    # 「绕开网关直连 :8084 / :8083 / :8082 / :8081，自己伪造 X-User-Id: 1
+    #   + X-Roles: ADMIN 把自己变成管理员」。
+    #
+    # ★ 为什么不能给默认值：给了默认值，生产环境忘配时会静默用一个
+    #   【写在 git 里、全世界都知道】的字符串当密钥。而那等于这道闸不存在，
+    #   且没有任何症状 —— 它不像「登录坏了」那样会立刻被发现。
+    #
+    # ★★ 这个值在 M4 之后必须【六处一致】：
+    #      网关 / novel-auth / novel-content / novel-interaction /
+    #      ★ novel-search / 手工 curl 的头
+    #    少配一处，那个服务就把所有请求当匿名 → 全站 401 或 /internal/** 403。
+    #    ★ M4 把这条从五处改成六处 —— 而它正是「拆服务时最容易忘的一步」，
+    #      因为它不在任何一个模块的代码里，只在 N 份 yml 之间保持一致。
+    #
+    # 开发环境的默认值放在 application-dev.yml。
+    token: ${INTERNAL_TOKEN}
+
+  # ============================================================
+  # JWT（★ 本服务【不验签】，但这一段【不能删】）
+  # ============================================================
+  jwt:
+    #  ★★ 先说清楚：谁在用这段配置？
+    #
+    #     答案不是「搜索服务」（它在网关上就已经验过 token 了），
+    #     而是 com.novel.common.security.JwtUtil —— 一个 @Component。
+    #
+    #     JwtUtil 的构造函数是
+    #         JwtUtil(@Value("${novel.jwt.secret}") String secret,
+    #                 @Value("${novel.jwt.expire-days}") long expireDays)
+    #     ★ 两个占位符【都没有默认值】。而本服务的启动类在 com.novel 包下，
+    #       默认组件扫描一定扫得到 com.novel.common.security.JwtUtil，
+    #       于是 Spring 一定会去实例化它 → 一定会去解析这两个占位符。
+    #
+    #     ★ 删掉这一段的后果：启动【直接失败】，报
+    #         Could not resolve placeholder 'novel.jwt.secret'
+    #       而报错栈指向的是 JwtUtil 的构造器 ——
+    #       【不指向】「你的 yml 少了一段」。这正是最费时间的那类错误。
+    #
+    #     ★★ 这与本服务的 pom 里必须有 spring-boot-starter-data-redis
+    #       是同一类陷阱（common 里被扫到的 @Component / @Configuration
+    #       会反过来对本服务的 yml 提要求）。
+    #       ★★★ M4 之前这个陷阱有【四个】受害者（四个服务都要写这段），
+    #          M4 又给常见的几个加了条件注解 —— 但 JwtUtil 这一段【没有加】，
+    #          为什么值得说清楚：
+    #            给 JwtUtil 加 @ConditionalOnProperty 也能让它不扫进来，
+    #            ★ 但网关要用它（@Import 了它），而网关不是组件扫描进来的 ——
+    #              条件注解对 @Import 的处理和组件扫描不同，很容易变成
+    #              「网关那边悄悄没了 JwtUtil」。
+    #            ★★ 更实在的理由：这一段的成本是【每个服务抄 3 行】，
+    #              而条件注解的成本是【一个跨服务的隐式依赖】。
+    #              抄 3 行、错了会立刻报错；加条件注解、错了是静默的。
+    #              → 宁可抄。
+    #
+    # ★★★ 这里【故意不给默认值】★★★
+    # 写 ${JWT_SECRET} 而不是 ${JWT_SECRET:某个默认密钥}，是为了让生产环境
+    # 【没配就起不来】—— 直接抛占位符解析失败，一眼能看出是密钥没配。
+    # 如果给了默认值，生产环境忘了配密钥时会静默用这个默认值启动，
+    # 而这个默认值就写在提交到 git 的文件里 —— 等于全世界都知道你的签名密钥。
+    #
+    # 开发环境的默认值放在 application-dev.yml。
+    secret: ${JWT_SECRET}
+
+    # token 有效期（天）。本服务不签发 token，这个值只是为了让 JwtUtil 构造成功。
+    # 它必须和网关 / novel-auth 的取值一致 —— 不一致不会报错，
+    # 只会在「续期」相关的逻辑上产生难以察觉的偏差。
+    expire-days: 7
+
+  # ============================================================
+  # 搜索（M4）
+  # ============================================================
+  search:
+    # 索引名。★ 只有一处引用（IndexService），但仍然放在配置里：
+    # 全量重建时会先 DELETE 再 PUT 这个索引，手工排障时也要照着它敲命令，
+    # 硬编码在 Java 里的话，运维得去读代码才知道该删哪个。
+    index-name: novel_index
+
+    # 单次查询最多能翻到第几条 —— ★★ 这个值对应 ES 的 index.max_result_window。
+    #
+    # ★ 为什么必须自己夹：ES 的 from + size 超过 max_result_window（默认 10000）
+    #   会【直接返回 400】，而那个 400 会被降级路径的 catch 吞掉 →
+    #   用户看到的是「能用」，只是排序悄悄从相关性变回了 view_count。
+    #   ★★ 那是 M4 最隐蔽的一种失败：它看起来完全正常。
+    #
+    # ★ 所以本服务在【进 ES 之前】就判断：页码翻过这个深度就直接返回空，
+    #   不让它变成一次 400。见 SearchService。
+    max-result-window: 10000
+
+# ============================================================
+# RocketMQ（M4 新增到本服务）
+# ============================================================
+rocketmq:
+  # ★★ 生产【故意不写默认值】—— 和 novel.internal.token / novel.jwt.secret 同一条规矩：
+  #    不配就启动失败，而不是悄悄连到开发机的 192.168.127.137。
+  #    开发环境的实际值写在 application-dev.yml。
+  name-server: ${ROCKETMQ_NAME_SERVER}
+
+  # ★★★ 这里【没有】rocketmq.producer.group，而且这是 S7 实测之后才敢删的。
+  #
+  #     M4 初稿是留着它的，理由写得很小心、也确实值得小心：
+  #       照 content 的 application-dev.yml 里的记载，2.3.6 的 **producer** bean 条件是
+  #           @ConditionalOnProperty(prefix="rocketmq", value={"name-server","producer.group"})
+  #       —— 两个键必须成对配齐；而【消费方】的自动配置是不是同一个条件，当时没核实过。
+  #       万一 @RocketMQMessageListener 的注册也挂在这个条件下面，
+  #       少写 producer.group 就会让【消费者根本不注册】—— 症状正是铁律 7 记的那类：
+  #       「消息发出来了、一条都没收到、而且没有任何报错」。
+  #
+  #     ★★ S7 实测（删掉这一段 → 全量打包 → 重启）的结论是【不需要】：
+  #
+  #        13:12:27 INFO  RocketMQMessageListenerContainerRegistrar -
+  #                       Register the listener to container, listenerBeanName:novelIndexConsumer
+  #        13:12:35 INFO  DefaultRocketMQListenerContainer -
+  #                       running container: ... consumerGroup='group-search-index',
+  #                       topic='novel-topic', selectorType=TAG, selectorExpression='NOVEL_INDEX'
+  #
+  #       ★ 消费者照常注册、照常消费（同一轮里 NOVEL_INDEX 的四个落点全部实测通过）。
+  #         因此**消费者注册和 producer.group 无关** ——
+  #         那个 @ConditionalOnProperty 只管 DefaultMQProducer，管不到监听器容器。
+  #
+  #     ★★ 那为什么一定要删掉、留着不是更保险吗？—— 因为留着它有【实际的害处】：
+  #       它会让一个【纯消费】的服务凭空多出一个 DefaultMQProducer bean
+  #       （日志里那行 "a producer (novel-producer) init on namesrv" 就是它），
+  #       于是 search 和 content / interaction 共用了同一个生产者组 ——
+  #       而本服务的 pom 里那条注释写着「本服务【不发】任何消息」。
+  #       ★ 一份「说了不用、但配置里配着」的东西，下一个人只会有两种误判：
+  #         要么以为这里真会发消息，要么以为它没用而随手删掉——
+  #         后者会让「删了会不会坏」重新变成一个没人验过的问题。
+  #       ★★ 判据：**防御性配置只有在「删了会静默出事」时才值得留；
+  #          能靠一次实测证否的，就该实测之后删掉，把结论写进注释。**
+  #
+  #     ★ 顺带记一条同族的坑（content 那边实测的，别在这里重犯）：
+  #       rocketmq 这一段必须是【顶层】的，不能写成 spring.rocketmq.* ——
+  #       写成后者【不报错】，只会被静默忽略、name-server 退回 localhost:9876。
+
+# ============================================================
+# Knife4j 接口文档
+# ============================================================
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    enable-footer: false
+    enable-open-api: false
+  # ★ 生产环境要关掉：springdoc.api-docs.enabled=false
+  # ★★ 网关【故意】不透传 knife4j（理由见 docs/M0-骨架搭建.md），
+  #    所以文档只能直连本服务的端口看：http://localhost:8084/doc.html
+  #    ★ M4 起有【四个】文档入口：8081 / 8082 / 8083 / 8084。
+
+# ============================================================
+# 日志
+# ============================================================
+logging:
+  level:
+    root: info
+    com.novel: debug                    # 自己写的代码开 debug，方便排查
+    org.springframework.web: info
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%thread] %logger{36} - %msg%n"

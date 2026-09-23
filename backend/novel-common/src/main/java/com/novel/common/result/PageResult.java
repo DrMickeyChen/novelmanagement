@@ -1,6 +1,5 @@
 package com.novel.common.result;
 
-import com.baomidou.mybatisplus.core.metadata.IPage;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -10,7 +9,6 @@ import java.io.Serial;
 import java.io.Serializable;
 import java.util.Collections;
 import java.util.List;
-import java.util.function.Function;
 
 /**
  * 统一分页响应体。
@@ -24,6 +22,14 @@ import java.util.function.Function;
  *   "pages": 14      总共几页
  * }
  * </pre>
+ *
+ * <p><b>★★ 本类【不引用任何 ORM 类型】—— 这是 M4 用一次真实故障换来的约束，别加回去。</b>
+ * 两个装配工厂分成两处：{@link PageResults}（零依赖，谁都能用）和
+ * {@link MybatisPageResults}（{@code IPage} 适配器）。★ 它们<b>不能合并成一个类</b> ——
+ * {@code Class.getDeclaredMethods()} 会解析<b>每个方法签名</b>里的类型，
+ * 所以只要本类的方法参数里出现 {@code IPage}，一个<b>没有 MyBatis-Plus 的服务</b>
+ * （{@code novel-search}）反序列化它时就会 {@code NoClassDefFoundError}，
+ * 哪怕那个方法一次都没被调用。★ 详见 {@link MybatisPageResults} 的类注释。
  *
  * <p><b>为什么不直接返回 MyBatis-Plus 的 {@code Page}：</b>
  * {@code Page} 里还带着 {@code orders}、{@code optimizeCountSql}、{@code searchCount}
@@ -57,44 +63,6 @@ public class PageResult<T> implements Serializable {
 
     @Schema(description = "总页数", example = "14")
     private Long pages;
-
-    /**
-     * 把 MyBatis-Plus 的 {@code IPage} 转成统一分页体。
-     *
-     * <pre>
-     * Page&lt;Novel&gt; page = novelMapper.selectPage(new Page&lt;&gt;(current, size), wrapper);
-     * return Result.success(PageResult.of(page));
-     * </pre>
-     */
-    public static <T> PageResult<T> of(IPage<T> page) {
-        return new PageResult<>(
-                page.getRecords(),
-                page.getTotal(),
-                page.getCurrent(),
-                page.getSize(),
-                page.getPages()
-        );
-    }
-
-    /**
-     * 转成统一分页体的同时，把实体转成 VO。
-     *
-     * <pre>
-     * PageResult&lt;NovelVO&gt; vo = PageResult.of(page, this::toVO);
-     * </pre>
-     *
-     * @param page      数据库查出来的分页对象
-     * @param converter 实体 → VO 的转换函数
-     */
-    public static <E, V> PageResult<V> of(IPage<E> page, Function<E, V> converter) {
-        return new PageResult<>(
-                page.getRecords().stream().map(converter).toList(),
-                page.getTotal(),
-                page.getCurrent(),
-                page.getSize(),
-                page.getPages()
-        );
-    }
 
     /** 空分页。查不到数据时返回它，前端不用做 null 判断 */
     public static <T> PageResult<T> empty() {

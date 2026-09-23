@@ -5,31 +5,42 @@
 > **加内容之前先问自己：删掉这段，下次会不会做错？** 不会就别加。
 >
 > 每期的完整设计论证：第一期在 `docs/Pn-*.md`（P1 认证权限 / P2 内容主干 / P3 读者端 / P4 创作中心 / P5 管理后台），
-> 第二期在 `docs/Mn-*.md`（M0 骨架搭建 / M1 摘出 auth / M2 摘出 content）。
+> 第二期在 `docs/Mn-*.md`（M0 骨架搭建 / M1 摘出 auth / M2 摘出 content / M3 引入 MQ / M4 摘出 search）。
 
 ## 项目
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
-第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ（均已完成）** → M4 摘 search+ES → M5 治理。第三期 E1 AI。
+第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES（均已完成）** → M5 治理。第三期 E1 AI。
 ★ **M3 的实质只有 MQ**：大纲把 M3 写成「摘出 interaction + 引入 MQ」两件事，而 interaction 在 M2 就已经是独立进程了 —— 拆分那半早就兑现。见 `docs/M3-引入MQ.md` 开头。
+★ **M4 的实质是「换检索内核」**：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，
+**并且顺手证伪了大纲里的 `group-content-stat` 消费组**（`syncNovelStat` 读写的两张表同库同事务，拆成消息是**降级**）—— 见 `docs/M4-摘出search.md` 判断 1。
 **★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
 
 三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
 开发入口一律用 **`http://localhost:3000/...`** —— localStorage 按 origin 隔离，直连 5175 读不到另外两端的登录态。
 
-★ **M2 起后端分成四个进程**：**网关 `:8080`（唯一入口，也是唯一验 JWT 的地方）** →
+★★ **M2 起后端分成四个进程，M4 起是五个**：**网关 `:8080`（唯一入口，也是唯一验 JWT 的地方）** →
 `lb://novel-auth` → **auth `:8081`**（`modules/system` 全部：登录/用户/角色菜单/公告/作者申请/ping）／
-`lb://novel-content` → **content `:8082`**（`modules/content` + `modules/ai`：作品/章节/分类/审核/搜索/AI）／
-`lb://novel-interaction` → **interaction `:8083`**（`modules/interaction`：评论/书架/历史）。
-后两个**不再验签，只读身份头**。
-所以 `localhost:8080` 是网关、不是后端；排错要绕过网关时直连 `:8081` / `:8082` / `:8083`。
-★★ **直连 `:8081`/`:8082`/`:8083` 必须带 `novel.internal.token`（走 `X-Internal-Token`）**，否则身份头一律被忽略、当**匿名**处理 —— 这是刻意的（决策 4），不是 bug。
-★ **开发期不走 `:3000` 的入口只有接口文档，且现在有三个**：`:8081/doc.html`、`:8082/doc.html`、`:8083/doc.html`（网关【故意】不透传 knife4j，理由见 `docs/M0-骨架搭建.md`）。
-★ **`:8081`/`:8082`/`:8083` 在生产上必须只对内网开放** —— 共享密钥只是第二道锁，第一道永远是网络隔离（见 `docs/M1-摘出auth.md` R9）。
-★★ **`/api/novels/**` 与 `/api/admin/**` 被 content 和 interaction 【同时占用】**（正文 vs 章评、作品/章节/分类管理 vs 评论管理），
-所以网关**不能**用一条 `/**` 划开：interaction 那几条 `/api/novels/*/comments` 系列路由的 `order` **必须严格小于** content 的（现为 `4 < 5`），
-兜底那条在 `order: 20`。**症状对照：content 被兜底吞掉的表现是静默 404**，看着完全像「这个接口没实现」。
+`lb://novel-content` → **content `:8082`**（`modules/content` + `modules/ai`：作品/章节/分类/审核/AI）／
+`lb://novel-interaction` → **interaction `:8083`**（`modules/interaction`：评论/书架/历史）／
+`lb://novel-search` → **search `:8084`**（★ **M4 新增**：`GET /api/search`、`POST /api/admin/search/reindex`。
+**它没有数据库** —— ES 只当「id 检索器」，装配 `NovelVO` 是 Feign 回 content 做）。
+后三个**不再验签，只读身份头**。
+所以 `localhost:8080` 是网关、不是后端；排错要绕过网关时直连 `:8081` / `:8082` / `:8083` / `:8084`。
+★★ **直连 `:8081`/`:8082`/`:8083`/`:8084` 必须带 `novel.internal.token`（走 `X-Internal-Token`）**，否则身份头一律被忽略、当**匿名**处理 —— 这是刻意的（决策 4），不是 bug。
+★★ **判据：这条链路上 401 = 身份没被采纳（当匿名），403 = 采纳了但权限不够。** 别把两者混成一句话 —— 修法完全不同（一个是配置，一个是赋权）。
+（`HeaderAuthenticationFilter` 要求 `X-User-Id` **和** `X-Jti` **同时**在，缺一个就算匿名 —— M4 实测。）
+★ **开发期不走 `:3000` 的入口只有接口文档，且现在有四个**：`:8081/doc.html`、`:8082/doc.html`、`:8083/doc.html`、`:8084/doc.html`（网关【故意】不透传 knife4j，理由见 `docs/M0-骨架搭建.md`）。
+★ **`:8081`/`:8082`/`:8083`/`:8084` 在生产上必须只对内网开放** —— 共享密钥只是第二道锁，第一道永远是网络隔离（见 `docs/M1-摘出auth.md` R9）。
+★★ **路由不变式（M4 起按这个表述，别只记 `4 < 5`）**：`/api/novels/**` 与 `/api/admin/**` 被**多个**服务同时占用
+（content vs interaction 的正文/章评、作品管理/评论管理；content vs search 的 `/api/admin/search/**`），
+所以网关**不能**用一条 `/**` 划开。**判据：任何与 content 的 `/api/novels/**` 或 `/api/admin/**` 重叠的具体前缀，
+`order` 必须严格小于 content 的 `5`。** 现有三个适用者：
+interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/search/**` 与 `/api/admin/search/**`（`3`）；
+兜底那条在 `order: 20`。
+**症状对照：被兜底吞掉的表现是静默 404**（看着完全像「这个接口没实现」）；
+**只写 `/**` 不写裸路径**则裸路径掉进兜底 —— 两种漏法症状一样，**只能用「停一个服务看谁跟着死」分开**。
 （不变的原文与理由在 `backend/novel-gateway/src/main/resources/application.yml` 的注释里。）
 
 ## ★★ 铁律
@@ -42,6 +53,14 @@
    它整条边换成了事务消息，见铁律 7。）
    ★ **M1 之后这条要按 HTTP 重新表述**：接口**实现**住在消费方（就是「发一次 Feign 调用」），
    提供方只暴露 URL、不暴露类型 —— 否则那是个能编译、能被扫描、**永远不会被调用**的死 bean。
+   ★★★ **「服务级环」的定义 = 【同步调用】的环，MQ 不算边**（M3 断环 #1 用的就是这个定义，
+   M4 起它成为承重条款）：所以 `search → content`（Feign 读）是边，
+   `content → search`（**只有 MQ**）**不是**边。★ 唯一的前提是**消费方必须是 search** ——
+   若让 content 去消费再调 search 推文档，就造出了 `content → search` 的**同步**边 → 环。
+   ★★ **M4 新增一条边**：`search → content`（`/internal/novels/index-docs` 等 3 个端点）。
+   ★★★ **绝不新增 `auth → search`**：把作者名索引进 ES 之后，昵称改名会让索引陈旧，
+   自然的想法是「auth 改名时通知 search」—— 但 **auth 现在的出站边是 0 条，那是 M3 好不容易挣来的**。
+   **不为了一个极低频的场景把它加回来**，收敛点是定时全量重建。
    ★ **M1 造出的那个【服务级】环** `novel-auth ⇄ novel-content`：**M3 用事务消息解掉了** ——
    auth 对 content 的**唯一**一条出站边（`ContentAuditClient`）已删，
    `grep -rn "novel-content\|ContentAuditClient" backend/novel-auth/src/` → **0 命中**。
@@ -62,12 +81,21 @@
    清理数据用**字面 id 的 `IN (...)`**，不要用 `LIKE`。
 6. **上传安全**（`docs/P4-创作中心.md` D-10）：文件名绝不采信客户端；**校验文件头魔数**而不是只看扩展名；上传目录必须是**外部绝对路径**。
 7. **★★ 消息可靠性分级（M3）：推「增量」的可以乱序；推「绝对值」的，要么顺序、要么带时间戳做单调写。**
-   四条消息**故意不一样**，别统一：`VIEW_REPORT` 增量 / 并发 / 不用防；`PROGRESS_REPORT` 绝对值 /
-   ★ **全项目唯一一条 ORDERLY**；`NOVEL_STAT` 绝对值 / 并发 / **载荷时间戳 + 单调写**；`AUDIT_RECORD` 事实 / 并发 / **SETNX 幂等**。
-   ★★ **一个 (服务, Tag) 一个消费组**，四个组不许合并 —— 订阅按**消费组**存在 Broker 上，
+   五条消息**故意不一样**，别统一：`VIEW_REPORT` 增量 / 并发 / 不用防；`PROGRESS_REPORT` 绝对值 /
+   ★ **全项目唯一一条 ORDERLY**；`NOVEL_STAT` 绝对值 / 并发 / **载荷时间戳 + 单调写**；`AUDIT_RECORD` 事实 / 并发 / **SETNX 幂等**；
+   ★★ **`NOVEL_INDEX`（M4）推【事实】、载荷只有一个 id** —— **幂等天然、顺序无关、不需要 SETNX、不需要时间戳**。
+   ★★★ **它是五条里唯一「幂等免费」的，因为载荷里没有数据**：消费者读的是**当时的真值**，
+   两条乱序消息各自触发一次重建、两次都读同一份当前状态、写同一个文档 → 结果一样。
+   **判据：「去重算一次」这个指令，永远比「算好的结果」好维护。**
+   （★ 代价是它**不覆盖**「谁都没通知」这种情况 → 靠 `AfterCommit` 之外的那条定时全量重建兜底。）
+   ★★ **一个 (服务, Tag) 一个消费组**，五个组不许合并 —— 订阅按**消费组**存在 Broker 上，
    组内不一致时后注册的**覆盖**前一个。**症状对照：某个 Tag 收不到消息且不报错 → 先查有没有两个 Tag 共用一个消费组。**
-   （形状与 `4 < 5` 那条路由不变式一模一样。）
+   （形状与路由那条 `order` 不变式一模一样。）
    ★ `maxReconsumeTimes` **必须显式写**（四个消费者都写 3）—— 顺序消费下不写 = `Integer.MAX_VALUE`。
+   ★★ **但「我的消费者代码永不抛异常」这个保证只覆盖【方法体之内】** ——
+   `rocketmq-spring` 的类型转换（如枚举反序列化）失败发生在方法被调用**之前**，
+   我们的 `try/catch` 根本没机会执行 → 直接走框架的重试阶梯进 DLQ。
+   **实操警告：给消息载荷里的枚举改名/删值，在途消息会【全部】静默进 DLQ。**
    ★★ **但别把「默认危险」说成「必然危险」**：显式写了之后，顺序消息重试 3 次照样进 `%DLQ%`、
    队列照样前进。**实测推翻了初稿里「永不进 DLQ、永久卡死」的断言**（`docs/M3-引入MQ.md` §四 判断 B′）——
    留一条 ORDERLY 的真正代价是**队头阻塞 + 固定 1 秒重试 + 单线程消费**，不是不可恢复。
@@ -75,6 +103,11 @@
    实测教训：网关那条 `dependency:tree | grep` 有两个「看起来也对、其实什么都验不到」的写法，
    其中一个在仓库里存在了两期（`-pl` 单模块时 `novel-common` 解析不到 → 被当叶子节点 → 子树一个字不打印）。
    ★ 同理 `mvn dependency:tree -q` **不是安静，是什么都不打印**。
+   ★★ **第二种形状（M4）：判据本身永远为真。** `grep -rni elasticsearch backend/novel-content`
+   在任何 Boot 应用上都会命中 —— `spring-boot-autoconfigure` 里含有**所有**技术的自动配置类名
+   （`@ConditionalOnClass` 让它们惰性，库不在就什么都不做）。
+   **判据要换成看 `BOOT-INF/lib`**（`unzip -l x.jar | grep -i elastic`）。
+   ★ 解药是同一个：**换成差分式判据（和对照组比），别用阈值式（数个数）** —— 对照组的对齐是自动的。
 9. **★★ 削峰削的是【写】，不是读。** 「请求路径上跨服务调用归零」这种说法要警惕 ——
    M3 保留下来的两次 Feign 读**是有信息量的错误码**（`2001` / `3001` 的抗探测设计），不能为了好看搬走。
    准确说法：「请求路径上的**写**从『两次远程读 + 一次本地写』变成『一次投递』」。
@@ -97,6 +130,14 @@
 ## 项目范式（照抄，别重新发明）
 
 - **后端分页**：`PageResult<T>` + 每个 Service 的 `buildPage` 兜底（`size` 夹到 1~100）。
+  ★★★ **`PageResult` 里绝对不许再出现 `IPage`（或任何 ORM 类型）** —— M4 实测：
+  方法签名里**出现**第三方类型，`Class.getDeclaredMethods()` 解析不到就抛 `NoClassDefFoundError`，
+  **整个类就此不可用**（哪怕那个方法一个字都没被调用）→ `novel-search` 一调降级路径就 500。
+  ★ 判据不是「别把 `IPage` 放进 DTO」，而是 **「`IPage` 不许和任何人共处一个类」** ——
+  连重载都不行（javac 的重载决议要把所有候选方法的参数类型都解析出来）。
+  现拆成三个：`PageResult`（纯 DTO）／`PageResults`（零依赖装配）／`MybatisPageResults`（`IPage` 适配器）。
+  ★ 同类判据的**完整阶梯**：字段注入第三方类型 → 起服务时炸；`implements`/`extends` 第三方类型 → 类加载时炸；
+  **方法签名里出现 → 反射枚举方法时炸（最隐蔽）**；**注解里出现 → 永远不炸**（反射遇到解析不了的注解会静默丢弃）。
 - **手写 `@Select` 时 `@TableLogic` 完全不生效** → 逻辑删除的表必须自己写 `deleted = 0`；
   但 `sys_role_menu` **没有** `deleted` 列（和 `sys_role` / `sys_menu` 规则相反），赋权只能物理 `DELETE` + `INSERT`。
 - **单列 `.select()` 投影 + 可空列 → `List` 里会塞 `null` 元素** → 方法引用 NPE → 500（`docs/P5` 实施记录 ⑥）。
@@ -129,11 +170,12 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 # ★★ -WorkingDirectory 必须是 backend/【不是 backend/novel-interaction/】：
 #    logging.file.name 是相对路径，跟着工作目录走 —— 改了就静默换目录，
 #    所有「日志在 backend/logs/」的文档同时变假话，且没有任何报错。
-# ★ M2 起【四个】jar 都要起（少一个就是全站 401 / 503 / 500）：
+# ★ M2 起【四个】jar 都要起，M4 起【五个】（少一个就是全站 401 / 503 / 500）：
 #   novel-gateway/target/novel-gateway.jar          （:8080，logs/novel-gateway.log）
 #   novel-auth/target/novel-auth.jar                （:8081，logs/novel-auth.log）
 #   novel-content/target/novel-content.jar          （:8082，logs/novel-content.log）
 #   novel-interaction/target/novel-interaction.jar  （:8083，logs/novel-interaction.log）
+#   novel-search/target/novel-search.jar            （:8084，logs/novel-search.log）← ★ M4 新增
 # SQL 日志在 stdout —— 要 grep SQL 得额外加 -RedirectStandardOutput
 
 # ★ M3 起中间件多一个 RocketMQ，在【同一个虚拟机】上（不是第五个 Java 进程）：
@@ -142,12 +184,30 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 #   ★★ 起来之后【不能只看 docker compose ps 显示 Up】，要 grep broker 日志里的 "boot success"
 #      —— 三条坑（uid 3000 的 bind mount / brokerIP1 必须是虚拟机局域网 IP / boot success）
 #      写在 docs/环境配置.md。
-#   ★★ 起来的顺序：**建议 broker 先于三个服务**，但这一条 M3 【没有实测】
-#      （R3 遗留项：M3 只验了「服务跑着时停掉 broker → 埋点仍 200」，
-#       没验「broker 挂着时服务能不能起」。别再把它当成已验证的事实引用。）
-#      ★ 补测的方法：停 broker 容器 → 起 novel-content → 看它是启动失败还是照常起。
+#   ★★ 起来的顺序：**broker 必须先于消费方服务** —— ★ M4 已实测（补掉了 M3 的 R3）：
+#      namesrv 不可达时 search **起不来**（`RemotingConnectException` 抛在 `DefaultMQPushConsumerImpl.start`）。
+#      ★ 必须连 caveat 一起引用：测的是 **namesrv 不可达**，不是「namesrv 在、broker 挂了」。
+#      ★ 而 **ES 挂掉时服务照常能起**（M4 实测，指向死地址也 9.1s 起来、日志里 0 条 ES 访问）
+#      —— 这个不对称是刻意的：ES 挂在**请求路径**上（有降级），MQ 挂在**注册路径**上（注册不了就没得谈）。
+#      ★ 诊断陷阱：启动失败的 JVM **不一定退出**（Netty/RocketMQ 的非守护线程吊住进程）——
+#      **「进程在」不等于「服务在」，看端口在不在监听，别看 PID 在不在。**
 #   ★ broker.conf 的 defaultTopicQueueNums = 4 是【显式写的】，别删 ——
 #     ORDERLY 的讨论每次都要说清队列数，它不该藏在默认值里。
+
+# ★ M4 起中间件多一个 Elasticsearch（同在那个虚拟机上，:9200）：
+#   ★★ 官方镜像不含 IK 分词器，所以 **M4 起 docs/docker/ 有零改动之外的第一个例外**：
+#      多了 Dockerfile-es（`FROM 8.13.4` + `elasticsearch-plugin install analysis-ik`），
+#      compose 的 es 段也从 `image:` 改成了 `build:`。★ M3 文档里「那份 compose 零改动」这句话
+#      M4 起不再成立（见 docs/M4-摘出search.md 开头）。
+#   ★ 单节点 ES 必须 `number_of_replicas: 0`，否则索引一建出来健康就是 **yellow**。
+#   ★★ 判据要**差分式**：`_analyze` 拿 `ik_max_word` 和 `standard` **都跑一遍**比输出 ——
+#      「斗破苍穹」前者出 `斗/破/苍穹`（3 个，含 2 字词）、后者出 `斗/破/苍/穹`（4 个单字）。
+#      **只跑 IK 的话 3 个和 4 个都「像对的」，等于没验。**
+#   ★ ES 的 `xpack.security.enabled: false` 是 **dev 专用**，compose 注释里自己写了生产不能这么配。
+#   ★ search 的 `spring.elasticsearch.uris` 是 `${ES_URIS:http://192.168.127.137:9200}` ——
+#      不配会**静默 fallback 到 localhost:9200**（只有 INFO，没有 WARN）。
+#      ★★ 这个环境变量也是 M4 的**测试钩子**：指向本地 TCP 代理即可做「ES 挂掉/恢复」三阶段实验，
+#       **无需改代码、无需重新打包**（实测方法见 docs/M4-摘出search.md 九）。
 
 # 前端：根目录 npm run dev（concurrently 起四端）；npm 装包要 --cache $env:TEMP\novel-npm-cache
 # ★ 绝不在某子项目跑着 vite dev 时在同一子项目 npm run build / install（争 node_modules/.vite，dev server 会崩）

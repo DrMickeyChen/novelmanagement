@@ -2,15 +2,16 @@ package com.novel.modules.content.service;
 
 import com.novel.common.enums.NovelStatus;
 import com.novel.common.internal.NovelCollectCountDTO;
+import com.novel.common.internal.NovelIndexDoc;
 import com.novel.common.result.PageResult;
 import com.novel.common.vo.NovelBriefVO;
 import com.novel.common.vo.ChapterBriefVO;
+import com.novel.common.vo.NovelVO;
 import com.novel.modules.content.dto.NovelCreateDTO;
 import com.novel.modules.content.dto.NovelUpdateDTO;
 import com.novel.modules.content.entity.Novel;
 import com.novel.modules.content.vo.ChapterVO;
 import com.novel.modules.content.vo.NovelDetailVO;
-import com.novel.modules.content.vo.NovelVO;
 
 import java.math.BigDecimal;
 import java.util.Collection;
@@ -480,4 +481,134 @@ public interface NovelService {
      * @return 按 id 升序的一页，可能为空列表（扫到底了）
      */
     List<NovelCollectCountDTO> collectCountsAfter(Long afterId, Integer size);
+
+    /* ==================== 供 search 建索引调用（M4） ==================== */
+
+    /**
+     * 批量取「该进索引的」作品数据，返回 {@code {novelId: NovelIndexDoc}}。
+     *
+     * <p><b>★ 两个调用方，一个端点：</b>
+     * <ul>
+     *   <li><b>增量重建</b>（{@code NOVEL_INDEX} 消息触发）—— 传 1 个 id；</li>
+     *   <li><b>检索结果的装配</b> —— 传 ES 命中的那一页 id。</li>
+     * </ul>
+     * 两条路要的是同一份数据，所以是同一个方法。★ 用 {@code POST} 而不是
+     * {@code GET}（理由同 {@link #briefsOf}：id 列表塞 query string 会撞 URL 长度限制，
+     * 而那个限制在不同服务器上不一样，症状是「书多了就报 400」、本地还复现不了）。
+     *
+     * <h3>★★★ 「响应里没有这个 id」= <b>这本书不该在索引里，请删掉它</b></h3>
+     *
+     * <p>这是本方法<b>唯一的隐式约定，也是最容易写错的一条</b>。缺一个 id 有三种成因，
+     * 而调用方<b>不需要、也无法</b>分辨它们：
+     * <pre>
+     *   ① 作品不存在              → 索引里那条是脏的，删
+     *   ② 作品被逻辑删除          → 同上（@TableLogic 让它查不出来，★ 见下）
+     *   ③ 作品从未进过索引        → 删一个不存在的文档，ES 静默成功
+     * </pre>
+     * ★★ <b>第 ② 种是这条约定存在的真正理由。</b>{@code @TableLogic} 是 MyBatis 往
+     * WHERE 里注入 {@code deleted = 0}，<b>ES 完全不知道有这回事</b> ——
+     * 没有这条约定，一本被删掉的书会<b>永远留在索引里能被搜到</b>，
+     * 而它在 MySQL 那边已经不存在了。所以「查不到 ⇒ 删」不是容错，是<b>正确性本身</b>。
+     *
+     * <h3>★★ 刻意【不看 status】—— 草稿也要进索引</h3>
+     *
+     * <p>直觉会说「只索引已上架的」，但那样会漏掉一条真实的链路：
+     * <b>草稿 →（上架）→ 已上架</b>时，如果草稿从来没进过索引，
+     * 那上架那一刻就必须「插入」而不是「更新」，而索引侧无从知道该插还是该改。
+     * ★ 让所有状态都进索引、<b>由 ES 侧的 {@code status} 过滤挡住不可见的那部分</b>
+     * （判断 5），索引侧就只剩一种写操作：<b>upsert</b>。
+     *
+     * <p>★★ 这也正是「第二道闸门」的物理位置：即使索引里躺着一条陈旧的已下架文档，
+     * 用户在 ES 查询里就搜不到它。<b>索引陈旧的方向于是从「内容泄露」降级成
+     * 「搜不全」</b>——后者可接受、且能被定时重建自愈。
+     *
+     * <p>★ 返回值是 {@code Map} 而不是 {@code List}，两个理由：
+     * ① 「缺失」在 Map 里是显式的（{@code get} 返回 {@code null}），
+     * 而在 List 里要靠调用方自己发现少了一个 —— 那是<b>不会报错的漏删</b>；
+     * ② MySQL 的 {@code IN} <b>不保证返回顺序</b>，用 List 就得再约定一条
+     * 「按传入 id 顺序重排」，多一条没人会记得的契约。★ 同 {@link #briefsOf} 的形状。
+     *
+     * @param novelIds 作品 id 集合。<b>空集合是合法输入</b>，返回空 Map，调用方不必特判
+     * @return 查得到的那些 id 的索引数据；★ <b>存活的 id 一个都不会少</b>，
+     * 因为调用方拿「少了」当删除信号 —— 分页/截断在这里是不可接受的（见下）
+     */
+    Map<Long, NovelIndexDoc> indexDocsOf(Collection<Long> novelIds);
+
+    /**
+     * 【全量重建专用】按 id 升序取<b>所有作品</b>的一页，每行是 6 个索引字段。
+     *
+     * <p><b>★★ 这是「定时全量重建」的数据源</b>，也是 M4 一切最终一致性的收敛点。
+     * 上面 {@link #indexDocsOf} 那三条会漏的触发点（改名 / 下架 / 逻辑删除）
+     * 全靠它在一个周期内抹平。
+     *
+     * <p>★★ <b>为什么必须是「翻全集」而不是「给我变过的那些」：</b>
+     * 同 {@link #collectCountsAfter} —— <b>漏发的现场不留痕迹</b>，
+     * 没有任何 id 列表能圈出「哪些书的消息丢了」。唯一能发现的办法是整体重算一遍。
+     *
+     * <p>★★ <b>游标分页（{@code afterId}）而不是 offset</b>，理由同
+     * {@link #collectCountsAfter}：这是一次全表扫描，offset 在扫描中遇到插入会整体错位。
+     * 全量重建漏掉一行的后果是那本书<b>从索引里消失</b>（重建是先删索引再灌），
+     * 也就是<b>搜不到它</b>，而日志上看不出任何异常。
+     *
+     * <p>★ <b>已逻辑删除的作品不会出现</b>（{@code @TableLogic} 自动带 {@code deleted = 0}）——
+     * 这正是我们要的：全量重建清了旧索引，墓碑不会跟着回来。
+     *
+     * <p><b>★ 分页上下界都不在这里夹</b>，由 {@code buildPage} +
+     * {@code PaginationInnerInterceptor.setMaxLimit(100)} 两层管。
+     * ★ <b>调用方必须知道 100 这个上限</b>，理由同 {@link #collectCountsAfter}：
+     * 「返回条数 &lt; 请求条数」是调用方判断「扫到底了」的依据，
+     * 请求 {@code size > 100} 会被静默截断到 100 → 循环<b>提前结束、漏掉后面的书</b>。
+     *
+     * @param afterId 游标：只返回 id <b>严格大于</b>它的行。第一页传 {@code null}（或 0）
+     * @param size    这一页最多几行。★ ≤ 100；{@code null} / 小于 1 走默认值
+     * @return 按 id 升序的一页，可能为空列表（扫到底了）
+     */
+    List<NovelIndexDoc> indexPageAfter(Long afterId, Integer size);
+
+    /**
+     * 【检索装配专用】给一组 id，返回<b>读者看得到的那些</b>作品，<b>按传入顺序</b>。
+     *
+     * <p><b>★★★ 这个方法和 {@link #indexDocsOf} 长得像，但【不能合并】——
+     * 它们的 status 口径是相反的，合并就等于拆掉第二道闸门。</b>
+     * <pre>
+     *   indexDocsOf   →  ★ 不看 status（草稿也要进索引）
+     *   visibleVosOf  →  ★★ 只看 status = 已上架
+     * </pre>
+     * ★ 判据是「谁在用」：前者喂给<b>倒排索引</b>，索引里必须什么都有一份，
+     * 可见性由 ES 侧的 filter 挡；后者喂给<b>用户的搜索结果页</b>，
+     * 它就是那道挡在前面的闸门本体。
+     *
+     * <h3>★★ 第二道闸门 —— 这是安全性的，不是性能的</h3>
+     *
+     * <p>这条规矩的出处是 {@code ReaderSearchController}（★ M4 已随搜索一起搬去
+     * {@code novel-search}，类名在这里留着是为了让人还能顺藤摸到那段论证）：
+     * <b>读者端的每一条查询都必须自己带可见性条件</b> —— 它免登录、没有登录态兜底，
+     * 条件漏了就是<b>直接对外的内容泄露</b>。
+     * <p>M4 把搜索搬到 ES 之后，「ES 里的文档陈旧了（书已下架但文档还在）」
+     * 和「用户搜到了不该搜的」之间，<b>必须仍然隔着一道闸门</b> ——
+     * 而 content 这边天然知道 {@code status}，search 连它是什么语义都不需要知道。
+     * <p>★★ 于是索引陈旧的方向从「<b>内容泄露</b>」降级成「<b>搜不全</b>」：
+     * 后者可接受、且能被定时全量重建自愈。
+     *
+     * <h3>★★ 为什么由 content 重排，而不是让 search 自己按 id 对</h3>
+     *
+     * <p>ES 返回的是<b>相关性排序</b>，那个顺序是这次检索的全部价值所在。
+     * 而 MySQL 的 {@code IN} <b>不保证返回顺序</b>（它甚至可能随执行计划变化）——
+     * 不重排的话，用户搜出来的结果顺序是随机的，
+     * ★ 而它「看起来完全正常」，只是不相关。这类错误没有任何报错。
+     * <p>★ 让 content 排（而不是 search 拿到 Map 自己按 ES 顺序取）的原因：
+     * search 那边就只能用 Map，而 <b>Map 表达不了「重复 id 保留两份」</b>，
+     * 也表达不了顺序 —— 一个需要调用方自己重组的返回类型，
+     * 迟早会有人忘了重组。
+     *
+     * <p>★★ <b>返回条数可能少于请求条数</b>，这不是错误：被过滤掉的 id
+     * 说明<b>索引里有 content 这边不可见的书</b>（下架了、删了、或者状态改过而消息丢了）。
+     * ★ 那正是「索引陈旧」的唯一信号，所以本方法<b>会记 WARN</b>（见实现）。
+     * ★ 代价如实记一笔：ES 给了 10 个 id、这边只回 8 个，
+     * 于是<b>这一页只有 8 条</b>。正常运行时（两道闸门都在）一条都不会被过滤掉，页永远是满的。
+     *
+     * @param novelIds ES 命中的 id，<b>按相关性排好序</b>。空集合 = 空列表
+     * @return 其中读者可见的那些，<b>顺序与传入一致</b>；可能为空列表
+     */
+    List<NovelVO> visibleVosOf(Collection<Long> novelIds);
 }

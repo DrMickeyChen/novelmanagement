@@ -1,0 +1,109 @@
+# ============================================================
+# 小说管理系统 · Elasticsearch 8.13.4 + IK 中文分词（M4 新增）
+# ============================================================
+#
+# ★★ 为什么需要这个文件：
+#
+#   官方镜像 docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+#   【不含任何中文分词器】，只有 standard。
+#
+#   ★★ 先纠正一个很容易想当然的说法：standard 对中文【不是】
+#      「整串当成一个 token」，它是【逐字切分】。M4 实测（curl _analyze）：
+#
+#        standard     「斗破苍穹」 → 斗 / 破 / 苍 / 穹
+#        standard     「斗破」     → 斗 / 破
+#        ik_max_word  「斗破苍穹」 → 斗 / 破 / 苍穹
+#
+#      两边都切出了「斗」和「破」，而 match 查询是 OR 语义 ——
+#      所以【不装 IK 照样搜得到】「斗破苍穹」。
+#      ★★ 写成「不装就搜不到」是个能编译、能跑、看起来也对，
+#         但一被追问「standard 不是逐字切吗」就答不上来的说法。
+#         装 IK 的理由根本不是「能用 vs 不能用」，是下面这条。
+#
+#   ★ 真正的差别在【成词】。看长一点的文本：
+#
+#        ik_max_word  「重生之我在修仙世界当咸鱼」
+#                   → 重生 / 之 / 我 / 在 / 修仙 / 世界 / 当 / 咸鱼
+#        standard     同一句 → 逐字 10 个单字 token
+#
+#      差别带来两件事，都落在【相关性】上，不落在【命中与否】上：
+#
+#        ① 噪音：standard 下搜「斗破」，凡事含「破」的书都会进候选
+#           （「破晓」「破军」……），它们在 _score 上和真正相关的书
+#           混在同一个量级里，翻两页都翻不到想要的。
+#        ② 打分：_score 是按 term 算的。「命中一个词」比
+#           「命中一个字」携带的信息量大得多 —— 词表是
+#           「苍穹 / 修仙 / 咸鱼」这种真词时，排序才有意义。
+#
+#   ★★ 一句话：IK 买的是【排序质量和信噪比】，不是【能不能搜到】。
+#      所以 M4 的验收也是照着这个写的 —— 验的是「书名命中的排在
+#      只有简介命中的前面」，而不是「有没有结果」。
+#
+# ★ 为什么不在容器里临时装：
+#
+#   `docker exec <容器> elasticsearch-plugin install ...` 确实能装上，
+#   而且立刻就能用 —— 但它装进的是容器的【可写层】。
+#   compose 里 elasticsearch 那一段的 volumes 只挂了 ./data/es，
+#   【没有】挂 plugins。
+#
+#   ★★ 于是一旦 `docker compose up -d --build` 重建容器，插件就没了，
+#      而且没有任何报错 —— 搜索只是悄悄退回「只能搜到一字不差的整串」。
+#      「重建即失效」的配置必须落在镜像里，不能落在容器里。
+#
+# ★★ 这意味着 docs/docker/docker-compose.yml 从 M4 起【不再是零改动】：
+#    elasticsearch 那一段的 image: 换成了 build:。
+#    （M3 的文档里写着「那个文件 M3 零改动」—— 那记录的是 M3 当时的事实，
+#      不是一份永久承诺。M4 的文档负责写这条对照。）
+#
+# ---- 构建 / 使用 ----
+#
+#   cd ~/novel-docker
+#   sudo docker compose up -d --build elasticsearch
+#
+# ★ 构建失败【不会影响正在跑的旧容器】—— compose 在构建成功之前
+#   不会去动它。所以这一步是可以放心重试的。
+#
+# ---- 本文件不做任何 COPY ----
+#
+#   构建上下文里的东西一件都不会进镜像，因此 docs/docker/.dockerignore
+#   排除 data/ 与 .env 纯粹是为了【少传几百 MB】和少传一次密码文件，
+#   不是安全补救。★ 但两者都该排除，见那个文件自己的注释。
+# ============================================================
+
+FROM docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+
+# ★ 用 infinilabs（IK 上游）的 CDN，不用 GitHub Releases：
+#
+#   ① GitHub 的 tag 名与 ES 版本【不是】一一对应的 ——
+#      M4 实测 `.../releases/download/v8.13.4/elasticsearch-analysis-ik-8.13.4.zip`
+#      返回 404，而 release.infinilabs.com 与 get.infini.cloud 都返回同一个
+#      zip（Content-Length: 4617322，Content-Type: application/zip）。
+#
+#   ② 这个路径把版本号写在 URL 里（最后一段就是 8.13.4），
+#      和上面的 FROM 摆在一起，装错版本这件事在结构上就不会发生。
+#      ★★ 这一点很要紧：IK 的版本号必须与 ES 严格一一对应，
+#         版本不匹配的插件【不会被加载】，而启动日志里那行警告
+#         夹在几百行里，很容易滑过去。
+#
+# ★★ --batch 不能省：
+#   不带它，elasticsearch-plugin 会停下来等一个 y/n 确认
+#   （"WARNING: plugin requires additional permissions"）。
+#   而 docker build 【没有 stdin】，构建会一直挂着直到超时 ——
+#   报错信息只会说「构建超时」，完全指不到这里。
+#
+# ★ 不需要 USER root：
+#   官方镜像的默认 USER 就是 elasticsearch（uid 1000），
+#   而 /usr/share/elasticsearch 整个目录归它所有，plugins/ 可写。
+#   ★★ 反过来说【绝对不能】以 root 收尾：ES 会直接拒绝启动，
+#      报 "can not run elasticsearch as root"。
+RUN bin/elasticsearch-plugin install --batch \
+      https://get.infini.cloud/elasticsearch/analysis-ik/8.13.4
+
+# ★ 构建时就确认插件确实落到了 plugins/ 目录里。
+#   install 失败本身会让构建失败，所以这不是唯一的护栏 ——
+#   它挡的是另一种情形：install 返回 0，但插件被装到了别处
+#   （例如将来有人把 WORKDIR 改了）。
+# ★★ 它【验不了】「ES 启动时能不能加载这个插件」—— 那要等容器起来，
+#    用 `curl localhost:9200/_cat/plugins?v` 和一次 `_analyze` 才算数。
+#    版本不匹配正是在那一步才暴露的。
+RUN bin/elasticsearch-plugin list | grep -q '^analysis-ik$'

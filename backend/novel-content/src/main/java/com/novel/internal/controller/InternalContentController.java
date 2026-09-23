@@ -2,9 +2,12 @@ package com.novel.internal.controller;
 
 import com.novel.common.enums.ChapterStatus;
 import com.novel.common.internal.NovelCollectCountDTO;
+import com.novel.common.internal.NovelIndexDoc;
+import com.novel.common.result.PageResult;
 import com.novel.common.result.Result;
 import com.novel.common.vo.ChapterBriefVO;
 import com.novel.common.vo.NovelBriefVO;
+import com.novel.common.vo.NovelVO;
 import com.novel.modules.content.service.ChapterService;
 import com.novel.modules.content.service.NovelAccessGuard;
 import com.novel.modules.content.service.NovelService;
@@ -243,6 +246,125 @@ public class InternalContentController {
             @RequestParam(value = "size", required = false) Integer size) {
         return Result.success(novelService.collectCountsAfter(afterId, size));
     }
+
+    /* ==================== 供 search 建索引 / 降级检索（M4） ==================== */
+
+    /**
+     * 批量取「该进 ES 索引的」作品数据，返回 {@code {novelId: NovelIndexDoc}}。
+     *
+     * <p><b>★★★ 调用方必须把「响应里没有这个 id」当成「删掉索引里那条文档」。</b>
+     * 三种成因（不存在 / 已逻辑删除 / 从未进过索引）不必分辨，处置一样。
+     * ★ 其中「已逻辑删除」是这条约定存在的真正理由 ——
+     * {@code @TableLogic} 是 MyBatis 往 WHERE 里注入 {@code deleted = 0}，
+     * <b>ES 完全不知道有这回事</b>；没有这条约定，被删掉的书会永远留在索引里能被搜到。
+     * 完整论证在 {@code NovelService#indexDocsOf} 的接口注释里。
+     *
+     * <p>★ <b>刻意不看 {@code status} —— 草稿也返回。</b>让所有状态都进索引，
+     * 不可见的那部分由 ES 侧的 {@code status} 过滤挡。这样索引侧就只剩一种写操作
+     * （upsert），不必分辨「该插还是该改」。
+     *
+     * <p>★ 用 {@code POST} 而不是 {@code GET}：id 列表可能很长（装配那一跳是一整页），
+     * 塞进 query string 会撞 URL 长度限制 —— 理由同上面的 {@link #novelBriefs}。
+     * <p>★ {@code required = false}：空集合是合法输入（返回空 Map）。
+     */
+    @PostMapping("/novels/index-docs")
+    public Result<Map<Long, NovelIndexDoc>> indexDocs(
+            @RequestBody(required = false) Collection<Long> ids) {
+        return Result.success(novelService.indexDocsOf(ids));
+    }
+
+    /**
+     * 【全量重建专用】按 id 升序取一页索引数据。游标分页，扫到底返回空列表。
+     *
+     * <p><b>★ 调用方必须知道页大小上限是 100</b>（由 {@code PaginationInnerInterceptor}
+     * 兜），且「返回条数 &lt; 请求条数」是判断扫到底的依据 ——
+     * 请求 {@code size > 100} 会被静默截断到 100，于是循环<b>提前结束、漏掉后面的书</b>，
+     * 而那些书会因为「重建是先删索引再灌」<b>从索引里消失</b>。
+     * 完整论证在 {@code NovelService#indexPageAfter} 的接口注释里。
+     *
+     * <p>★ 已逻辑删除的作品不会出现 —— 这正是全量重建要的效果：清了旧索引之后，
+     * 墓碑不会跟着回来。
+     */
+    @GetMapping("/novels/index-page")
+    public Result<List<NovelIndexDoc>> indexPage(
+            @RequestParam(value = "afterId", required = false) Long afterId,
+            @RequestParam(value = "size", required = false) Integer size) {
+        return Result.success(novelService.indexPageAfter(afterId, size));
+    }
+
+    /**
+     * 【检索装配】给一组 ES 命中的 id，返回读者看得到的作品，<b>按传入顺序</b>。
+     *
+     * <p><b>★★★ 单看形状它和上面的 {@link #indexDocs} 很像（都是「给 id 取数据」），
+     * 但两者【不能合并】—— status 口径是相反的，合并就等于拆掉第二道闸门：</b>
+     * <pre>
+     *   /novels/index-docs  →  ★ 不看 status（草稿也要进索引，由 ES 的 filter 挡）
+     *   /novels/reader-vos  →  ★★ 只看已上架（它就是那道闸门本体）
+     * </pre>
+     *
+     * <p><b>★★ 用户搜索时走的【是这一个】，不是 index-docs。</b>
+     * 这两个端点各自的字段集也不同：index-docs 只回 6 个索引字段，
+     * 而这里回完整的 {@code NovelVO}（15 个）—— 因为前者喂倒排索引、后者喂搜索结果卡片。
+     *
+     * <p>★★ 调用方<b>必须按返回顺序直接渲染</b>，不要再自己排 ——
+     * 这个顺序就是 ES 的相关性排序，是这次检索的全部价值所在。
+     * ★ <b>返回条数可能少于请求条数</b>，那是「索引里有不可见的书」的信号，
+     * 本方法会记 WARN；正常运行时一条都不会少。完整论证在
+     * {@code NovelService#visibleVosOf} 的接口注释里。
+     *
+     * <p>★ 用 {@code POST}（同 {@link #indexDocs}）；空集合返回空列表。
+     */
+    @PostMapping("/novels/reader-vos")
+    public Result<List<NovelVO>> readerVos(
+            @RequestBody(required = false) Collection<Long> ids) {
+        return Result.success(novelService.visibleVosOf(ids));
+    }
+
+    /**
+     * <b>降级检索</b> —— 就是 M4 之前那个 {@code NovelServiceImpl#search}，一行逻辑不改。
+     *
+     * <p><b>★★ 它的存在是「决定 3」的全部内容：ES 挂了就退回 MySQL LIKE。</b>
+     * search 那边的检索是 try/catch 包着的，catch 里 Feign 调这个端点、
+     * 把结果<b>原样</b>返回给前端 —— 所以对用户完全透明，
+     * 只是排序从「相关性」退回「阅读量降序」。
+     *
+     * <p>★ <b>这不是「重写了一版降级逻辑」，是「原件续用」</b>：
+     * 这条 LIKE 查询是全站唯一一条经过了一期完整验收的搜索实现。
+     * 降级路径最怕的就是「平时不跑，真出事时才发现它也是坏的」——
+     * 沿用原件是唯一能保证它不是坏的办法。
+     *
+     * <p>★ <b>于是 {@code ContentUserLookup#userIdsByNickname} 这条接缝不死</b>：
+     * 主路径（ES）不再经过它，但降级路径仍然依赖。M4 之前有一条注释写着
+     * 「M4 上 ES 解决这个全表扫描」—— 那句**只对主路径成立**。
+     *
+     * <p>★★ <b>两条路的响应体形状完全一致</b>（都是 content 造的
+     * {@code PageResult<NovelVO>}），但<b>集合可以不同、顺序一定不同</b>
+     * （相关性打分 vs {@code view_count DESC}）—— 所以对拍验收<b>只能对集合，不能对顺序</b>。
+     *
+     * <p>★ {@code keyword} 为空时返回空列表（不是 400、不是全部）——
+     * 这条短路在 {@code NovelServiceImpl#search} 里，两端共用。
+     */
+    @GetMapping("/search")
+    public Result<PageResult<NovelVO>> search(
+            @RequestParam(value = "keyword", required = false) String keyword,
+            @RequestParam(value = "page", defaultValue = "1") long page,
+            @RequestParam(value = "size", defaultValue = "10") long size) {
+        return Result.success(novelService.search(keyword, page, size));
+    }
+
+    /*
+     * ★★ 这三个端点把 M4 对 content 的全部新要求收在一处，形态和上面几个一致：
+     *   【只读】、【调各自本来的那一个 Service 方法】、不复刻任何业务判断。
+     *
+     * ★ 有一个变化值得记一笔：M4 之前 content 的 {@code /internal/**} 的调用方
+     *   只有 interaction 一个；M4 起多了 search。于是「谁能调」这件事从
+     *   「另一个服务」变成了「另外两个服务」——
+     *   ★ 而 {@code /internal/**} 的鉴权仍然是那把共享密钥（{@code X-Internal-Token}），
+     *   也就是说 interaction 拿到的令牌同样能调这三个端点。
+     *   **M4 没有把接口面按调用方细分，这是刻意的**：共享密钥本来就是
+     *   「内网 + 一把钥匙」的量级，加一层「这个令牌只能调这几个端点」
+     *   是 M5 的强鉴权议题，不是这里顺手能做的事。
+     */
 
     /*
      * ==================== ★★ M3：两个【写】端点全部删掉了 ====================

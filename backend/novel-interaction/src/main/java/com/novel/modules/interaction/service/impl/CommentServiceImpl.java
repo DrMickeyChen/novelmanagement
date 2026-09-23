@@ -12,6 +12,7 @@ import com.novel.common.enums.CommentStatus;
 import com.novel.common.exception.BusinessException;
 import com.novel.common.internal.InternalResults;
 import com.novel.common.result.PageResult;
+import com.novel.common.result.MybatisPageResults;
 import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.interaction.client.AuthNicknameClient;
@@ -236,7 +237,7 @@ public class CommentServiceImpl implements CommentService {
              *   用户以为评论被清空了。转换函数对空列表一次都不会被调用，
              *   传什么都不影响结果。
              */
-            return PageResult.of(result, c -> CommentVO.forReader(c, null, viewerId));
+            return MybatisPageResults.of(result, c -> CommentVO.forReader(c, null, viewerId));
         }
 
         List<Long> parentIds = tops.stream().map(NovelComment::getId).toList();
@@ -263,7 +264,7 @@ public class CommentServiceImpl implements CommentService {
         all.addAll(children);
         Map<Long, String> nicknames = nicknamesOf(all);
 
-        PageResult<CommentVO> page = PageResult.of(result, c -> {
+        PageResult<CommentVO> page = MybatisPageResults.of(result, c -> {
             CommentVO vo = CommentVO.forReader(c, nicknames.get(c.getUserId()), viewerId);
             List<NovelComment> kids = grouped.getOrDefault(c.getId(), List.of());
             /*
@@ -491,7 +492,7 @@ public class CommentServiceImpl implements CommentService {
 
         Map<Long, String> nicknames = nicknamesOf(result.getRecords());
         Long viewerId = UserContext.getUserId();
-        PageResult<CommentVO> voPage = PageResult.of(result,
+        PageResult<CommentVO> voPage = MybatisPageResults.of(result,
                 c -> CommentVO.forReader(c, nicknames.get(c.getUserId()), viewerId));
 
         /* ★ 展开出来的回复也有点赞按钮，所以同样要填已赞态。同 withReplies 的理由 */
@@ -845,7 +846,7 @@ public class CommentServiceImpl implements CommentService {
          *   MP 的 IPage（分页拦截器把 Page 传进去、返回同一个对象，
          *   但编译期看到的类型是接口）。写成 Page 会编译不过：
          *   IPage 是接口，Page 是它的实现，收窄必须显式强转，
-         *   而这里没有强转的理由 —— 后面只用 getRecords() / PageResult.of()，
+         *   而这里没有强转的理由 —— 后面只用 getRecords() / MybatisPageResults.of()，
          *   两个都接受 IPage。
          */
         IPage<NovelComment> result = commentMapper.selectAdminPage(
@@ -863,7 +864,7 @@ public class CommentServiceImpl implements CommentService {
          *   界面上只是少几列（或者读者的接口多几个字段），见 CommentVO 的类注释。
          */
         Map<Long, String> nicknames = nicknamesOf(result.getRecords());
-        return PageResult.of(result, c -> CommentVO.forAdmin(c, nicknames.get(c.getUserId())));
+        return MybatisPageResults.of(result, c -> CommentVO.forAdmin(c, nicknames.get(c.getUserId())));
     }
 
     /**
