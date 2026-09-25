@@ -50,6 +50,27 @@ import java.util.Map;
  * 二十来个汉字，取 30 留一点余量给省略号，同时保证一条 500 字的评论
  * 不会把那一行撑成三行高、把表格的其它行挤歪。这个数字只在这一个地方出现。
  *
+ * <h3>★★★ E1：本类有【两个】出口，而它们是两种截然不同的东西</h3>
+ *
+ * <p>同一个 Controller、同一张表、同一把主键索引，但<b>两个方法服务于两个目的，
+ * 而且失败语义相反</b>：
+ * <pre>
+ *   briefsOf()  → 审核日志的【一个展示格】   → 截断到 30 字，本来就是给人扫一眼的
+ *   textsOf()   → AI 违禁审核的【输入】      → 全文，一个字节都不能少
+ * </pre>
+ * ★ <b>为什么不把 {@code comment-briefs} 加个参数放大长度</b>：
+ * <ol>
+ *   <li>那个 30 是<b>展示契约</b>，不是技术限制。加参数等于把「截多少」
+ *       这个决定推给每一个调用方 —— 而它现在只在一个地方出现；</li>
+ *   <li>更实际的是流量：一页 100 条评论、每条 500 字，为了渲染一行
+ *       要多传 50KB 过网；</li>
+ *   <li>而<b>最要紧的是失败语义</b>：截断过的正文送进审核，AI 看不到后半段
+ *       —— 一条把敏感词写在第 31 个字之后的评论会被判成「无风险」，
+ *       且<b>没有任何一处报错</b>。这是铁律 8 那条「不会失败的护栏」的
+ *       又一形态：判据（前 30 字干净）永远为真。</li>
+ * </ol>
+ * ★★ 所以宁可多一个端点，也不让「展示用的截断」和「审核用的输入」共用一条路。
+ *
  * @author MickeyChen
  */
 @Slf4j
@@ -106,6 +127,50 @@ public class InternalCommentQueryService {
                     truncate(comment.getContent()),
                     chapterComment ? null : comment.getTargetId(),
                     chapterComment ? comment.getTargetId() : null));
+        }
+        return result;
+    }
+
+    /**
+     * 批量取评论<b>正文全文</b>（不截断），返回 {@code commentId → 正文} —— <b>E1 新增。</b>
+     *
+     * <p>唯一的调用方是 content 的 AI 违禁审核消费者（{@code AiAuditService}）。
+     * 它要的是<b>原文本身</b>：关键词层要在整段文字上跑 DFA，
+     * AI 层要把整段送给模型 —— 截断过任何一个字，这条判定就不再是对这篇内容说的。
+     *
+     * <p>★ <b>今天每次只传一个 id</b>（MQ 一条消息带一个 {@code targetId}），
+     * 但仍然做成批量：它与 {@link #briefsOf} <b>逐字同形</b> ——
+     * 同一张表、同一把主键索引、同一个「空集合短路」的坑。
+     * 做成两个形状等于把同一条查询写两遍，而第二遍一定会有人忘了那个短路。
+     *
+     * <p>★★ <b>不截断、不兜底、不降级</b>：拿不到正文就必须让调用方看见失败。
+     * 空正文在审核链上的后果是「没有命中任何词」→ 被机器判成「排除」——
+     * 一句<b>对一条从没被审过的评论说的「通过」</b>。
+     *
+     * @param commentIds 评论 id 集合，允许为空（空集合直接返回空 Map，
+     *                   ★ 不短路的话 {@code selectByIds(空)} 生成 {@code WHERE id IN ()}，
+     *                   那是 SQL 语法错误，不是空结果）
+     * @return {@code commentId → 正文全文}。<b>查不到的 id 不会出现在 Map 里</b>
+     *         （{@code selectByIds} 走 {@code @TableLogic}，逻辑删除的行被滤掉），
+     *         调用方按「这条评论已不存在」处理
+     */
+    public Map<Long, String> textsOf(Collection<Long> commentIds) {
+        // ★ 与 briefsOf 同一个短路，理由见上面 @param（这里挡掉的同样是一次跨服务往返）
+        if (commentIds == null || commentIds.isEmpty()) {
+            return Map.of();
+        }
+
+        List<NovelComment> comments = commentMapper.selectByIds(commentIds);
+
+        Map<Long, String> result = new LinkedHashMap<>();
+        for (NovelComment comment : comments) {
+            /*
+             * ★ 原样取 content，不做判空兜底：那一列是 NOT NULL。
+             *   为「一个不可能出现的值」写一条策略，只会多出一个没人能测的分支
+             *   （briefsOf 里那句判空是给展示用的 —— 那里的代价是整页 500，
+             *   这里没有对应的问题）。
+             */
+            result.put(comment.getId(), comment.getContent());
         }
         return result;
     }

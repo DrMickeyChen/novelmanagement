@@ -7,6 +7,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.web.servlet.MultipartProperties;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -90,9 +91,14 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<Result<Void>> handleBusinessException(BusinessException e, HttpServletRequest request) {
+        /*
+         * ★ E1 起多带一个 e.getHttpStatus()：绝大多数异常它是 null，
+         *   于是状态码照旧由 ResultHttpStatus 按 code 推（行为一个字没变）。
+         *   只有主动声明过的那几处（AI 前置闸门）会覆盖它 —— 见 BusinessException 的类注释。
+         */
         log.warn("业务异常 | {} {} | code={} msg={}",
                 request.getMethod(), request.getRequestURI(), e.getCode(), e.getMessage());
-        return respond(e.getCode(), e.getMessage());
+        return respond(e.getCode(), e.getMessage(), e.getHttpStatus());
     }
 
     /* ========== 参数校验：@RequestBody 上的 @Valid 失败 ========== */
@@ -344,11 +350,22 @@ public class GlobalExceptionHandler {
      * 不会有某个 handler 漏改。
      */
     private ResponseEntity<Result<Void>> respond(ResultCode resultCode) {
-        return respond(resultCode.getCode(), resultCode.getMessage());
+        return respond(resultCode.getCode(), resultCode.getMessage(), null);
     }
 
     private ResponseEntity<Result<Void>> respond(Integer code, String message) {
-        return ResponseEntity.status(ResultHttpStatus.of(code))
+        return respond(code, message, null);
+    }
+
+    /**
+     * @param httpStatus 显式指定的状态码，{@code null} = 走 {@link ResultHttpStatus} 的通用规则。
+     *                   ★ 两条路都留着而不是「显式值直接覆盖默认」：
+     *                   默认那条是<b>全项目</b>的规矩（400~599 返真实码、业务码返 200），
+     *                   显式那条是<b>个别端点</b>的例外；把默认那条删掉，例外就成了规矩。
+     */
+    private ResponseEntity<Result<Void>> respond(Integer code, String message, Integer httpStatus) {
+        return ResponseEntity.status(httpStatus != null ? HttpStatusCode.valueOf(httpStatus)
+                        : ResultHttpStatus.of(code))
                 .body(Result.error(code, message));
     }
 

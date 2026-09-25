@@ -38,7 +38,7 @@ import org.springframework.stereotype.Component;
  * 六个月后有人把这条改成顺序消费时，这个数字救他一次。
  *
  * <p>★★ <b>而且「显式写」这件事是【必须】的，不是风格问题</b> ——
- * M3 实测：正因为四个消费者都写了 3，那条 ORDERLY 毒消息才会在
+ * M3 实测：正因为六个消费者都写了 3，那条 ORDERLY 毒消息才会在
  * 重试 3 次后进 {@code %DLQ%group-interaction-progress}、队列随之恢复。
  * 如果当初靠默认值，那条队列就真的永不恢复了。
  * <b>「默认值很危险」和「显式写了就没事」这两句话，是同一次实测的两面。</b>

@@ -41,7 +41,7 @@ import java.math.BigDecimal;
  * <p>顺序消息（ORDERLY）看起来是这个问题最直觉的解法。
  * ★★ <b>注意这里原来写的理由是错的。</b>原文说 ORDERLY「失败时永不放弃、
  * 永不进死信、整条队列被一条毒消息永久卡死」—— M3 实测推翻了它：
- * 只要 {@code maxReconsumeTimes} 是<b>显式</b>配的（四个消费者都写了 {@code 3}），
+ * 只要 {@code maxReconsumeTimes} 是<b>显式</b>配的（六个消费者都写了 {@code 3}），
  * 顺序消息重试 3 次之后<b>照常进 {@code %DLQ%}</b>，队列<b>照常前进</b>。
  * 「永不放弃」只是<b>不写时的默认值</b>，实测记录见 {@code MqConstant} 的类注释。
  *

@@ -8,12 +8,19 @@
 --   ② 手动：库已经建好了才改这个文件的话，执行
 --      sudo docker exec -i novel-mysql mysql -uroot -p密码 < schema.sql
 --
--- 【共 21 张表】
+-- 【共 22 张表】
 --   RBAC 权限    sys_user  sys_role  sys_user_role  sys_menu  sys_role_menu
 --   作品与阅读   novel  novel_category  novel_outline  chapter  chapter_content
 --                novel_comment  user_shelf  read_history
 --   运营与管理   author_apply  audit_log  sys_notice
 --   AI 能力      ai_config  ai_prompt_template  ai_usage_log  ai_summary  ai_audit_result
+--                ai_sensitive_word          ← ★ E1 新增（第 22 张）
+--
+-- 【★★ E1 起加表【只能加新表】，不许改已有列】
+--   本仓库【没有 ALTER / 迁移惯例】(R15)：CREATE TABLE IF NOT EXISTS 对已有库是幂等的，
+--   而改动一个已有列的 DDL【对已有库完全无效、且不报错】—— 新库对、老库错，最难查的一种。
+--   所以「ai_audit_result 要不要加 content_hash 列」这类需求，
+--   在本期一律改用【已有的两个时间戳】回答（见 21 号表的注释）。
 --
 -- 【★ 为什么全程不用外键约束（FOREIGN KEY）】
 --   1. 本项目第二期要拆微服务，表会按服务切开，外键会挡住分库拆分
@@ -390,10 +397,16 @@ CREATE TABLE IF NOT EXISTS `ai_config` (
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `ai_prompt_template` (
   `id`            BIGINT      NOT NULL AUTO_INCREMENT,
-  `scene`         TINYINT     NOT NULL               COMMENT '1大纲 2正文 3灵感 4润色 5违禁审核',
+  `scene`         TINYINT     NOT NULL               COMMENT '1大纲 2正文 3灵感 4润色 5违禁审核 6前情摘要',
   `name`          VARCHAR(50) NOT NULL,
   `system_prompt` TEXT        NOT NULL,
-  `user_template` TEXT        NOT NULL               COMMENT '带占位符 {{novelTitle}} {{outline}} {{summary}} {{selected}}',
+  -- ★★ 占位符是【五个】不是四个（E1 订正）。第五个 {{request}} = 请求里的 prompt，
+  --    它是唯一能表达「节点身份」的东西（prompt 实际内容是「为「X」生成下一级大纲」），
+  --    没有它 OUTLINE 模板拿不到要往哪儿挂。
+  --    每个占位符【只有一个来源】，映射表见 AiVarResolver（唯一真相来源）。
+  -- ★ 未知占位符在【保存模板时】就拒绝（不是渲染时）—— 半径差三个数量级：
+  --    写时拒绝 = 一个管理员的下一次点击；读时拒绝 = 全体作者 × 该场景。
+  `user_template` TEXT        NOT NULL               COMMENT '带占位符 {{request}} {{selected}} {{novelTitle}} {{outline}} {{summary}}',
   `enabled`       TINYINT     NOT NULL DEFAULT 1,
   `sort`          INT         NOT NULL DEFAULT 0,
   `create_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -445,6 +458,28 @@ CREATE TABLE IF NOT EXISTS `ai_summary` (
 -- ------------------------------------------------------------
 -- 21. ai_audit_result —— AI 违禁词审核结果
 --     与 audit_log 的区别：这里是"机器判的"，audit_log 是"人做的"
+--
+-- ★★★ E1 起的三条语义（列【一个都不改】，但读这张表的人必须先知道这三条）
+--
+--   ① 【没有这一行】= 没审成。【不是】risk_level=0。
+--      risk_level 是 NOT NULL 且没有「未知」取值 —— 这一列在结构上
+--      容不下「审核没跑成」，所以「没审成」只能表达为「没有行」。
+--      ★ 解析失败必须 ACK 且不写行（重试会重复烧钱、结果一样）。
+--      ★★ 如果哪天有人给失败的审核补一个 risk_level=0，
+--         那就是【把「审核失败」渲染成了「审核通过」】—— 本系统最坏的一种假话。
+--
+--   ② status=2 且 audit_user_id IS NULL = 【机器排除的】。
+--      audit_user_id 为 NULL 才能把「机器判无风险，直接排除」与
+--      「人看过之后排除」分开 —— 前者页面上要显示「机器排除」，不是「已排除」。
+--
+--   ③ 「判的是不是当前这一版」用【已有的两个时间戳】回答：
+--      并排显示本行的 create_time（AI 判定时间）与该章节/评论的 update_time。
+--      ★ 不新增 content_hash 列 —— 见文件头「E1 起只能加新表」。
+--
+--   ★ status 的流转【只由人触发】，且挂载点是 audit_log 的唯一汇聚点
+--     （AuditLogServiceImpl.record 的同一个事务里联动）：
+--     不是「确认 AI 结果」去写 audit_log，而是「audit_log 被写」这件事本身就是确认。
+--     这样队列不会留下一个永不消失的待办，也不会绕开章节状态机的唯一入口。
 -- ------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS `ai_audit_result` (
   `id`            BIGINT        NOT NULL AUTO_INCREMENT,
@@ -463,13 +498,46 @@ CREATE TABLE IF NOT EXISTS `ai_audit_result` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 违禁审核结果';
 
 
-SET FOREIGN_KEY_CHECKS = 1;
+-- ------------------------------------------------------------
+-- 22. ai_sensitive_word —— 违禁审核的【关键词词库】（E1 新增）
+--
+-- ★ 为什么是【表】而不是配置文件、也不是只有 Redis：
+--   它是业务数据 —— 要能追溯来源、能被运营增删改、要有 enabled 做灰度。只有表能给这三样。
+-- ★★ 为什么必须是【新表】而不是给已有的表加一列：见文件头的「E1 起只能加新表」(R15)。
+--   CREATE TABLE IF NOT EXISTS 是本仓库唯一「对已有库也幂等生效」的 DDL 形状。
+--
+-- ★ 这张表【是词库的唯一真相来源】，novel-common 里【不放】词库文件 ——
+--   那是数据，不是常量。放进代码会把「运营改一个词」变成「发一次版」。
+--
+-- ★★★ 铁律 10 的直接应用：词库是【参与筛选的输入】→ 一律【不降级】。
+--   下面三种情况必须【拒审】（fail-closed），绝不能「当成空词库继续跑」：
+--     ① enabled=1 的词条数为 0   （还没录词）
+--     ② 快照加载失败              （故障）
+--     ③ Redis / DB 连不上         （故障）
+--   ★ 理由：「当成空的放过去」= 违禁内容进库，【而且日志上没有任何异常】——
+--     这是铁律 8「一条不会失败的护栏」的教科书形态，最坏的一种：
+--     它连「我没在工作」都不说。
+--   ★ 必须配阳性对照：清空 enabled=1 的词 → 断言【确实报错】，而不是全放行。
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS `ai_sensitive_word` (
+  `id`          BIGINT       NOT NULL AUTO_INCREMENT,
+  `word`        VARCHAR(64)  NOT NULL COMMENT '违禁词/敏感词',
+  `level`       TINYINT      NOT NULL DEFAULT 1 COMMENT '1低 2中 3高，与 ai_audit_result.risk_level 同刻度',
+  `category`    VARCHAR(32)  DEFAULT NULL COMMENT '分类：政治/色情/暴力/广告…，给运营看',
+  `enabled`     TINYINT      NOT NULL DEFAULT 1 COMMENT '0=停用。★ 停用后 reload 即【立刻】不再命中',
+  `remark`      VARCHAR(255) DEFAULT NULL,
+  `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `update_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uk_word` (`word`),
+  KEY `idx_enabled` (`enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='AI 违禁审核词库';
 
 
 SET FOREIGN_KEY_CHECKS = 1;
 
 -- ============================================================
--- DDL 到此结束（21 张表）。
--- 初始数据（角色 / 管理员账号 / 分类 / AI 模板）在 seed.sql，
+-- DDL 到此结束（22 张表）。
+-- 初始数据（角色 / 管理员账号 / 分类 / AI 模板 / 词库）在 seed.sql，
 -- 两个文件按文件名顺序被 init 目录执行：schema.sql → seed.sql
 -- ============================================================

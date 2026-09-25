@@ -115,3 +115,7 @@ uploads/
 # （root123456 / redis123456），是搭环境用的固定值，不含任何真实凭据。
 # 提交它，别人 clone 下来改个 IP 就能直接跑起来。
 # 真实环境请用 application-prod.yml + 环境变量，那个才必须忽略。
+
+# E1：跑 docs/tools/fake-openai.py 会产生（不是源码，别提交）
+__pycache__/
+*.pyc

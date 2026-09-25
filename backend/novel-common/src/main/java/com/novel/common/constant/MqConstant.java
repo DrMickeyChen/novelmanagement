@@ -211,9 +211,15 @@ public final class MqConstant {
      * <b>★ 不要因为这条消息「是流水」就以为它一律走事务消息。</b>
      *
      * <p>★ 消费端靠 {@code SETNX} 幂等（载荷带 {@code messageKey}）——
-     * 它是四条里<b>唯一</b>需要显式幂等的：{@code audit_log} 没有唯一键，
-     * 而这张表的全部价值就是「一条流水对应一次真实发生过的操作」，
-     * 重复写一条等于记了一次没发生的事。
+     * {@code audit_log} 没有唯一键，而这张表的全部价值就是
+     * 「一条流水对应一次真实发生过的操作」，重复写一条等于记了一次没发生的事。
+     *
+     * <p>★★ <b>订正（E1）</b>：这里原写「它是四条里<b>唯一</b>需要显式幂等的」。
+     * {@link #TAG_AI_AUDIT} 也需要显式幂等，但两者的<b>幂等键不是一回事</b> ——
+     * 本条用<b>消息键</b>（挡的是「同一次发送被重投」），
+     * {@code AI_AUDIT} 用<b>内容指纹</b>（消息键挡不住「内容没变却又被审了一遍」）。
+     * ★ <b>别因为「都是幂等」就把两处的键统一</b>：那是把两条不同的问题
+     * 塞进一个机制里，两边都会各错一半。
      */
     public static final String TAG_AUDIT_RECORD = "AUDIT_RECORD";
 
@@ -259,8 +265,56 @@ public final class MqConstant {
      */
     public static final String TAG_NOVEL_INDEX = "NOVEL_INDEX";
 
+    /**
+     * 违禁审核（E1）：<b>「这条内容该过一遍 AI 审核」</b>。
+     *
+     * <p>★ 方向：<b>novel-content → novel-content</b>（章节 submit）、
+     * <b>novel-interaction → novel-content</b>（评论入库）。两个生产者、一个消费方 ——
+     * 与 {@link #TAG_AUDIT_RECORD} 完全同形。
+     * ★ 方向那一条值得单独说：interaction 发的那半边是 <b>MQ</b>，而
+     * <b>MQ 不算服务级边</b>（M3 判断 C 的定义，M4 起成为承重条款）——
+     * 所以它<b>不加重</b> {@code content ⇄ interaction} 那个环。
+     *
+     * <h3>★★★ 与 {@link #TAG_AUDIT_RECORD} 是两回事，命名必须隔开</h3>
+     *
+     * <pre>
+     *   AUDIT_RECORD（M3） = 【人】审完了  → 写审核流水
+     *   AI_AUDIT   （E1） = 【机器】该审了 → 产出 AI 判定，等【人】来处置
+     * </pre>
+     * ★★ 两者在本文里相隔几十行、互相引用，是刻意的：它们的消费组名
+     * {@code group-content-audit} 与 {@code group-content-ai-audit} <b>只差三个字符</b>，
+     * 而抄错的症状是<b>某个 Tag 收不到消息且不报错</b>
+     * （同一消费组上后注册的订阅会覆盖前一个 —— 见类注释开头）。
+     *
+     * <h3>★★★ 它【不是】「幂等免费」的 —— 铁律 7 的判据在这里被收紧</h3>
+     *
+     * <p>它的载荷形状与 {@link #TAG_NOVEL_INDEX} <b>一模一样</b>（只有一个 id），
+     * 但它<b>不幂等</b>：<b>调一次 AI 是非纯函数</b>（温度 &gt; 0），
+     * 同一个 {@code {targetType:3, targetId:94}} 消费两次会得到<b>两份不同的判定</b>。
+     *
+     * <p>★★ <b>由此把铁律 7 的判据说精确</b>：{@code NOVEL_INDEX} 幂等免费，
+     * <b>不是因为「载荷里没有数据」，而是因为「读真值之后做的那件事是纯函数」</b>。
+     * 「读真值」只有在<b>读完之后那件事也是确定的</b>时，才是幂等的充分条件。
+     *
+     * <p>★ 所以这条需要显式幂等，而幂等键是<b>内容指纹</b>（消费端算 {@code hash(读到的正文)}），
+     * <b>不是消息键</b>：消息键只能挡「同一次发送被重投」，挡不住「内容没变却又被审了一遍」；
+     * 反过来它还会<b>误伤</b>「改了内容重新提交」—— 那<b>应该</b>重审。
+     * 粒度是<b>内容版本</b>，详见 {@code AiAuditConsumer}。
+     *
+     * <p>★★ <b>载荷里不许放枚举</b>：{@code rocketmq-spring} 的类型转换失败发生在
+     * 方法体被调用<b>之前</b>，我们的 {@code try/catch} 根本没机会执行 ——
+     * 载荷里的枚举改名/删值会让在途消息<b>全部静默进 DLQ</b>。
+     * 所以 {@code targetType} 用 {@code Integer}，与 {@code ai_audit_result.target_type}
+     * 的裸 {@code TINYINT} 对齐。
+     * ★ 顺带一条结构性结论：<b>给 {@code AiScene} 加 {@code AUDIT(5)} 不可能影响在途消息</b> ——
+     * {@code AiScene} 住在 {@code novel-content}，载荷类住在 {@code novel-common}，
+     * 而 {@code novel-common} <b>不依赖 content</b>，结构上不可能被载荷引用。
+     * （判据钉在包依赖上，不钉在「grep 某个词」上 —— 铁律 8 的第三种形状。）
+     */
+    public static final String TAG_AI_AUDIT = "AI_AUDIT";
+
     /* ==================== 消费组 ==================== */
-    /* ★ 一个 (服务, Tag) 一个组 —— 理由见类注释开头。四个组不要合并。 */
+    /* ★ 一个 (服务, Tag) 一个组 —— 理由见类注释开头。六个组不要合并。 */
 
     /** content 消费 {@link #TAG_VIEW_REPORT}（阅读量，并发 + 进程内批量聚合） */
     public static final String GROUP_CONTENT_VIEW = "group-content-view";
@@ -295,6 +349,24 @@ public final class MqConstant {
      * 是把一个原子操作<b>降级</b>成最终一致。<b>那是大纲里一条不该存在的设计。</b>
      */
     public static final String GROUP_SEARCH_INDEX = "group-search-index";
+
+    /**
+     * ★★ <b>content 消费 {@link #TAG_AI_AUDIT}（AI 违禁审核，并发 + 内容指纹幂等）。</b>
+     *
+     * <p>★★★ <b>这个名字必须与 {@link #GROUP_CONTENT_AUDIT} 分清</b> ——
+     * 两者只差 {@code -ai-} 三个字符，而抄错的结果是
+     * <b>某个 Tag 收不到消息、且不报错</b>。
+     * ★ 另有一条现成的坑：<b>大纲 §12.1 里的 {@code group-comment-audit 根本不存在</b>，
+     * 而 {@code group-content-audit} 已被 {@link #TAG_AUDIT_RECORD}（人工审核流水）占用 ——
+     * E1 新增消费组时<b>不要照抄大纲</b>（订正 4）。
+     *
+     * <p>★ 消费方是 <b>content</b>，不是 interaction：interaction 只负责把
+     * 「有评论要审」这件事投出来，判定与 {@code ai_audit_result} 的读写全部留在 content ——
+     * <b>单库单事务</b>。★ 而且这个选择是承重的：反过来让 interaction 去调 AI，
+     * 就等于在 interaction 里凭空多出一条到 AI 上游的依赖，
+     * 还多出一个「评论正文要跨服务传过去」的接口。
+     */
+    public static final String GROUP_CONTENT_AI_AUDIT = "group-content-ai-audit";
 
     /* ==================== 生产者组 ==================== */
 
@@ -342,7 +414,7 @@ public final class MqConstant {
      * 演示「死信可被看到」时要按 48 小时说。
      *
      * <p>★★ 而且<b>顺序消息【也】会进这里</b> —— 只要 {@code maxReconsumeTimes} 是显式配的
-     * （本项目四个消费者都写了 {@code 3}）。
+     * （本项目六个消费者都写了 {@code 3}）。
      * ★ 这一点在本注释里原来写反了（写成「顺序消息永远进不了这里、
      * {@code %DLQ%group-interaction-progress} 是一个永远不存在的 Topic」），
      * M3 实测把那条断言推翻了，详见类注释里那段实测记录 ——

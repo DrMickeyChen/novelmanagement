@@ -17,6 +17,7 @@ import com.novel.common.result.ResultCode;
 import com.novel.common.security.UserContext;
 import com.novel.interaction.client.AuthNicknameClient;
 import com.novel.interaction.client.ContentGateway;
+import com.novel.interaction.mq.producer.AiAuditProducer;
 import com.novel.interaction.mq.producer.CommentAuditProducer;
 import com.novel.interaction.mq.producer.NovelStatProducer;
 import com.novel.modules.interaction.dto.CommentAuditDTO;
@@ -128,6 +129,15 @@ public class CommentServiceImpl implements CommentService {
      */
     private final NovelStatProducer novelStatProducer;
     private final CommentAuditProducer commentAuditProducer;
+
+    /**
+     * ★ E1/S8：评论落库后投一条 {@code AI_AUDIT}。
+     * <p>它和上面两个生产者同层 —— <b>本类不做任何判定</b>，
+     * 判定与 {@code ai_audit_result} 的落库全部在 content（单库单事务）。
+     * ★ 方向与 {@link CommentAuditProducer} 相同（interaction → content），
+     * 且同样是 MQ —— <b>不算服务级环的边</b>（铁律 1）。
+     */
+    private final AiAuditProducer aiAuditProducer;
 
     /* ================================================================
      *  读者侧
@@ -463,7 +473,35 @@ public class CommentServiceImpl implements CommentService {
          *   audit_log 记的是「状态流转」，而评论一出生就是待审核，
          *   没有「提交」这一次流转。
          */
-        return entity.getId();
+        Long commentId = entity.getId();
+
+        /*
+         * ★★★ E1/S8：投一条「这条评论要过 AI 审核」。
+         *
+         * 【★★ 这里是全项目第一条「没有事务兜住」的 AfterCommit，必须说清楚】
+         *
+         * 上面那三个公开入口（create / createChapterComment / reply）【都不是】
+         * @Transactional，本方法自己也不是。所以走到这一行时，
+         * INSERT 已经在自动提交下【真的落库了】—— 此时
+         * TransactionSynchronizationManager 上没有活跃的事务同步
+         * （没有同步这件事本身是正常的，不是异常），AfterCommit.run
+         * 会走「没有事务就直接执行」那一支，也就是【立刻发】。
+         *
+         * ★ 结论仍然是正确的，而且理由比「有事务」时更强：
+         *   消息发出去 = 「评论已经在库里了」这件事【已经发生】，
+         *   消费者回头一定查得到它。反过来（先发消息再落库）才会造出
+         *   「消费者查不到这条评论」的假故障。
+         * ★ 换句话说：AfterCommit 在这里买到的不是「回滚就不发」
+         *   （那需要事务），而是【统一的发送出口 + 两层失败保护】——
+         *   不要以为这几行挪到 @Transactional 里才「对」。
+         *
+         * 【★ 内容锁】
+         * 评论一出生就是 status=0 待审核、读者不可见，而且【没有编辑入口】——
+         * 所以「投递时刻的正文」与「消费者读到的正文」必然是同一份，
+         * 不存在章节那边「审核期间改正文」的问题。
+         */
+        aiAuditProducer.publishCommentAudit(commentId);
+        return commentId;
     }
 
     /**

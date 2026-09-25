@@ -4,7 +4,9 @@
 后端是一个 Spring Boot 应用，前端拆成读者端 / 创作中心 / 管理端三个独立应用，**开发和生产的拓扑完全一致**（同一域名下的三个路径）。
 
 > 第一期（P0~P6）已完成：认证权限、内容主干、读者端、创作中心、管理后台、书架评论与打磨。
-> 第二期按服务拆分（网关 / 认证 / 内容 / 交互），第三期接 AI 能力。进度见文末。
+> 第二期按服务拆分（网关 / 认证 / 内容 / 交互 / 搜索）并引入消息队列与全文检索。
+> **第三期 E1 已完成：把 P4 的「真管道 + 假数据」AI 换成接真实模型** ——
+> 顺带装上「花钱」这个维度：**配额、用量账、Key 加密**。进度见文末。
 
 ---
 
@@ -14,7 +16,8 @@
 |---|---|
 | 后端 | Spring Boot 3.2.12 · Java 21 · MyBatis-Plus · Spring Security + JWT · MySQL 8 · Redis 7 · Knife4j |
 | 前端 | Vue 3.5 · Vite 8 · Element Plus 2.14 · Pinia · Vue Router · Axios（三端同栈） |
-| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器）<br>★ **M5 没有引入任何新中间件** —— Sentinel 是进程内库，traceId 是自己生成的（不上 SkyWalking，没有 `-javaagent`） |
+| AI | DeepSeek（OpenAI 兼容协议）。★ 客户端是 **JDK 内置的 `java.net.http.HttpClient`**，**没有引入 webflux / okhttp / langchain**；`novel.ai.provider=mock` 时整套 AI 用本地假实现跑，**不配任何东西也能启动** |
+| 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器）<br>★ **M5 没有引入任何新中间件** —— Sentinel 是进程内库，traceId 是自己生成的（不上 SkyWalking，没有 `-javaagent`）<br>★ **E1 也没有引入任何新中间件或依赖** —— 配额用已有的 Redis，审核用已有的 RocketMQ，Key 加密用 JDK 的 `javax.crypto` |
 
 ---
 
@@ -61,15 +64,19 @@ novelManagement/
 │   ├── M3-引入MQ.md                      # ★ 第二期 M3：引入 RocketMQ，四条写路径改走消息
 │   ├── M4-摘出search.md                  # ★ 第二期 M4：摘出 search + ES 倒排检索 + 索引消息
 │   ├── M5-治理.md                        # ★ 第二期 M5：traceId + 熔断降级 + 并行化 + 索引别名/异步重建
+│   ├── E1-AI能力接入.md                  # ★ 第三期 E1：接真实模型 + 配额/用量账/Key 加密 + 两层违禁审核
 │   ├── 部署.md                          # 生产部署（Nginx / jar / 环境变量）
 │   ├── 环境配置.md                       # 虚拟机与 Docker 中间件搭建
 │   ├── mq-notes.md                      # 消息队列笔记（第二期配套）
 │   ├── docker/                          # docker-compose.yml + broker.conf + .env.example
 │   │                                    #   ★ M4 起多一个 Dockerfile-es（ES 官方镜像不含 IK 分词器，
 │   │                                    #     只能自建；compose 的 es 段也从 image: 改成 build:）
+│   ├── tools/
+│   │   ├── fake-openai.py               # ★ E1：假 OpenAI 兼容端点（:8899），把 base_url 指过去即可零成本验收
+│   │   └── recorded/                    # ★ E1：真实 DeepSeek 响应的【原始字节】，回放用，永久免费
 │   └── sql/
-│       ├── schema.sql                   # 建表（21 张，自带建库语句）
-│       └── seed.sql                     # 种子数据（分类、菜单、账号、12 本演示作品）
+│       ├── schema.sql                   # 建表（22 张，自带建库语句）
+│       └── seed.sql                     # 种子数据（分类、菜单、账号、12 本演示作品、AI 模板与演示词库）
 │
 ├── CLAUDE.md                # 项目约定（给 AI 协作者看的铁律，人也可以读）
 └── 项目大纲.md              # 需求与拆分的完整设计
@@ -157,25 +164,26 @@ mvn -f backend/pom.xml package
 #     mvn -Dmaven.repo.local=D:/你的仓库路径 -f backend/pom.xml package
 #   不确定的话先跑一次不带这个参数的，报「找不到依赖」就说明得加上。
 
-# ---------- 进 backend/ 启动【四个】进程（★ 顺序无所谓，但四个都要起）----------
+# ---------- 进 backend/ 启动【五个】进程（★ 顺序无所谓，但五个都要起）----------
 cd backend
 java -jar novel-gateway/target/novel-gateway.jar              # :8080 唯一入口（验 JWT）
 java -jar novel-auth/target/novel-auth.jar                    # :8081，不直接对外（登录/用户/角色）
 java -jar novel-content/target/novel-content.jar              # :8082，不直接对外（作品/章节/分类/AI）
 java -jar novel-interaction/target/novel-interaction.jar      # :8083，不直接对外（评论/书架/历史）
+java -jar novel-search/target/novel-search.jar                # :8084，不直接对外（ES 检索/索引重建）
 ```
 
 > ★ **少起一个会怎样**：少 `novel-gateway` → 全站连不上（:8080 没人监听）；
 > 少 `novel-auth` → **登录全挂**（登录接口在 auth 里），而且匿名首页也会 500
 > （它要调 auth 取作者昵称）；少 `novel-content` → 作品/章节/搜索/AI 全 503，评论区还是好的；
 > 少 `novel-interaction` → 评论/书架/历史全 503，但**书架和历史的列表还会 500**
-> （它们要反过来问 content 要书名）。
+> （它们要反过来问 content 要书名）；少 `novel-search` → **搜索 503**（其余功能正常，它有降级兜底）。
 >
-> ★ 三个下游服务（`:8081`/`:8082`/`:8083`）之间还要互相调用，
-> 所以 `novel.internal.token` 必须**五处一致**（网关 + 三个服务 + 手工 curl）。
+> ★ 四个下游服务（`:8081`~`:8084`）之间还要互相调用，
+> 所以 `novel.internal.token` 必须**六处一致**（网关 + 四个服务 + 手工 curl）。
 
-> ★ 为什么非得 `cd` 进 `backend/`：四个服务里日志文件写的都是**相对路径**
-> （`logs/novel-gateway.log` / `logs/novel-auth.log` / `logs/novel-content.log` / `logs/novel-interaction.log`），
+> ★ 为什么非得 `cd` 进 `backend/`：五个服务里日志文件写的都是**相对路径**
+> （`logs/novel-gateway.log` / `logs/novel-auth.log` / `logs/novel-content.log` / `logs/novel-interaction.log` / `logs/novel-search.log`），
 > 相对的是**进程的工作目录**。
 > 在仓库根目录跑 `java -jar backend/novel-interaction/target/...` 也不会报错，
 > 只是日志会落到根目录的 `./logs/` 下 —— 于是「照文档去 backend/logs/ 找日志」的人会扑空。
@@ -186,14 +194,20 @@ java -jar novel-interaction/target/novel-interaction.jar      # :8083，不直�
 > ★ 改了 `application-*.yml` **必须重新打包才生效** —— 配置是打进 jar 里的。
 >
 > ★ 起不来先看日志：`backend/logs/` 下的
-> `novel-gateway.log` / `novel-auth.log` / `novel-content.log` / `novel-interaction.log`
+> `novel-gateway.log` / `novel-auth.log` / `novel-content.log` / `novel-interaction.log` / `novel-search.log`
 > （**按进程分开**，先确认该看哪一个）
 > （★ **SQL 不在这个文件里** —— MyBatis 的 SQL 走 stdout，要抓 SQL 得在启动时额外重定向 stdout）。
+>
+> ★★ **M5 起排查的入口是 traceId**：五份日志的 pattern 都是 `[%X{traceId}]`，
+> 同一个请求在网关和各个服务里是**同一个** 32 位串 —— `grep <traceId> backend/logs/*.log`。
+> ★ 但**前端看不到它**（`request.js` 是锁定文件，响应拦截器 `return res.data` 把响应头丢了），
+> 所以用户报错时**要不到号**，只能按「时间 + 页面」反查。
 
 后端起来后，**走网关**：`http://localhost:8080/api/ping` 返回 200
 （返回体里的 `application` 字段会告诉你是**哪个服务**答的 —— `/api/ping*` 归 auth，所以是 `novel-auth`）。
-接口文档是**不走网关**的开发入口，现在有**三个**：`http://localhost:8081/doc.html`（auth）、
-`http://localhost:8082/doc.html`（内容服务）、`http://localhost:8083/doc.html`（互动服务）。
+接口文档是**不走网关**的开发入口，现在有**四个**：`http://localhost:8081/doc.html`（auth）、
+`http://localhost:8082/doc.html`（内容服务）、`http://localhost:8083/doc.html`（互动服务）、
+`http://localhost:8084/doc.html`（搜索服务）。
 
 ### 4. 起前端
 
@@ -298,6 +312,41 @@ curl -X POST http://localhost:8080/api/auth/register \
 
 ---
 
+## AI 能力（第三期 E1）
+
+**默认状态下 AI 是关着的，且跑不出一次计费调用** —— 新克隆的仓库 `ai_config.enabled = 0`、`api_key` 为空，
+`novel.ai.provider` 默认 `mock`。三档跑法，按需选：
+
+| 档 | 怎么开 | 花不花钱 | 能验什么 |
+|---|---|---|---|
+| ① **mock**（默认） | 什么都不用做 | 免费 | 整条链路（渲染 / 配额 / 中断 / SSE）——**AI 内容是假的** |
+| ② **假端点** | 起 `python docs/tools/fake-openai.py`，管理端把 `base_url` 指向它 | 免费 | 上面全部 **+ 真 HTTP、真流式、真错误码**（`429/5xx/坏形状` 都能注入） |
+| ③ **真 DeepSeek** | 管理端「AI 配置」页填 Key（★ 只有 ADMIN 能填，**只写不读**，接口只回掩码） | 花钱 | 真实模型行为（中文分片、`usage` 帧、模型实际输出形状） |
+
+★ **切到真模型的开关是命令行参数**，不用改代码、不用重新打包：
+
+```bash
+# 默认是 mock；要接真模型（或假端点）时显式给：
+java -jar novel-content/target/novel-content.jar --novel.ai.provider=deepseek
+```
+
+★ **`AI_KEY_SECRET` 必须和加密时用的一致**：它是 AES-GCM 密钥，只影响「加解密 `ai_config.api_key`」这一件事。
+它是**空默认**的（和 `JWT_SECRET` / `INTERNAL_TOKEN` 相反 —— 那两个必须 fail-fast，这个必须能空着启动）。
+换一个值重启后，库里那把 Key 就**解不开了**，表现是 `5002 未配置 API Key`（**不是**乱码 —— 刻意如此）。
+
+★★ **`novel.ai.provider`（YAML/命令行）和 `ai_config`（数据库）是两套真相来源**：
+前者决定**哪个 Bean 存在**（启动期、结构性），后者是**运行期参数**。
+**YAML 还是 `mock` 时，你在配置页填完 Key 什么都不会发生** —— 所以配置页上有一行只读的「当前生效的 provider」。
+
+管理端两个入口：**`/ai`**（四个 tab：模型配置 / 提示词模板 / 用量统计 / 词库管理）、
+**`/ai-audit`**（违禁审核队列，只标「已确认 / 已排除」并跳到既有处置页）。
+
+> ★ 详见 [docs/E1-AI能力接入.md](docs/E1-AI能力接入.md) —— 里面记着两个「不看就会做错」的判断：
+> ① 错误出口由**「能不能在建 SSE emitter 之前判定」**决定（走错会给用户一句**指向「代理配错」的假话**）；
+> ② **`AI_AUDIT` 消息的载荷和索引消息一样只有一个 id，但它【不幂等】** —— 因为调 AI 不是纯函数。
+
+---
+
 ## 每一期做了什么
 
 | 期 | 内容 | 设计文档 |
@@ -315,9 +364,9 @@ curl -X POST http://localhost:8080/api/auth/register \
 | **M3** | **引入 RocketMQ：四条写路径改走消息（阅读量 / 阅读进度 / 收藏数评分 / 审核流水）、`NovelViewCounter` 与 30 秒定时回写整类删除、两个跨服务写回债（R8/R9）修掉、auth ⇄ content 那个服务级环用事务消息断开** | [docs/M3-引入MQ.md](docs/M3-引入MQ.md) |
 | **M4** | **摘出 search + 上 ES：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，相关性排序、简介进检索范围、IK 分词、ES 挂了自动降级回 `LIKE`、索引靠 MQ 增量 + 定时全量重建自愈** | [docs/M4-摘出search.md](docs/M4-摘出search.md) |
 | **M5** | **治理：全链路 traceId（网关生成/剥离 → MDC → 五个服务日志）、Sentinel 熔断 + `fallbackFactory` 分档降级（判据 =「消费方能不能诚实地渲染这个缺失」）、前端「失败」与「空」拆成两个状态、管理端审核日志的跨服务聚合改并行、`FeignIdentityConfig` 合并成单源、索引别名原子切换 + 重建改异步** | [docs/M5-治理.md](docs/M5-治理.md) |
+| **E1** | **AI 能力接入：P4 的「真管道 + 假数据」换成接真实模型（JDK `HttpClient` 流式，零新依赖）、`ai_config.api_key` AES-GCM 加密存储且只写不读、每用户每日配额 + 用量账本、提示词模板改成五个占位符的服务端渲染、前情摘要（作者手动触发）、两层违禁审核（内存词库 fail-closed + AI 语义复核走 MQ）、管理端五个页面** | [docs/E1-AI能力接入.md](docs/E1-AI能力接入.md) |
 
-**第二期**（M0~M5）已完成。
-**第三期**（E1~E3）AI 能力、移动端 App。
+**第二期**（M0~M5）已完成。**第三期 E1 已完成**；E2（创作中心拆分）/ E3（uni-app）明确不做。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和
 > 「不这么做会怎样」。改代码之前值得先搜一下对应那一期，很多坑已经踩过了。
@@ -351,6 +400,10 @@ npm run dev:gateway     # 网关   （= 打包 + cd backend + java -jar）
 npm run dev:auth        # auth
 npm run dev:content     # 内容服务（作品/章节/分类/AI）
 npm run dev:interaction # 互动服务（评论/书架/历史）
+npm run dev:search      # 搜索服务（ES 检索/索引重建）
+
+# 假 OpenAI 兼容端点（零成本验收 AI 用；★ 不参与构建、不含任何真实 Key）
+python docs/tools/fake-openai.py
 ```
 
 > ★★ **不要用 `mvn -f backend/novel-auth/pom.xml spring-boot:run` 单独跑子模块** ——

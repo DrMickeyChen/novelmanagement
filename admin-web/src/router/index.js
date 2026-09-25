@@ -194,6 +194,69 @@ const routes = [
       },
       {
         /*
+         * AI 配置与用量 —— E1 的第一页。
+         *
+         * ★★ 这一页**装了两个 tab，但只占一条菜单**：
+         *   tab 1「模型配置」是写（Key / base_url / 模型 / 上限 / 启用），
+         *   tab 2「用量统计」是**纯只读**的一张流水账（同 views/log/index.vue）。
+         *   把只读的账和可写的配置放在同一条菜单下，是因为它们的**权限点完全相同**
+         *   （`sys_menu` 里就一行 `system:ai:config`）——
+         *   为「看账」单独开一条菜单要动 seed 的种子基线，不值得。
+         *   ★ 两个 tab 的性质差别落在**页面内部**：用量 tab 里没有任何写入口。
+         *
+         * ★ 种子**零改动**：`seed.sql` 里 id=11 这一行（path=`/ai`、
+         *   perm=`system:ai:config`）E1 之前就在，`AdminLayout.vue` 里也有
+         *   对应的 `ready: false` 占位项 —— 这条路由和那个 true 就是把占位兑现。
+         *   ★ 所以铁律 5 记的种子基线（READER 0 / AUTHOR 2 / ADMIN 15）一位都不动。
+         *
+         * ★★ `path` 必须和 `seed.sql` 的 `sys_menu.path` **逐字一致**：
+         *   那一列虽然当前没有消费者（菜单树前端是写死的），
+         *   但它曾经 12 个叶子里错了 11 个。写 `/ai` 不写 `/ai/config`。
+         *
+         * ★ S6 的「提示词模板」、S7 的「词库」会加成本页的 tab 3 / tab 4 ——
+         *   那是**组件内部**的事，不用再往这里加路由条目
+         *   （文件头那条「做一页加一条」管的是动态 import 指向不存在的文件）。
+         */
+        path: 'ai',
+        name: 'aiConfig',
+        component: () => import('@/views/ai/index.vue'),
+        meta: { title: 'AI 配置' },
+      },
+      {
+        /*
+         * 违禁审核队列 —— E1/S9。
+         *
+         * ★★ 这一页是**只读 + 两个动作**：一个「去处置」跳转、一个「排除」。
+         *   它【没有】「确认违规」按钮，这是刻意的，不是没做完：
+         *   那件事必须去既有的处置页做（章节 → 审核中心，评论 → 评论管理），
+         *   因为只有那条路会过状态机、写 `audit_log`、补上趋势图那个点。
+         *   本页自己 `UPDATE chapter SET status=4` 就是绕开
+         *   `ChapterServiceImpl#transitStatus`，**而且不报错**。
+         *   完整论证在 views/ai-audit/index.vue 的文件头与
+         *   `AiAuditQueueService#exclude` 的注释里。
+         *
+         * ★★ 队列行不会「永远停在待确认」：处置页那一刀落下时，
+         *   `AuditLogServiceImpl#record` 会把本页这一行一起标掉
+         *   （判断 3.2 的反转 —— **写 `audit_log` 这件事本身就是确认**）。
+         *   这正是「只标状态 + 跳转既有页」这个决定能站住的前提。
+         *
+         * ★ 种子**零改动**：`seed.sql` 里 id=15 这一行（path=`/ai-audit`、
+         *   perm=`ops:aiaudit:list`）E1 之前就在，`AdminLayout.vue` 里也有
+         *   对应的 `ready: false` 占位项 —— 这条路由和那个 true 就是把占位兑现。
+         *   ★ 所以铁律 5 记的种子基线（READER 0 / AUTHOR 2 / ADMIN 15）一位都不动。
+         *
+         * ★★ `path` 必须和 `seed.sql` 的 `sys_menu.path` **逐字一致**：
+         *   写 `/ai-audit`，不写 `/ai/audit` —— 后者会落进上面那条 `ai` 路由，
+         *   而那条是**路径前缀匹配**，症状是「点违禁审核打开了 AI 配置页」。
+         *   （`seed.sql` 里记着 12 个叶子里曾错 11 个的那次。）
+         */
+        path: 'ai-audit',
+        name: 'aiAuditQueue',
+        component: () => import('@/views/ai-audit/index.vue'),
+        meta: { title: '违禁审核' },
+      },
+      {
+        /*
          * ★ 连通性自检页 —— 原 P0 的工作台，P5 挪到这里。
          *
          * 它【不挂进左侧菜单】，全靠手敲 URL 进来：

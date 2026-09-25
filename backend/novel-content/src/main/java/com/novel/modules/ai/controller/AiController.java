@@ -4,9 +4,16 @@ import com.novel.common.result.Result;
 import com.novel.common.security.LoginUser;
 import com.novel.common.security.UserContext;
 import com.novel.modules.ai.dto.AiRequestDTO;
+import com.novel.modules.ai.dto.AiSummaryGenerateDTO;
 import com.novel.modules.ai.enums.AiScene;
+import com.novel.modules.ai.service.AiConfigService;
+import com.novel.modules.ai.service.AiPreflight;
+import com.novel.modules.ai.service.AiQuotaService;
 import com.novel.modules.ai.service.AiStreamSource;
+import com.novel.modules.ai.service.AiSummaryService;
 import com.novel.modules.ai.vo.AiQuotaVO;
+import com.novel.modules.ai.vo.AiSummaryVO;
+import com.novel.modules.ai.vo.RenderedPromptVO;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -92,17 +99,33 @@ public class AiController {
 
     private final AiStreamSource aiStreamSource;
     private final ThreadPoolTaskExecutor aiStreamExecutor;
+    private final AiConfigService aiConfigService;
+    private final AiQuotaService aiQuotaService;
+    private final AiPreflight aiPreflight;
+    /**
+     * 前情摘要的写侧（E1/S10）。
+     *
+     * <p>★★ 它是本类唯一一个<b>不返回 {@code SseEmitter}</b> 的协作者的入口 ——
+     * 也是 {@link AiScene} 那条不变式（枚举值个数 = {@code @PostMapping} 个数 + 1）
+     * 在这条链上的落点：{@code SUMMARY} 是六个场景里唯一一个「有 URL 但不是流式」的。
+     */
+    private final AiSummaryService aiSummaryService;
     private final String provider;
-    private final Integer dailyQuota;
 
     public AiController(AiStreamSource aiStreamSource,
                         @Qualifier("aiStreamExecutor") ThreadPoolTaskExecutor aiStreamExecutor,
-                        @Value("${novel.ai.provider:mock}") String provider,
-                        @Value("${novel.ai.daily-quota:50}") Integer dailyQuota) {
+                        AiConfigService aiConfigService,
+                        AiQuotaService aiQuotaService,
+                        AiPreflight aiPreflight,
+                        AiSummaryService aiSummaryService,
+                        @Value("${novel.ai.provider:mock}") String provider) {
         this.aiStreamSource = aiStreamSource;
         this.aiStreamExecutor = aiStreamExecutor;
+        this.aiConfigService = aiConfigService;
+        this.aiQuotaService = aiQuotaService;
+        this.aiPreflight = aiPreflight;
+        this.aiSummaryService = aiSummaryService;
         this.provider = provider;
-        this.dailyQuota = dailyQuota;
     }
 
     /* ==================== 四个流式接口 ==================== */
@@ -171,6 +194,36 @@ public class AiController {
         return stream(AiScene.POLISH, dto);
     }
 
+    /* ==================== 前情摘要（★ 唯一一个不是流式的场景） ==================== */
+
+    @Operation(
+            summary = "生成前情摘要（★ 不是 SSE，返回普通 JSON）",
+            description = """
+                    把 `ai_summary` 里【还没覆盖到】的那一段正文压缩成一段剧情梗概，
+                    **生成完直接入库**，从下一章起 `{{summary}}` 就会带上它。
+
+                    ★ **它和上面四个接口的区别不是「是不是 AI 生成」，而是「产出有没有消费者在实时看」** ——
+                    摘要生成完就落库了，没有「边生成边看」的界面，也没有「中断」这个动作。
+
+                    ★ `endChapterNo` 是**范围的上界（含）**，起点由服务端算
+                    （上一条摘要的 `end_chapter_no` + 1）。它必须**大于**上一条摘要覆盖的章节号，
+                    否则 400 —— 摘要只能一段段往前接。
+
+                    ★★ 返回里的 `startChapterNo` / `endChapterNo` 是**实际覆盖**的区间，
+                    可能小于请求的区间（尾部几章还没写正文），
+                    `skippedChapterNos` 列出被跳过的章节号 —— **不要只看 `summary` 不看这三个字段**。
+
+                    ★ 失败时返回**真实的 HTTP 状态码**（400 区间不合法 / 超预算，
+                    429 额度用完，503 未启用 / 没配 Key），不是 200 + 业务码 ——
+                    理由见 `AiPreflight` 的类注释。
+
+                    ★★ **本接口会阻塞整整一次模型调用**（真实模型下可能几秒到几十秒）。
+                    接真实模型之前请先看 `AiSummaryService` 类注释里那段「为什么是同步的」。""")
+    @PostMapping("/api/ai/summary")
+    public Result<AiSummaryVO> summary(@Valid @RequestBody AiSummaryGenerateDTO dto) {
+        return Result.success(aiSummaryService.generate(dto));
+    }
+
     /* ==================== 额度 ==================== */
 
     @Operation(
@@ -186,11 +239,46 @@ public class AiController {
                     **靠人记得摘掉的标识，一定会忘记摘**，
                     而一个没摘掉的假标识，和没有标识一样是诚信问题。
 
-                    ★ 注意：P4 的额度是**配置里的固定值**，不随调用递减
-                    （真正的每日配额是 Redis 计数器 + 定时过期，属于 E1）。""")
+                    ★ E1 起 `remaining` 与 `total` 是**真的**：`total` 取自
+                    `ai_config.daily_limit`（管理端可改），`remaining` 取自
+                    Redis 计数器，**会随调用递减、次日自动满血**。
+                    P4 那两个字段是同一个常量（恒等），E1 换掉了它们。
+
+                    ★★ 本接口**在 AI 停用时也正常返回 200**（不抛 5001）——
+                    它回答的是「上限是多少」，不是「能不能用」。""")
     @GetMapping("/api/ai/quota")
     public Result<AiQuotaVO> quota() {
-        return Result.success(new AiQuotaVO(dailyQuota, dailyQuota, provider));
+        /*
+         * ★★ 这里【不能】调 AiConfigService#requireUsable()。
+         *   它会在 ai_config.enabled=0 时抛 5001 —— 而种子里的默认值就是 0，
+         *   也就是「新克隆的仓库」的默认状态。抛出去的话，
+         *   前端 AiPanel 一打开就会弹一个错误提示、并且把整块额度区 v-if 掉，
+         *   表现为「额度那一块凭空消失」。
+         *   ★ dailyLimit() 是那个「停用也能问」的读方法，见它的接口注释。
+         */
+        int total = aiConfigService.dailyLimit();
+
+        LoginUser loginUser = UserContext.get();
+        Long userId = loginUser == null ? null : loginUser.getUserId();
+        /*
+         * ★ 身份拿不到就按「一次都没用过」展示，而不是 0。
+         *   走这条路径的只可能是过滤器没设身份的 bug，而额度是【给本人看的】
+         *   一个展示数字；在这里编一个 0 出去，用户会以为自己的额度没了。
+         *   ★ 与本行的「按满额展示」是同一件事的两面：**都不虚报消耗**。
+         *
+         * ★★ E1/S6 订正：本行原来接的是「真正的扣减闸门
+         *   （AiQuotaService#acquire）在 AI 生成那侧，它拿不到身份时记一条 ERROR
+         *   并落到哨兵桶 userId=0 上」—— <b>那句话现在不成立了，因为那个哨兵桶已经删掉。</b>
+         *   S6 起 acquire 由 {@code AiPreflight} 在【请求线程】上调用，
+         *   而它的第一步就是 {@code UserContext.requireUserId()}（拿不到直接 401）。
+         *   ★ 也就是说：扣减那一刻身份【必然存在】，不存在就走不到扣减那一步。
+         *   「往共享桶里记一笔」这种口径再也没有存在的理由 ——
+         *   它本来就是个坏形状：所有身份异常的请求会合吃一份额度，
+         *   而账面上看不出是几个人在用。
+         */
+        int remaining = userId == null ? total : aiQuotaService.remaining(userId, total);
+
+        return Result.success(new AiQuotaVO(remaining, total, provider));
     }
 
     /* ==================== 私有：SSE 翻译层 ==================== */
@@ -211,7 +299,9 @@ public class AiController {
      *       见 {@code AiAsyncConfig} 里那段「为什么必须另起一个池」</li>
      * </ul>
      *
-     * <p><b>★★ 中断是怎么实现的（三条路径，缺一不可）：</b>
+     * <p><b>★★ 中断是怎么实现的（三条路径）：</b>
+     * ★ <b>注意：这个标题 E1/S4 之前写的是「缺一不可」，那是错的</b> ——
+     * 实测表明真正承重的是 ③（见下面的订正）。三条都留着，但别以为少一条就断不了。
      * <pre>
      *   ① 用户点「停止」/ 切节点 / 关页面
      *      → 前端 controller.abort() → TCP 连接断开
@@ -220,13 +310,54 @@ public class AiController {
      *   ② 超时（SSE_TIMEOUT_MS）→ onTimeout 回调 → 同上
      *   ③ 写失败（连接已经没了）→ send() 自己抛异常 → 同样冲掉循环
      * </pre>
-     * ★ 为什么不能只靠 ③：连接断开后，第一次 {@code send()} 不一定马上失败
-     * （数据可能先进了内核缓冲区），要等到缓冲区写不下或 flush 时才知道。
-     * 而期间生成器还在跑 —— 对 mock 无所谓，对 E1 就是白烧的 token。
-     * 所以 ① 这个 <b>标志位</b>是必须的，它让「停止」在<b>下一次推送</b>就生效，
-     * 而不是等下一次写失败。
+     * ★ ③ 是「兜不住的那一层」：连接断开后数据可能先进了内核缓冲区，
+     * 第一次 {@code send()} 不一定马上失败。而期间生成器还在跑 ——
+     * 对 mock 无所谓，对 E1 就是白烧的 token。
+     *
+     * <p>★★★ <b>E1/S4 实测订正（原话写的是「不能只靠 ③，① 才是必须的」）：</b>
+     * 在那次实验里，<b>真正让生成停下来的是 ③，而 ① 从头到尾没有被触发</b> ——
+     * 探针打出的事实是「{@code send()} 失败的那一刻 {@code aborted=false}」，
+     * 也就是说容器（Tomcat 经网关收到客户端断开）<b>还没</b>来得及回调
+     * {@code onError/onCompletion}，写操作就已经失败了。
+     * ★ 同一份实测里「上游停止推送」是真的（假端点在第 11 帧看到连接断开、
+     * 没有跑到终点），<b>所以钱确实没白烧</b>；被推翻的只是「这该记在 ① 头上」。
+     *
+     * <p>★ ① 仍然保留：它零成本，而且在「缓冲区还没写满、容器尚未察觉」
+     * 那种形状下（帧小、量大、推送密）是唯一能让停止提前生效的东西。
+     * ★★ <b>但别再把「停止烧 token」归功于它</b> —— 一条被实测削弱的论证
+     * 如果继续按原样留着，下一个人会照着它去改别的地方。
+     * （做法同 M3 那条：实测推翻了初稿的断言，就把断言改成实测的样子。）
+     *
+     * <p><b>★★★ E1/S6：本方法的【第一行】是前置闸门，它改变了整个类的错误模型。</b>
+     * 闸门抛出的异常会让这个方法<b>根本不返回 emitter</b>，于是响应体是普通 JSON、
+     * HTTP 状态码是真实的 —— 这是刻意的，见 {@link AiPreflight} 的类注释
+     * （走错出口的症状是「额度用完」被渲染成「请检查代理配置」）。
+     * ★ <b>所以本方法里可以抛异常，下面的工作线程里不行</b> ——
+     * 那条分界线不是风格，是「响应头有没有发出去」。
      */
     private SseEmitter stream(AiScene scene, AiRequestDTO dto) {
+        /*
+         * ★★★ 前置闸门：鉴权 / 停用 / 模板 / 组装+渲染 / 配额，全在【当前线程】上、
+         *   全在【建 emitter 之前】。它失败时本方法抛出去，HTTP 状态码是真的。
+         *
+         * ★★ 它必须在创建 SseEmitter 之前 —— 一旦建了 emitter 并被 Spring 接管，
+         *   响应头就发出去了，那时候只剩「发一个 event: error 帧」这一条路，
+         *   而前端对那条路和「非 2xx」路的渲染【完全不同】。
+         *
+         * ★★ 它必须仍在请求线程上（不是搬到下面那个 executor 里）——
+         *   它要过 NovelAccessGuard 的权限校验，而工作线程上没有身份。
+         *   详见 AiContextAssembler 的类注释：那里的失败模式是
+         *   「忘了搬身份 → 权限判成匿名 → 恰好全部放行」，且不报错。
+         */
+        RenderedPromptVO rendered = aiPreflight.check(scene, dto);
+        /*
+         * ★ 渲染结果就存在这个 DTO 上带进工作线程 —— 它是唯一的载体
+         *   （两个字段都是 @JsonIgnore，客户端塞不进来，见 AiRequestDTO）。
+         *   闸门是唯一生产它的地方，所以这里的赋值不可能漏。
+         */
+        dto.setRenderedSystemPrompt(rendered.getSystemPrompt());
+        dto.setRenderedUserMessage(rendered.getUserMessage());
+
         /*
          * ★★ 用户身份必须在【当前线程】取好，再传给下面那些 lambda。
          *

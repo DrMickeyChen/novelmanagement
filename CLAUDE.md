@@ -5,13 +5,35 @@
 > **加内容之前先问自己：删掉这段，下次会不会做错？** 不会就别加。
 >
 > 每期的完整设计论证：第一期在 `docs/Pn-*.md`（P1 认证权限 / P2 内容主干 / P3 读者端 / P4 创作中心 / P5 管理后台），
-> 第二期在 `docs/Mn-*.md`（M0 骨架搭建 / M1 摘出 auth / M2 摘出 content / M3 引入 MQ / M4 摘出 search）。
+> 第二期在 `docs/Mn-*.md`（M0 骨架搭建 / M1 摘出 auth / M2 摘出 content / M3 引入 MQ / M4 摘出 search / M5 治理），
+> 第三期在 `docs/E1-AI能力接入.md`。
 
 ## 项目
 
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
-第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES、M5 治理（均已完成）**。第三期 E1 AI。
+第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES、M5 治理（均已完成）**。
+第三期 **E1 AI 能力接入（已完成）** —— E2 创作中心拆分 / E3 uni-app 明确不做。
+★ **E1 的实质是「把 P4 的【真管道 + 假数据】换成真数据」**，并第一次给系统装上**「花钱」**这个维度：
+配额 / 用量账 / Key 安全三件事都是它带来的。见 `docs/E1-AI能力接入.md` 判断 1~8。
+★★★ **两个 provider 是两套真相来源，不看就会做错**：YAML `novel.ai.provider`（`mock`/`deepseek`）
+决定**哪个 Bean 存在**（结构性、启动期）；DB `ai_config` 是**运行期参数**。
+**YAML 还是 `mock` 时，管理员在配置页填完 Key 什么都不会发生、且界面上看不到原因** ——
+所以 `GET /api/admin/ai/config` 必须回一个只读的 `effectiveProvider`（判断 6）。
+★ **切到真模型零代码**：`--novel.ai.provider=deepseek` 是命令行参数，**不用重新打包**；
+  而 `ai_config.base_url` 指向 `docs/tools/fake-openai.py` 就是本期的测试钩子（与 M4 的 `ES_URIS` 同手法）。
+★★ **`novel.ai.key-secret: ${AI_KEY_SECRET:}` 的空默认是刻意的**（和 `JWT_SECRET`/`INTERNAL_TOKEN` **相反**）：
+那两个必须 fail-fast，这个必须能空着启动（新克隆要跑得起来）。空着时**用它的那一刻**抛错 →
+表现是 `5002 未配置 API Key`，**而不是「加密变成装饰」**。★ 换一个 `AI_KEY_SECRET` 重启后，
+库里那把 `api_key` 就**解不开了**（GCM auth tag 不匹配 → 抛异常，**不是**返回乱码 —— 刻意如此）。
+★★ **`ai_config.enabled` 的种子是 `0`** —— 交付基线就是「克隆下来跑不出一次计费调用」。
+**任何要花钱的实验之前，先看这个字段。**
+★★★ **`sse.js:146` 那个 `Accept: 'text/event-stream, application/json;q=0.9'` 是承重件，不是随手写的**——
+只发 `text/event-stream` 时，**建 emitter 之前**的失败（429/503）会变成 **HTTP 500 + 空 body**
+（`HttpMediaTypeNotAcceptableException`）。**自己写 SSE 验收脚本时要逐字照抄这个头**（判断 8）。
+★ 本期的五个新管理端点：`/api/admin/ai/{config,prompt,usage,word,audit}`，
+其中前四个落在**已有的 `/ai` 菜单的四个 tab** 里，第五个落在**已有的 `/ai-audit` 菜单**里 ——
+**`sys_menu` / `sys_role_menu` 新增行数 = 0**，铁律 5 的种子基线一位未动（判断 5）。
 ★ **M3 的实质只有 MQ**：大纲把 M3 写成「摘出 interaction + 引入 MQ」两件事，而 interaction 在 M2 就已经是独立进程了 —— 拆分那半早就兑现。见 `docs/M3-引入MQ.md` 开头。
 ★ **M4 的实质是「换检索内核」**：搜索从 MySQL `LIKE`（+ 一次全表扫描的作者名 Feign）换成「ES 出有序 id + 一次主键批量查」，
 **并且顺手证伪了大纲里的 `group-content-stat` 消费组**（`syncNovelStat` 读写的两张表同库同事务，拆成消息是**降级**）—— 见 `docs/M4-摘出search.md` 判断 1。
@@ -88,8 +110,12 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
    三态要分清：匿名 → **401**；身份不足 → **403**；业务失败 → **200 + code**。
 4. **前端模块校验要看 `content-type`**，不是状态码 —— 模块 URL 必须带 `base` 前缀（`/admin/src/...`），且**不存在的模块也返回 200**（SPA 回落 HTML），看到 `text/html` 等于什么都没验。
 5. **验收 / 回归脚本绝不拿种子数据当试验台**：实验一律跑在带时间戳的一次性对象上，结尾断言种子完好。
-   种子基线：`READER` 0 条菜单 / `AUTHOR` 2 条 / `ADMIN` 15 条，`sys_role_menu` 共 17 行，账号 1~4。
+   种子基线：`READER` 0 条菜单 / `AUTHOR` 2 条 / `ADMIN` 15 条，`sys_role_menu` 共 17 行，账号 1~4；
+   `ai_prompt_template` **6 行** / `ai_sensitive_word` **4 行（其中 `enabled=1` 的只有 3 行）** / `ai_config` **1 行（`enabled=0`）**。
+   ★★ 词库那两行是**两条不同的判据**（「一共有几条」vs「有几条在生效」），**不许合并成一句话**。
    清理数据用**字面 id 的 `IN (...)`**，不要用 `LIKE`。
+   ★★ **凡是会翻转 `ai_config` 的字段（`enabled`/`base_url`/`model`/`api_key`/`daily_limit`）的实验，
+   必须在结尾【逐字段】还原并断言** —— 它不是普通种子数据，它是**「这个仓库会不会自己花钱」的开关**。
 6. **上传安全**（`docs/P4-创作中心.md` D-10）：文件名绝不采信客户端；**校验文件头魔数**而不是只看扩展名；上传目录必须是**外部绝对路径**。
 7. **★★ 消息可靠性分级（M3）：推「增量」的可以乱序；推「绝对值」的，要么顺序、要么带时间戳做单调写。**
    五条消息**故意不一样**，别统一：`VIEW_REPORT` 增量 / 并发 / 不用防；`PROGRESS_REPORT` 绝对值 /
@@ -99,10 +125,20 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
    两条乱序消息各自触发一次重建、两次都读同一份当前状态、写同一个文档 → 结果一样。
    **判据：「去重算一次」这个指令，永远比「算好的结果」好维护。**
    （★ 代价是它**不覆盖**「谁都没通知」这种情况 → 靠 `AfterCommit` 之外的那条定时全量重建兜底。）
-   ★★ **一个 (服务, Tag) 一个消费组**，五个组不许合并 —— 订阅按**消费组**存在 Broker 上，
+   ★★★ **`AI_AUDIT`（E1）的载荷形状和 `NOVEL_INDEX` **一模一样**（只有一个 id），但它【不幂等】** ——
+   因为**调一次 AI 是非纯函数**（温度 > 0），同一个 `{targetType:3, targetId:94}` 消费两次得到**两份不同的判定**。
+   → **判据由此精确化**（E1 的产出）：`NOVEL_INDEX` 幂等免费，**不是因为「载荷只有一个 id」，
+   而是因为「读真值之后做的那件事也是纯函数」**。**「读真值」只有在【读完之后那件事也是确定的】时才是幂等的充分条件。**
+   ★ 处置：`AI_AUDIT` 的幂等键是**内容指纹**（消费端算 `hash(读到的正文)`，`SET NX EX 86400`），**不是消息键** ——
+   消息键只挡「同一次发送重投」，**挡不住「内容没变却又被审了一遍」**，还会**误伤**「改了内容重新提交」（那应该重审）。
+   粒度是**内容版本**，而**这正是省钱的那道闸门**。
+   ★★ **一个 (服务, Tag) 一个消费组**，六个组不许合并 —— 订阅按**消费组**存在 Broker 上，
    组内不一致时后注册的**覆盖**前一个。**症状对照：某个 Tag 收不到消息且不报错 → 先查有没有两个 Tag 共用一个消费组。**
    （形状与路由那条 `order` 不变式一模一样。）
-   ★ `maxReconsumeTimes` **必须显式写**（四个消费者都写 3）—— 顺序消费下不写 = `Integer.MAX_VALUE`。
+   ★★★ **E1 新增的两个名字【形近】于已有的两个**：`TAG_AI_AUDIT` vs `TAG_AUDIT_RECORD`、
+   `GROUP_CONTENT_AI_AUDIT` vs `GROUP_CONTENT_AUDIT`（**后者已被人工流水占用**）。
+   两个常量在 `MqConstant` 里**隔开排列并互相引用**，别挨着写 —— 挨着写迟早会有人复制错那一个字符。
+   ★ `maxReconsumeTimes` **必须显式写**（六个消费者都写 3）—— 顺序消费下不写 = `Integer.MAX_VALUE`。
    ★★ **但「我的消费者代码永不抛异常」这个保证只覆盖【方法体之内】** ——
    `rocketmq-spring` 的类型转换（如枚举反序列化）失败发生在方法被调用**之前**，
    我们的 `try/catch` 根本没机会执行 → 直接走框架的重试阶梯进 DLQ。
@@ -155,7 +191,10 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
   只有「同一段论证确实写了两遍」时顺手去重，不做压缩。
 - **必须留在代码里、不能只放 docs 的**：弄错会造成不可逆损害或静默错误的那几条 ——
   ① 防自锁 `1020` / `1018`（`AdminRoleServiceImpl`）② 封禁/改角色踢下线（`AdminUserServiceImpl`）
-  ③ 趋势零填充（`DashboardServiceImpl`）④ `sys_role_menu` 无 `deleted` 列、只能物理删 ⑤ 跨模块接缝方向 ⑥ 评论 10 秒频控的 `SET NX EX`。
+  ③ 趋势零填充（`DashboardServiceImpl`）④ `sys_role_menu` 无 `deleted` 列、只能物理删 ⑤ 跨模块接缝方向 ⑥ 评论 10 秒频控的 `SET NX EX`
+  ⑦ **词库 fail-closed**（`SensitiveWordScanner`：空词库/加载失败一律**拒审**，绝不「当成空词库继续」）
+  ⑧ **`AiModelClient.requireOk` 永不读上游响应体**（`body.close()` 而已）—— 真实 DeepSeek 的 401 body **会回显 Key 片段**；
+  ★ 这两条都是「改一个字就静默失效、且失效方向是【不安全】」的那种，**必须留在代码里**。
 - ★ **改动前先 `grep` 定位，别整文件读**；大文件用 `offset`/`limit` 只读相关段。
   （读大文件是本项目成本的大头 —— 一次整读 600 行的文件比写 50 行注释还贵。）
 
@@ -173,9 +212,21 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
 - **手写 `@Select` 时 `@TableLogic` 完全不生效** → 逻辑删除的表必须自己写 `deleted = 0`；
   但 `sys_role_menu` **没有** `deleted` 列（和 `sys_role` / `sys_menu` 规则相反），赋权只能物理 `DELETE` + `INSERT`。
 - **单列 `.select()` 投影 + 可空列 → `List` 里会塞 `null` 元素** → 方法引用 NPE → 500（`docs/P5` 实施记录 ⑥）。
+  ★★★ **同族、但更隐蔽的一条（E1 实测）**：MyBatis-Plus wrapper 的 `condition` 参数**只决定「用不用」，不决定「算不算」** ——
+  **Java 先求值实参再调方法**，所以 `.ge(flag, Foo::getTime, atStartOfDay(x))` 在 `x == null` 时**照样**执行
+  `atStartOfDay(null)` → **NPE**。症状：`GET /api/admin/ai/usage` **不带任何筛选**（= 页面刚打开的那个请求）→ 500。
+  ★ 别给 helper 补判空（那个形状本身就是陷阱）：**先把可能为 null 的转换落到局部变量，再传进 wrapper**。
+  ★ 更普遍的教训：**写在代码旁边、读起来像已经验过的注释，是一个从未被验证的断言**。
 - **「按时间倒序」的列表一律带 `id DESC` 兜底** —— 同秒 `DATETIME` 会打平，翻页顺序会跳。
 - **前端的 `filter` 用 `ref({...})` 整体替换**，在 fetcher 里展开现取值；列表钩子是 `usePagedList(fetcher, {pageSize})`。
 - **`confirm()` 永不抛异常，返回布尔**；`ElMessageBox` 是命令式 API，**读不到语言包**，按钮文字要手写「确定」/「取消」。
+- ★★★ **Vue 模板插值里不能出现字符串字面量，尤其 `{{ '{{x}}' }}`** ——
+  **模板编译器找插值结束符时不认识字符串字面量**，它扫到里面那个 `}}` 就当插值结束 → 表达式变成没闭合的字符串常量 →
+  **整个 `.vue` 编译失败**。E1 实测：`/ai` 页面因此**从未编译通过**，而**任何日志里都没有**，只有一个 `curl` 500。
+  要显示字面量花括号用 `<code v-pre>{{x}}</code>`。
+  ★★ **教训：「接口通了」不等于「页面在」** —— 全走 HTTP 的验收可以完全绕开页面本体。
+  判据钉在**编译产物**上：`curl -o /dev/null -w '%{http_code} %{content_type}'` 模块 URL 要看到 **`200 text/javascript`**
+  （只看 200 会把 SPA 回落 HTML 当通过 —— 铁律 4）。★ 批量自检可以用 `@vue/compiler-sfc` 把每个 `.vue` 解析一遍。
 - **批量操作顺序 `for...of await`，绝不 `Promise.all`**（会并发 re-UPDATE 同一行）；被跳过的条目**必须报出来**，绝不静默过滤。
 - **「重复审核」四套口径各不相同**：作品=前置判待审、章节=`3003`、作者申请=同目标状态幂等/跨终态 `1016`、评论=`4005`。别统一成一句话。
 - **「驳回必须填理由」是前端规则，后端刻意不拦**（`AuditDialog.vue` 的 `remarkRequired`）—— 别去后端加校验。
@@ -260,13 +311,30 @@ MYSQL_PWD=root123456 "/c/Program Files/MySQL/MySQL Workbench 8.0/mysql.exe" \
   -h192.168.127.137 -uroot novel --default-character-set=utf8mb4 < x.sql 2>&1 | grep -v "Using a password"
 
 # 种子账号：admin/admin123（ADMIN）、author01/123456（AUTHOR）、reader01/123456、reader02/123456（READER）
+
+# ★ E1 起 content 多两个【零代码】的开关，都不是环境变量：
+#   ① AI 用哪个实现：命令行参数 --novel.ai.provider=deepseek（YAML 默认 mock）→ 不用重新打包
+#   ② 真调用的地址：管理端「AI 配置」页改 base_url（指向 docs/tools/fake-openai.py 就是假端点）
+# ★ AI_KEY_SECRET 只影响「加解密 api_key」这一件事；不设 AI_KEY_SECRET 起 content = 库里那把 Key 解不开
+#   （表现是 5002「未配置 API Key」，不是乱码）。★ 交付基线：ai_config.enabled=0 且 api_key 为空。
 ```
 
 ★ 端口用 `strictPort: true`，漂移不报错（`docs/P5` 环境踩坑 3）。
 ★ `TaskStop` **杀不掉 `concurrently` 的子进程** —— 要 `Get-NetTCPConnection -State Listen` 找 PID 再 `Stop-Process -Force`。
 ★ Windows 上 Python 的 stdout **和 stdin 都是 ANSI 码页**：print 只输出 ASCII；读 curl 结果要写文件再用 `io.open(..., encoding='utf-8')`。
 
+★ `docs/tools/fake-openai.py`（假 OpenAI 兼容端点，`:8899`）**不参与构建、不含任何真实 Key**；
+  故障开关走**模型名**（`fake-429` / `fake-truncate` / `fake-replay` …）——★ **不认识的模型名会【静默回落 `ok`】**，
+  实测踩过：注入 `429`（漏了 `fake-` 前缀）→ 返回完全正常的流，**一次故障都没测到，但流水行数看着对**。
+★ `docs/tools/recorded/` 放**真实 DeepSeek 响应的原始字节**（R1/R2 录制），之后回归走 `model=fake-replay`，**永久免费**。
+  ★★ 之所以要录：`AiAuditVerdict.parse` 成功时**不打原文**，
+  所以「真实模型有没有把 JSON 包在 ``` 围栏里」这件事在当前实现里**不可观测** —— 不录就只能推断。
+  ★ 录制它需要一个**反向代理**；代理的纪律：`Authorization` 头**只打 `yes|NO`，绝不落盘、绝不打印**。
+★ `docs/tools/__pycache__/` 是运行假端点产生的，**不要提交**（不在 `.gitignore` 里，`git add` 时要避开）。
+
 ## 提交
 
-一期一个 commit，消息 `pN完成`（正文写清这一期做了什么、怎么验的）。直接提交到 `main`。
+一期一个 commit，消息 `pN完成` / `mN完成` / `eN完成`（正文写清这一期做了什么、怎么验的）。直接提交到 `main`。
 ★ 提交前复验：12 个锁定文件 md5 未变、staged diff 里没有密钥/密码。
+★ E1 起多两条：**`ai_config` 回到交付基线**（`enabled=0` 且 `api_key` 为空）、
+  **`docs/tools/__pycache__/` 没被 add 进去**（它 untracked 且不在 `.gitignore` 里）。

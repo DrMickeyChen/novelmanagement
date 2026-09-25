@@ -46,10 +46,15 @@ import java.util.Map;
  * <b>去查</b> system，所以接口和实现都在 content 里，只是把 {@code SysUserMapper}
  * 挡在内部。判据是同一个：<b>跨模块的耦合只能有一个出入口</b>。）
  *
- * <p><b>★ 为什么需要这个方法的只有审核日志一个地方：</b>
+ * <p><b>★ 为什么需要它的总共只有两个地方：</b>
  * 评论列表（读者侧 / 管理侧）不经过它 —— 那些查询本来就在 interaction 里，
  * 直接读实体就行。这里多绕一层<b>纯粹是因为消费方不在同一个模块</b>，
  * 不是因为「取正文」这件事需要抽象。
+ * ★★ E1 加了第二个调用方：<b>AI 违禁审核消费者</b>（{@code AiAuditService}）。
+ * 它和审核日志<b>同属这条边，却不是同一个问题</b> —— 一个要显示、一个要送审，
+ * 于是有了 {@link #textsOf}。这条边的「环」性质一个字节都没变
+ * （多读一个字段不是多一条边），完整论证仍在
+ * {@code InternalCommentController}（interaction 侧）的类注释里。
  *
  * @author MickeyChen
  */
@@ -91,4 +96,31 @@ public interface CommentTextLookup {
      *         调用方按 {@code null} 处理即可（那就是「已删除」）
      */
     Map<Long, CommentBriefDTO> briefsOf(Collection<Long> commentIds);
+
+    /**
+     * 批量取评论<b>正文全文</b>，返回 {@code commentId → 正文} —— <b>E1 新增。</b>
+     *
+     * <p><b>★★ 这个方法和上面那个是两件事，虽然它们查的是同一张表。</b>
+     * {@link #briefsOf} 回答的是「审核日志那一行显示什么」（截断到 30 字），
+     * 本方法回答的是「这条评论到底说了什么」（全文）。判据是
+     * <b>消费方拿到它之后要做什么</b>：
+     * <pre>
+     *   briefsOf → 塞进一个 HTML 单元格
+     *   textsOf  → 送去跑关键词 DFA、再送去给模型判一次
+     * </pre>
+     * ★ <b>用截断过的正文送审是一个静默的假通过</b>：敏感词写在第 31 个字之后，
+     * 两层都扫不到，而结果看起来和「真的审过、确实干净」一模一样。
+     *
+     * <p>★★ <b>它同样不降级</b>（实现里走的是 {@code CommentBriefClient}
+     * 的 {@code logThenRethrow}）。理由比上面那条更硬：
+     * 这条的返回值是<b>参与筛选的输入</b> —— 拿不到就该 500，
+     * 因为空的输入会得到「无命中 → 排除」这个<b>看起来正常的错结论</b>
+     * （铁律 10 的第一个例子：`userIdsByNickname` 降级成空集合）。
+     *
+     * @param commentIds 评论 id 集合，允许为空（空集合返回空 Map，不查库）
+     * @return {@code commentId → 正文}。<b>查不到的 id 不会出现在 Map 里</b>，
+     *         调用方按「这条评论已不存在」处理（作者提交后、审核前删掉了评论是常事）。
+     *         ★ 这与 {@link #briefsOf} 的「不在 Map 里 = 已删除」是同一条约定
+     */
+    Map<Long, String> textsOf(Collection<Long> commentIds);
 }

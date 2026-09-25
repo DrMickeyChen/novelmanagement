@@ -53,6 +53,12 @@ import java.util.Map;
  *   <tr><td>write</td><td>小说散文</td><td>验证打字机效果和「追加到正文末尾」</td></tr>
  *   <tr><td>inspire</td><td>3 个剧情走向</td><td>验证长文本的分段展示</td></tr>
  *   <tr><td>polish</td><td>改写后的段落</td><td>验证「替换选中的那段」</td></tr>
+ *   <tr>
+ *     <td>summary</td>
+ *     <td>一段剧情梗概，<b>开头一行自报「这是演示数据」</b></td>
+ *     <td>★★ 它是<b>唯一一个产出会【不经采纳】直接落库</b>的场景，
+ *         见 {@link #summary} —— 假数据在那里会以真前情的身份被喂回给真实模型</td>
+ *   </tr>
  * </table>
  *
  * <p><b>★★ 关于「内容从哪来」：</b>
@@ -62,11 +68,13 @@ import java.util.Map;
  * 这么做的理由是<b>演示</b>：连点两次「续写」得到一模一样的三段文字，
  * 看的人第一反应是「按钮坏了」。内容随机一点，交互是否正常才看得出来。
  *
- * <p><b>★ 一个测试钩子：</b>prompt 里含 {@value #FAIL_MARKER} 时，
+ * <p><b>★ 一个测试钩子：</b>prompt <b>或 context</b> 里含 {@value #FAIL_MARKER} 时，
  * 本类会在生成到约三分之一处调用 {@code onError} ——
  * 用来验证「流中途失败时前端显示『生成失败』而不是永远转圈」
  * （负向用例 19）。这个标记<b>只在本类里存在</b>，
  * E1 的真实实现不认它，所以它不会变成一条需要长期维护的暗规则。
+ * ★★ 要同时看两个字段的理由见 {@link #hasFailMarker}：<b>摘要场景的 prompt
+ * 是服务端填的</b>，只认 prompt 就等于摘要没有失败分支可测。
  *
  * @author MickeyChen
  */
@@ -121,9 +129,7 @@ public class MockAiStreamSource implements AiStreamSource {
          *   差得不小，而这里只需要一个「大约三分之一」的位置。
          */
         int totalCodePoints = text.codePointCount(0, text.length());
-        int failAfter = request.getPrompt() != null && request.getPrompt().contains(FAIL_MARKER)
-                ? Math.max(1, totalCodePoints / 3)
-                : -1;
+        int failAfter = hasFailMarker(request) ? Math.max(1, totalCodePoints / 3) : -1;
 
         int emitted = 0;
 
@@ -180,6 +186,31 @@ public class MockAiStreamSource implements AiStreamSource {
             case WRITE -> continueWriting(request);
             case INSPIRE -> inspire(request);
             case POLISH -> polish(request);
+            /*
+             * ★★★ E1 新增的这一支【故意是抛异常】，而且【故意不写 default】。
+             *
+             * AUDIT（违禁审核）不是流式场景：AiStreamSource 的契约
+             * （恰好一次终结、必须可被打断）是为 SSE 连接的断开语义服务的，
+             * 而审核没有连接可断 —— 它走 AiModelClient 的非流式调用。
+             * 所以「审核走到流式 mock 里」本身就是一条不该存在的调用路径，
+             * 撞上了就该炸，而不是给它编一段假审核结果。
+             *
+             * ★★ 为什么不留一个 default 分支（那才是「更简洁」的写法）：
+             * 这个 switch 是【穷尽的】，而穷尽性正是它的价值 ——
+             * E1 给 AiScene 加 AUDIT(5) 时，编译器在这里【报错】并指出文件行号，
+             * 我们才知道有这么一处需要处理。一旦写成 default，
+             * 下一个加进来的枚举值就会【静默地】落进 default，安静地跑错。
+             * ★ 这是铁律 8 的反面用法：把「忘了一处」从运行时错误变成编译错误。
+             */
+            case AUDIT -> throw new IllegalStateException(
+                    "AUDIT 不是流式场景，不该走到 MockAiStreamSource —— 见 AiScene.AUDIT 的注释");
+            /*
+             * ★ 摘要【是】流式场景（它走 AiStreamSource），只是调用方把结果
+             *   收完再落库、不往前端推 —— 所以它在本类里是一支正常分支。
+             *   ★★ 换句话说：AUDIT 那一支抛异常是因为「这条路不该存在」，
+             *   而 SUMMARY 这一支必须存在，两者别混为一谈。
+             */
+            case SUMMARY -> summary(request);
         };
     }
 
@@ -327,7 +358,86 @@ public class MockAiStreamSource implements AiStreamSource {
                 """.trim();
     }
 
+    /**
+     * 前情摘要 —— ★★ <b>唯一一个把「这是演示数据」写进产出里的场景。</b>
+     *
+     * <p><b>为什么这里非要自我标识，而其它四个场景不用：</b>
+     * 大纲 / 正文 / 灵感 / 润色的产出都要作者点一次「采纳」才落库 ——
+     * 一段假数据最坏的结果是被人看一眼丢掉，<b>不会进数据库</b>。
+     * 摘要<b>没有「采纳」这一步</b>：生成完直接写 {@code ai_summary}，
+     * 下一章的 {@code {{summary}}} 就会把它当成「更早的剧情」喂回去。
+     * 于是它<b>会以真前情的身份进入真实模型的上下文</b>，而界面上没有任何一处提示这件事。
+     *
+     * <p>★ 所以标记必须落在<b>产出正文里</b>，不能靠界面上的「演示模式」标签 ——
+     * 那个标签只说明「现在这个进程不调真模型」，管不到「库里这条摘要是谁写的」；
+     * 而一旦有人把 {@code novel.ai.provider} 切回 deepseek，
+     * 那个标签就消失了，<b>而假摘要还留在库里继续被喂回去</b>。
+     * 写进正文的标记则相反：它<b>跟着数据走</b>，只要那一行还在，
+     * 「这条摘要不是真的」就是一句可查的事实，而不是要靠人记着的背景知识。
+     *
+     * <p>★ 按 context（要压缩的正文）的哈希挑一段，理由同 {@link #continueWriting}：
+     * 连点两次得到一模一样的结果，看的人第一反应是按钮坏了。
+     */
+    private String summary(AiRequestDTO request) {
+        String source = String.valueOf(request.getContext());
+        String[] passages = {
+                """
+                主要人物在上一段里各自做出了一个不可逆的选择：一个把退路封死，
+                另一个第一次说了实话，而第三个人什么都没说 —— 但正是那份沉默让前两个人
+                意识到，他们以为的「共同目标」从一开始就不是同一个。
+
+                局势上，明面上的冲突暂时平息，暗处那个一直没被点名的角色开始有了动作。
+                主角手里多了一条当时看来无关紧要的线索，尚未意识到它的用处。""",
+                """
+                上一段以一次代价不小的胜利收尾：想做的事做成了，但失去的东西
+                比预期多。主角对外表现得若无其事，独处时的反应才是真正的状态。
+
+                值得注意的是两处伏笔 —— 一句被打断的话、一个当时没解释的动作 ——
+                它们都还没有回收，后文需要回来交代。反派这一段的动机已经露出冰山一角，
+                但真实目的仍被遮着。""",
+                """
+                这一段的主线是「靠近」：两个人从互相试探走到愿意交换一部分真话，
+                各自保留的最后那点秘密成为下一段冲突的引信。
+
+                支线上，配角的那条线第一次和主线交汇，交汇点是一个谁都没在意的细节。
+                环境描写里出现过两次的那个意象应当在后文再次出现，用来标记时间的推移。"""
+        };
+        String body = passages[Math.floorMod(source.hashCode(), passages.length)];
+
+        /*
+         * ★ 顺带把「覆盖了多少字」写进产出：mock 读不懂正文，但它能证明
+         *   正文【真的送到了】—— 这个数字与请求侧对不上（比如全是 0、
+         *   或者明显小于章节字数之和），就说明组装那一段出了问题，
+         *   而不是模型的问题。★ 和上面那行自我标识一样，都是「把内部状态
+         *   变成一个能被看见的数字」那条思路。
+         */
+        return "【演示数据】以下梗概由 MockAiStreamSource 生成，未调用真实模型，"
+                + "不可作为正式前情使用。本次压缩覆盖正文约 "
+                + source.codePointCount(0, source.length()) + " 字。\n\n" + body;
+    }
+
     /* ==================== 私有工具 ==================== */
+
+    /**
+     * 请求里有没有「中途失败」的测试钩子。
+     *
+     * <p>★★ 必须同时看 {@code prompt} 和 {@code context}。
+     * 摘要场景的 {@code prompt} 是<b>服务端</b>填的（作者点的是一个按钮，
+     * 按钮上没有文案可发），唯一的作者输入是 {@code context}（要压缩的正文）——
+     * 只看 prompt 的话，<b>摘要就是唯一一个没法验证失败分支的场景</b>，
+     * 而它恰恰是「生成失败但一行都不许写」这条规则最需要被证明的地方
+     * （一条编出来的假摘要会污染后面所有章节）。
+     *
+     * <p>★ 反过来，让钩子的<b>触发条件变宽</b>是安全的：它只在演示实现里存在，
+     * 且触发它需要请求里真的含那个魔法字符串 —— 不会有人误触。
+     */
+    private static boolean hasFailMarker(AiRequestDTO request) {
+        return containsFailMarker(request.getPrompt()) || containsFailMarker(request.getContext());
+    }
+
+    private static boolean containsFailMarker(String text) {
+        return text != null && text.contains(FAIL_MARKER);
+    }
 
     /**
      * 从 prompt 里取一个能当标题的短句。

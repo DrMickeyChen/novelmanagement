@@ -9,6 +9,9 @@
  *
  * ready: false 的项只展示不可点（业务页面还没做）。
  * P5 每做完一页就把对应项的 ready 翻成 true。
+ * ★★ E1/S9 之后这里已经没有 ready: false 的项了 —— 十五项全部落地。
+ * 这个机制**留着不删**：它是「菜单先于页面」这个做法（seed 里 sys_menu
+ * 一次给全、页面一页页补）的落点，删掉它就等于下次要再发明一遍。
  */
 import { ref, computed } from 'vue'
 import { useRoute } from 'vue-router'
@@ -41,7 +44,10 @@ const activeMenu = computed(() => route.path)
  *   而不是「在一堆散落的章节里挑着审」。
  *   为一个从作品进去的子页面单开权限点，只会让角色配置更碎。
  *
- * ★ 「违禁审核」是第三期 E1 的（AI 自动过滤），先列出来占位。
+ * ★ 「违禁审核」是第三期 E1/S9 做的（AI 两层过滤的人工待办队列）。
+ *   ★★ 它是这一页**唯一一个「队列」**：其余菜单项点进去都是管理/配置，
+ *   而它是一份待办 —— 所以它的默认筛选是「待确认」，
+ *   而且它自己不做审核动作，只「去处置」跳既有页面 + 「排除」标记误杀。
  */
 const menus = ref([
   { path: '/', title: '工作台', icon: '📊', ready: true },
@@ -65,7 +71,7 @@ const menus = ref([
       { path: '/author-apply', title: '作者申请', icon: '📝', ready: true, perm: 'system:author:apply' },
       { path: '/role', title: '角色管理', icon: '🔑', ready: true, perm: 'system:role:list' },
       { path: '/menu', title: '菜单管理', icon: '🗂️', ready: true, perm: 'system:menu:list' },
-      { path: '/ai', title: 'AI 配置', icon: '🤖', ready: false, perm: 'system:ai:config' },
+      { path: '/ai', title: 'AI 配置', icon: '🤖', ready: true, perm: 'system:ai:config' },
     ],
   },
 
@@ -75,7 +81,7 @@ const menus = ref([
     children: [
       { path: '/notice', title: '公告管理', icon: '📢', ready: true, perm: 'ops:notice:list' },
       { path: '/log', title: '审核日志', icon: '📋', ready: true, perm: 'ops:auditlog:list' },
-      { path: '/ai-audit', title: '违禁审核', icon: '⚠️', ready: false, perm: 'ops:aiaudit:list' },
+      { path: '/ai-audit', title: '违禁审核', icon: '⚠️', ready: true, perm: 'ops:aiaudit:list' },
     ],
   },
 ])

@@ -26,7 +26,7 @@ import org.springframework.stereotype.Component;
  * ★★ <b>但这里原来写的推翻理由也是错的，M3 实施时改正过一次：</b>
  * 原文说顺序消费「{@code maxReconsumeTimes} 默认 {@code Integer.MAX_VALUE} →
  * 永不放弃、永不进 {@code %DLQ%}、一条毒消息把整条 MessageQueue 永久卡死」。
- * <b>实测证明：只要显式配了 {@code maxReconsumeTimes}（四个消费者都写了 3），
+ * <b>实测证明：只要显式配了 {@code maxReconsumeTimes}（六个消费者都写了 3），
  * 顺序消息重试 3 次后照常进 DLQ、队列照常前进。</b>
  * 「永久卡死」从来不是必然，只是<b>不写时的默认值</b>。
  * 实测记录（时间戳 + {@code reconsume} 计数 + DLQ 里的原始消息）见

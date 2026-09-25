@@ -101,4 +101,40 @@ public class CommentTextLookupImpl implements CommentTextLookup {
          */
         return result == null ? Map.of() : result;
     }
+
+    /**
+     * 批量取评论正文全文 —— <b>E1 新增</b>，给 AI 违禁审核用。
+     *
+     * <p>★ 与 {@link #briefsOf} 逐行同形（连空集合短路、连 {@code unwrap}
+     * 而不是 {@code unwrapBusiness} 都一样），只有两处不同：
+     * 返回的是<b>正文全文</b>而不是截断过的素材，且没有那个
+     * 「对端返回 null 兜成空 Map」之外的第二层兜底 —— 因为它返回的就是个 Map。
+     *
+     * <p>★★ <b>空值在这里不能兜。</b>对端把「评论已删除」表达为
+     * 「这个 id 不在 Map 里」，而 {@link #briefsOf} 里那句
+     * {@code result == null ? Map.of() : result} 兜的是<b>对端返回了整个 null</b>
+     * （HTTP 这一层才有的状态），不是「某条评论查不到」。两件事别混：
+     * 把「查不到」兜成空串就等于告诉审核链「这条评论没有内容」，
+     * 而审核链对空内容的结论是「无命中 → 排除」——
+     * <b>一句对从没被审过的内容说的「通过」</b>。
+     *
+     * @param commentIds 评论 id 集合，允许为空
+     */
+    @Override
+    public Map<Long, String> textsOf(Collection<Long> commentIds) {
+        // ★ 空集合短路：省下一次没有任何意义的跨服务往返（同 briefsOf）
+        if (commentIds == null || commentIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, String> result = InternalResults.unwrap(
+                commentBriefClient.commentTexts(commentIds),
+                "批量取评论正文 count=" + commentIds.size());
+
+        /*
+         * ★ 这一句兜的是「对端返回了 null」（HTTP 层多出来的状态），
+         *   与「某条评论不在 Map 里」无关 —— 见方法注释。
+         */
+        return result == null ? Map.of() : result;
+    }
 }

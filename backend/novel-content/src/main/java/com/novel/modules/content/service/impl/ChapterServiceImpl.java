@@ -12,6 +12,7 @@ import com.novel.common.result.PageResult;
 import com.novel.common.result.MybatisPageResults;
 import com.novel.common.result.ResultCode;
 import com.novel.common.vo.ChapterBriefVO;
+import com.novel.content.mq.producer.AiAuditNotifier;
 import com.novel.modules.content.dto.ChapterCreateDTO;
 import com.novel.modules.content.dto.ChapterSaveDTO;
 import com.novel.modules.content.entity.Chapter;
@@ -83,6 +84,13 @@ public class ChapterServiceImpl implements ChapterService {
     private final NovelService novelService;
     private final NovelAccessGuard guard;
     private final AuditLogService auditLogService;
+
+    /**
+     * ★ E1/S8：提交审核时投一条 {@code AI_AUDIT}。
+     * <p>它和 {@code NovelIndexNotifier} 是同一层的生产器 ——
+     * <b>它自己不做任何判定</b>，只把「有内容要审」这件事投出去。
+     */
+    private final AiAuditNotifier aiAuditNotifier;
 
     /* ================================================================
      *  作者端
@@ -246,6 +254,31 @@ public class ChapterServiceImpl implements ChapterService {
         }
 
         transitStatus(chapter, ChapterStatus.PENDING, null);
+
+        /*
+         * ★★★ E1/S8：投一条「这一章要过 AI 审核」。
+         *
+         * 【为什么投在这里，而不是投在 transitStatus 里面】
+         * transitStatus 是章节状态的【唯一】改动入口，四个出口共用它
+         * （提交 / 通过 / 驳回 / 撤回 / 自动退回草稿）。挂在里面就等于
+         * 「所有状态变化都触发一次 AI 审核」—— 包括管理员点「通过」，
+         * 而那一刻内容一个字都没变，审的还是一样的正文（白花钱）。
+         * ★ 判据：AI 审核的对象是【内容版本】，不是【状态】。
+         * 内容在 submit 之后就被锁住了（PENDING 期间 isEditable=false，
+         * 见 ChapterStatus），所以「提交时投一次、之后内容必然没变」
+         * 这件事是被状态机保证的，不是靠自觉。
+         *
+         * 【为什么在事务里投也没问题】
+         * 走的是 AfterCommit（见 AiAuditNotifier）：事务回滚时这条消息
+         * 根本不会发出去 —— 不会出现「章节没提交成功，AI 却审了一遍」
+         * 这种花了钱又不算数的情况。
+         *
+         * 【★ 它失败了会怎样】
+         * 投递失败不会让提交失败（AfterCommit 里吞掉了）。后果是这一章
+         * 在人工队列里【少一条 AI 提示】—— 人工那道门（status=1 待审核）
+         * 一点没变。这是接受的取舍，理由见 AiAuditNotifier 的类注释。
+         */
+        aiAuditNotifier.notifyChapterAudit(chapter.getId(), chapter.getNovelId());
     }
 
     @Override

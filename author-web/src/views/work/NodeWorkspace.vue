@@ -204,6 +204,29 @@ function gatherAiRequest(scene) {
   const n = props.node
   if (!n) return { error: '请先在左侧选中一个节点' }
 
+  /*
+   * ★★ E1：三个 id —— 让【服务端】去查作品名 / 当前大纲节点 / 前情摘要。
+   *
+   *   这三样内容都在服务端自己的库里（novel / novel_outline / ai_summary），
+   *   所以这里只报「是哪本书的哪个节点」，**不把内容传上去**。
+   *   ★ 传上去的话会有两个来源，而「模板里的 {{outline}} 到底来自哪一份」
+   *     将没有任何办法回答。
+   *
+   * ★★★ 三个 id 一律**无条件带上**（而不是在每个场景的 return 里各写一行）：
+   *   分散写的话，漏掉的那个场景的症状是「服务端少拼了一段上下文」——
+   *   提示词照样渲染、模型照样生成、界面一切正常，**没有任何地方会报错**。
+   *   用展开写在一处，这个错法就构造不出来。
+   *
+   * ★ 用 `?? undefined` 而不是直接给值：`undefined` 在 JSON 里【整个键消失】，
+   *   而 `null` 会把键发出去。后端两者都当「没给」，但少发一个键
+   *   让「这次请求到底带了什么」在抓包时一眼可读。
+   */
+  const ids = {
+    novelId: props.novelId ?? undefined,
+    nodeId: n.id ?? undefined,
+    chapterId: n.chapterId ?? undefined,
+  }
+
   // ★ 节点上的剧情笔记就是这一段的写作意图，是「生成大纲」和
   //   「提供灵感」最好的上下文。截到 2000 字 —— 后端 context 上限是 8000，
   //   留出富余给别的内容。
@@ -211,6 +234,7 @@ function gatherAiRequest(scene) {
 
   if (scene === 'outline') {
     return {
+      ...ids,
       prompt: `为「${n.title}」生成下一级大纲`,
       context: note || undefined,
     }
@@ -226,6 +250,7 @@ function gatherAiRequest(scene) {
     const tail = tailOf(chapterRef.value?.content, 2000)
     if (!tail) return { error: '正文还是空的，先写几句再让 AI 接着写' }
     return {
+      ...ids,
       prompt: `接着往下写「${chapterRef.value?.title || n.title}」`,
       context: tail,
     }
@@ -240,11 +265,12 @@ function gatherAiRequest(scene) {
      */
     const selected = chapterRef.value?.getSelection?.() ?? ''
     if (!selected) return { error: '请先在正文里选中要润色的那一段，再点「润色段落」' }
-    return { prompt: '润色下面这段文字', context: selected }
+    return { ...ids, prompt: '润色下面这段文字', context: selected }
   }
 
   if (scene === 'inspire') {
     return {
+      ...ids,
       prompt: `为「${n.title}」提供几个剧情走向`,
       context: note || undefined,
     }

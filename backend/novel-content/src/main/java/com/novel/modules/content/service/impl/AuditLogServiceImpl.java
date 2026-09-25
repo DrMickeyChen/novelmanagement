@@ -7,6 +7,8 @@ import com.novel.common.enums.AuditTargetType;
 import com.novel.common.result.PageResult;
 import com.novel.common.security.UserContext;
 import com.novel.content.config.AuditAggExecutorConfig;
+import com.novel.modules.ai.entity.AiAuditResult;
+import com.novel.modules.ai.mapper.AiAuditResultMapper;
 import com.novel.modules.content.entity.AuditLog;
 import com.novel.modules.content.entity.Chapter;
 import com.novel.modules.content.entity.Novel;
@@ -52,12 +54,36 @@ public class AuditLogServiceImpl implements AuditLogService {
 
     private final AuditLogMapper auditLogMapper;
 
+    /**
+     * ★★★ E1/S9：AI 审核队列的联动口，<b>本类是它唯一的调用方</b>。
+     *
+     * <p><b>为什么是这里</b>：{@link #record} 是<b>所有人工处置的唯一汇聚点</b>
+     * （章节在 content 内直接调、评论与作者申请经 {@code AuditRecordConsumer} 调），
+     * 所以「AI 判定被人处置了没有」这件事只在这里问一次就覆盖全部入口。
+     *
+     * <p>★ <b>它只做一件事：把 {@code ai_audit_result} 里那条待办标成已处置。</b>
+     * 不碰内容状态机 —— AI 审核自始至终<b>不碰任何业务状态</b>（判断 3.2），
+     * 这是那条不变量在代码上的落点：本类里没有任何一行能改
+     * {@code novel} / {@code chapter} / {@code novel_comment}。
+     *
+     * <p>★★ <b>方向别读反了</b>：不是「处置完顺手记一笔 AI 队列」，
+     * 而是「这条流水<b>就是</b> AI 队列的处置凭据」。所以这段逻辑必须和 INSERT
+     * 在<b>同一个事务</b>里（本类没有 {@code @Transactional}，传播级别是
+     * {@code REQUIRED} —— 事务由状态机那个入口开着，见接口注释）。
+     * 拆成两个事务的话，会出现「流水记了、队列没动」——
+     * 一条<b>永远不消失的待办</b>，而它是被人的一次真实处置留下的。
+     */
+    private final AiAuditResultMapper aiAuditResultMapper;
+
     /*
      * ★ 这三个依赖【只服务于 page()】，record() 一个都不用。
      *
      * 看起来像是「一个类被拆成了两个职责」，但它们是同一件事的两面：
      * record 负责「记的时候不丢东西」，page 负责「读的时候补上人看得懂的信息」。
      * 拆成两个类反而会让「流水表只追加」这条规矩散在两个文件里。
+     * ★ E1/S9 补一句：上面那个 {@code aiAuditResultMapper} 是 record 侧的第一个
+     *   「不只是往 audit_log 里写一行」的依赖。它没有推翻这个分工 ——
+     *   联动写的是【AI 队列的状态】，不是流水；流水本身仍然只追加。
      */
     private final NovelMapper novelMapper;
     private final ChapterMapper chapterMapper;
@@ -177,6 +203,78 @@ public class AuditLogServiceImpl implements AuditLogService {
          */
         log.info("审核流水 | type={} targetId={} action={} operatorId={} at={}",
                 targetType, targetId, action, entity.getOperatorId(), entity.getCreateTime());
+
+        /*
+         * ★★★ E1/S9：AI 审核队列的联动，见字段注释与 AiAuditResultMapper#linkHumanDisposition。
+         *   位置就在 INSERT 【之后】、同一个方法体里 —— 这两件事是一个事务里的
+         *   「一次处置」，中间不允许出现第三条路径（见那个方法的注释）。
+         */
+        linkAiAuditQueue(entity);
+    }
+
+    /**
+     * 把「这次人工处置」回写到 AI 审核队列（E1/S9）。
+     *
+     * <p><b>★★★ 只有【通过】和【驳回】两个动作有联动，其余一个都不动。</b>
+     * 判据是「这个动作回不回答『AI 当时那一判对不对』」：
+     * <pre>
+     *   通过(APPROVE) → 排除误杀   —— 内容没问题，AI 那次是误报
+     *   驳回(REJECT)  → 确认违规   —— 内容确实有问题，AI 那次判对了
+     *   提交 / 退回草稿 / 下架 / 上架 → 两个字都不回答
+     * </pre>
+     * ★ 尤其是<b>下架(OFFLINE) / 上架(REPUBLISH)</b>：它们改的是<b>对外可见性</b>，
+     * 不是对内容的审核结论 —— 一本书可能因为版权到期被下架，
+     * 那与「AI 说它有违禁内容」这件事毫无关系。把下架算成「确认违规」，
+     * 症状是队列里一批<b>被冤枉的</b> AI 判定被标成「已确认」。
+     *
+     * <p>★ <b>{@code SUBMIT} 也不联动</b>，虽然它看起来像「提交给人审」：
+     * 它不回答任何问题，而且<b>作者自己就能提交</b>（不是一次管理员处置）。
+     *
+     * <p>★★ <b>不按 targetType 分流</b>：{@code AUTHOR_APPLY(4)} 在本表里天然命中 0 行。
+     * 加一个「先判断类型再决定要不要查」的分支，就是把
+     * 「哪些类型有 AI 判定」这件事<b>抄成了第二份真相</b> ——
+     * AI 审核将来覆盖新类型时，那个分支不会报错，只会让那些新类型的处置
+     * <b>永远不清队列</b>（R9 的那个「不会消失的待办」）。
+     *
+     * <p>★ <b>影响 0 行只记 DEBUG 级别的 info，不告警</b>：这是最常见的一种路径 ——
+     * 管理员处置了一个 AI 从没标过的目标（绝大多数章节、全部作者申请）。
+     * 把它打成 WARN 会让日志里天天响着一堆正常事。
+     */
+    private void linkAiAuditQueue(AuditLog entity) {
+        Integer aiStatus = switch (entity.getAction()) {
+            case APPROVE -> AiAuditResult.STATUS_EXCLUDED;
+            case REJECT -> AiAuditResult.STATUS_CONFIRMED;
+            /*
+             * ★ switch 表达式 + default 而不是 switch 语句：新增一个 AuditAction 时
+             *   这里【不会】被编译器拦住（有 default），所以那句判断要留在上面的注释里 ——
+             *   这是本项目「用 switch 表达式逼自己回来补分支」那条惯例的一个诚实例外：
+             *   这里的正确答案本来就是「别的动作都不联动」，写成穷举反而会把
+             *   「不联动」写成四行重复的 null。
+             */
+            default -> null;
+        };
+        if (aiStatus == null || entity.getTargetType() == null || entity.getTargetId() == null) {
+            return;
+        }
+
+        int rows = aiAuditResultMapper.linkHumanDisposition(
+                entity.getTargetType().getCode(),
+                entity.getTargetId(),
+                aiStatus,
+                entity.getOperatorId(),
+                /*
+                 * ★ 用流水自己的 create_time 而不是 now()：MQ 有积压时这两者差得很远，
+                 *   而队列页上「处置时间」要回答的是「管理员什么时候审的」。
+                 *   ★ 它是 MybatisMetaObjectHandler 在 INSERT 时填上的真实落库值
+                 *   （老重载传 null → handler 填 now；消费者那条路由消息带来事件时刻）。
+                 */
+                entity.getCreateTime());
+
+        if (rows > 0) {
+            log.info("AI 审核队列联动 | targetType={} targetId={} action={} -> status={} by={}",
+                    entity.getTargetType(), entity.getTargetId(), entity.getAction(),
+                    aiStatus, entity.getOperatorId());
+        }
     }
 
     @Override

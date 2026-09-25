@@ -45,6 +45,19 @@ import java.util.Map;
  * content 对评论表的<b>全部</b>需求就是这一个问题
  * （「这几十条评论分别说了什么、挂在什么对象上」），
  * 多一个方法都是在替 interaction 决定它的表该怎么被读。
+ * <p>★★★ <b>E1 破了这个「只有一个方法」，而破它的理由必须写在这里：
+ * 那条规矩禁的是「同一个问题多问几遍」，不是「有几个问题」。</b>
+ * AI 违禁审核问的是<b>另一个</b>问题 ——
+ * 「这条评论的<b>全文</b>是什么」（上面那个问的是「显示成什么样」，
+ * 答案已经截断到 30 字）。两者只共享『评论 id → 它说了什么』这一层，
+ * <b>下面需要的精度不同、失败语义也相反</b>：
+ * <ul>
+ *   <li>{@code commentBriefs}：少了 → 审核日志那一行显示「（已删除）」，坏但不致命；</li>
+ *   <li>{@code commentTexts}：少了 → <b>审核链拿空正文去扫 → 无命中 → 判成「排除」</b>，
+ *       一句对从没被审过的内容说的「通过」。所以它<b>更不能降级</b>。</li>
+ * </ul>
+ * ★ 判据仍然是「这个方法是替对端决定它的表怎么被读，还是问一个既有的事实」——
+ * 后者成立，所以它该在这里。
  *
  * <p>★ {@code name = "novel-interaction"} 交给 Nacos + LoadBalancer 解析
  * （{@code lb://}），所以 novel-content 的 pom 里必须有
@@ -75,4 +88,26 @@ public interface CommentBriefClient {
      */
     @PostMapping("/comment-briefs")
     Result<Map<Long, CommentBriefDTO>> commentBriefs(@RequestBody Collection<Long> commentIds);
+
+    /**
+     * 批量取评论<b>正文全文</b>，返回 {@code {commentId: "正文"}} —— <b>E1 新增。</b>
+     *
+     * <p>给 AI 违禁审核用（{@code AiAuditService}）。<b>★ 它与上面那个方法不是一回事，
+     * 别拿上面那个的返回值凑合</b>：那个的正文截断到 30 字，
+     * 送进审核等于让模型只看前 30 个字就下结论 —— 而<b>结果是「无风险」，
+     * 没有任何一处报错</b>。
+     *
+     * <p>★★ <b>它沿用了本客户端的降级策略：不降级</b>（{@code CommentBriefClientFallbackFactory}
+     * 里是 {@code logThenRethrow}）。这不是「顺手继承」——
+     * 对这条接缝来说那正是唯一正确的选择：降级成空 Map 会让调用方
+     * 把「取不到」读成「评论没了」，而降级成空串更坏，
+     * <b>空正文扫不出任何词 → 判成机器排除 → 一句假的「通过」</b>（铁律 10）。
+     * ★ 判据与 {@code ContentUserLookup#userIdsByNickname} 完全一致：
+     * <b>参与筛选的输入一律不降级。</b>
+     *
+     * <p>★ 查不到的 id 不会出现在 Map 里 —— 那是「这条评论已不存在」
+     * （作者提交后、审核前删掉了评论），处置是 ACK 且不写判定行。
+     */
+    @PostMapping("/comment-texts")
+    Result<Map<Long, String>> commentTexts(@RequestBody Collection<Long> commentIds);
 }

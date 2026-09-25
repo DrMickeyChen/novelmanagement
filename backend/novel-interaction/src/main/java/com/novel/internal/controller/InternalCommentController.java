@@ -30,6 +30,15 @@ import java.util.Map;
  * 要么问一句，要么把评论正文抄一份到 content（那就是 DDL + 一致性债，
  * 见下面第 ① 种解法）。
  *
+ * <p><b>★★ E1 在本类上加了【第二个端点】（{@code /comment-texts}，给 AI 审核取全文），
+ * 那是同一条边上的第二个端点，不是第二条边</b> —— 两者是同一个
+ * {@code @FeignClient}（{@code CommentBriefClient}）、同一个服务、同一个方向。
+ * 服务的出站边清单查的是「有哪些 {@code @FeignClient} 声明」，
+ * 往一个既有客户端上加方法<b>一行都不会变</b>；而环的论证也不会因此加重：
+ * 环是「A 读 B / B 写 A」这件事，多读一个字段不是多一条边。
+ * ★ 为什么不能让两个用途共用一个端点，见
+ * {@code InternalCommentQueryService} 的类注释（截断是展示契约，不是技术限制）。
+ *
  * <p><b>★★ 但同一条边在【服务级】上确实是个环，这个环的完整论证就在这里
  * （不再有「别处」了）。</b>
  * M2/M3 期间它写在 content 侧的 {@code InternalAuditLogController} 类注释里，
@@ -116,5 +125,24 @@ public class InternalCommentController {
     public Result<Map<Long, CommentBriefDTO>> commentBriefs(
             @RequestBody(required = false) Collection<Long> commentIds) {
         return Result.success(queryService.briefsOf(commentIds));
+    }
+
+    /**
+     * 批量取评论<b>正文全文</b>，返回 {@code {commentId: "正文"}} —— <b>E1 新增。</b>
+     *
+     * <p>调用方是 content 的 AI 违禁审核消费者。它和上面那个端点<b>看着像是一件事，
+     * 其实不是</b>：上面那个的正文截断到 30 字（审核日志的一行），
+     * 这一个必须是全文 —— 截断过的正文送审，等于让模型只看前 30 个字就下结论，
+     * 而且失败得无声无息。取舍写在 {@code InternalCommentQueryService} 的类注释里。
+     *
+     * <p>★ 仍然是 {@code POST} + {@code required = false}，理由同上（镜像既有范式）。
+     * <p>★ <b>查不到的 id 不会出现在 Map 里</b> —— 调用方按「这条评论已不存在」处理
+     * （评论在提交后、审核前被删掉是完全可能的），<b>而不是</b>当成一条空正文：
+     * 空正文在审核链上会被判成「无命中 → 排除」，那是对这条评论说的一句假话。
+     */
+    @PostMapping("/comment-texts")
+    public Result<Map<Long, String>> commentTexts(
+            @RequestBody(required = false) Collection<Long> commentIds) {
+        return Result.success(queryService.textsOf(commentIds));
     }
 }
