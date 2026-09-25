@@ -98,6 +98,7 @@ backend/
 ├── novel-interaction/mq/producer/AiAuditProducer.java
 docs/sql/  ← ★ 第 22 张表 ai_sensitive_word + 列注释订正
 docs/tools/fake-openai.py  ← ★ 假端点（19 种故障注入 + 回放录制字节）；★ 不参与构建
+docs/tools/recorded/       ← ★ 真实 DeepSeek 响应的原始字节（R1/R2）—— 花钱买的，别删；见该目录 README
 admin-web/src/views/{ai/index.vue, ai-audit/index.vue} + api/ai.js + router + AdminLayout
 author-web/src/views/work/NodeWorkspace.vue   ← ★ 只加 3 个 id，提示词文本一字不动
 ```
@@ -430,6 +431,23 @@ DeepSeek 的流式响应**只在最后一块**带 `usage`，且**最后那一块
 - 无脑取 `choices[0].delta.content` → 最后一块 `ArrayIndexOutOfBoundsException`；
 - ★ 为了躲它而**跳过 `choices` 为空的块** → **usage 一起被跳过** →
   **`ai_usage_log` 的 token 全是 0，且不报错**。
+
+**★★ R1 实测把这句话订正了一半（见 §8.4 的 `R1-E4`）：**
+
+| 这半句 | 实测 |
+|---|---|
+| 「`usage` 只在最后一块」 | **对**。303 帧里恰好 1 帧带 `usage`，就是最后一帧 |
+| 「最后那一块的 `choices` 可能是空数组」 | **对 DeepSeek 不成立**。实测那一帧是 `[{"delta":{"content":""},"finish_reason":"length"}]` —— **一个元素、content 是空串**，不是 `[]` |
+
+★★★ **但护栏照写，一个字都不能省。** 空 `choices` 是 **OpenAI 官方协议**里 `stream_options.include_usage` 的形状
+（DeepSeek 在这点上**偏离了**它自称兼容的那份协议）。
+**只按 DeepSeek 的形状写，就是让代码在换一个 OpenAI 兼容端点时静默失效** ——
+而失效的表现恰好是「token 全 0 且不报错」，也就是这段注释本来要防的那件事。
+★ **判据要从「DeepSeek 会怎样」写成「协议允许什么」** —— 这和铁律 8 的三种形状同源：
+**把判据钉在某一次观测上，它就只在那个观测成立时有效。**
+★ 实测另外两条也一并记下：`delta` 的键只有两种形状（首帧 `{role,content}`、其余 `{content}`），
+**`content` 从不缺席、也从不 `null`** —— 所以「取 `choices[0].delta.content`」在本样本里**不会** NPE。
+★ 这一段的可复现证据是 `docs/tools/recorded/r1-stream.sse`（真实字节，见该目录 README）。
 
 > **判据：`ai_usage_log` 里 token 全 0，和「模型没返回 usage」长得一模一样。**
 > → **只有一次真实调用能证明它。** 这是**唯一无法用假端点覆盖**的一条：
@@ -770,6 +788,14 @@ HTTP 200 + `text/event-stream`（说明失败发生在流开始【之后】）�
 ★ 这正是铁律 8 的形状：**注入「看起来生效了」**（有行、有数据），实际什么都没验。
 ★ 正确用法：`fake-429` / `fake-no-usage` / `fake-error-frame` / `fake-truncate` …。
 
+★ **补一条（写 README 时才发现，2026-09-25）**：`fake-replay` **只对流式那条有效** ——
+它在假端点里排在 `stream` 分流**之前**，且 `_replay()` **永远吐 `text/event-stream`**。
+用它跑**审核**（非流式）会让客户端拿 SSE 帧当 JSON 解析 → `parse_failed` + 「没有 `ai_audit_result` 行」。
+★ 我第一版 README 把它写成「上面全部」，是**一句会把人带沟里的话**：
+读者会以为回放能覆盖两条路，然后在审核上撞一个和回放毫无关系的失败。
+**审核那条的对照组是 `fake-verdict`（裸 JSON）与 `fake-json-fence`（同一份 JSON 加围栏）** ——
+后者正是 R2 那个问题的对照组，**且至今仍然必要**（R2 的样本量是 1）。
+
 ### 坑 2 ★★★ `Vue` 模板里不能写 `{{ '{{名字}}' }}` —— `/ai` 页面曾经**从未编译通过**
 
 **症状**：`GET :5175/admin/src/views/ai/index.vue` → **HTTP 500**，
@@ -854,6 +880,26 @@ S6 的验收全部走 HTTP（预览端点、配置读写），页面本体一次
 - **`docs/tools/fake-openai.py` 跑起来会产生 `docs/tools/__pycache__/`** ——
   它 untracked 且**不在 `.gitignore` 里**，`git add -A` 会把它带进提交（已补忽略规则）。
 
+### 坑 10 ★★★ 录制代理的文件名由**启动参数**决定，而跑批脚本以为它由**请求**决定 —— 差点为它再花一次钱
+
+`rec.py` 的命名是 `"%s-%02d-%s" % (PREFIX, _seq[0], "stream"|"json")`，
+而 `PREFIX` 来自**启动时的环境变量** `REC_PREFIX`（那次是 `proxycheck`）。
+跑批脚本却写的是 `newest("r1-")` / `newest("r2-")` —— **这两个名字永远不会存在。**
+
+结果：R1 的 `R1-E1` 与 R2 的 `R2-H1` **都报「没有录制文件」**，
+而**它们想找的那两个文件，一个 87669 字节、一个 670 字节，都好端端躺在 `recorded/` 里**（叫 `proxycheck-02-*` / `proxycheck-03-*`）。
+
+★★★ **真正的危险不是这两条假失败，而是它引导你去做的那个动作**：
+「录制没成功 → 那就再跑一次真调用」—— **再花一次钱去重新生成一份本来就在手上的字节。**
+（正确动作：`ls recorded/` 按时间戳认领。这次就是这么做才没重复计费。）
+
+**根因（铁律 8 家族的又一例）**：判据本身没问题，**是测具里多出了一条没人声明、也从未被阳性对照过的隐含假设**
+——「文件名由请求决定」。而**阳性对照本来是免费的、且早就摆在眼前**：
+`proxycheck` 那一步已经产出过 `proxycheck-01-stream.sse`，
+只要当时用它跑一次 `newest("r1-")` 并断言「能找到」，$0 就能发现这个 bug。
+★ **「测具能找到自己产出的东西吗」本身要有一条断言**，否则所有「录制对不上」的失败
+都会伪装成「被测对象没产出」。
+
 ---
 
 ## 八、验收证据
@@ -867,12 +913,13 @@ S6 的验收全部走 HTTP（预览端点、配置读写），页面本体一次
 | 3 | 出站边 | ✓ `@FeignClient` 声明 **5 条，与 M5 逐条相同**（interaction→content / interaction→auth / search→content / content→auth / content→interaction）。★ **auth 仍是 0 条**（按 M5 立的工作判据：`@FeignClient` 声明 0、`@EnableFeignClients` 0、pom 去掉 XML 注释后 openfeign+loadbalancer 0）。★ E1 新增的 `interaction → content` 是 **MQ，不是边** |
 | 4 | 零新依赖 | ✓ `git status --porcelain -- '*.pom' 'backend/**/pom.xml'` **为空**。★ 构件级判据（`BOOT-INF/lib` 差分 238 vs 238）在 S4 已做 |
 | 5 | MQ 不变量 | ✓ Tag **6** / 消费组 **6** / listener **6**，1:1。★ `GROUP_CONTENT_AI_AUDIT` ≠ `GROUP_CONTENT_AUDIT`；**五个老组一个不少** |
-| 6 | `ai_usage_log` 的 token 不全为 0 | ⏳ **只有一次真实调用能证明**（判断 4 明说了：假端点返回的是**我们以为的**形状）。见 8.4 |
+| 6 | `ai_usage_log` 的 token 不全为 0 | ✓ **R1 实测 `219/300/519`** —— 真阳性对照通过（8.4）。★ 这条**只有真实调用能证明**：假端点返回的是**我们以为的**形状，用它验等于用假设验假设 |
 | 7 | 路由不变式 | ✓ **网关 `application.yml` 不在变更列表里**（零改动）；本期唯一动过的 yml 是 content 自己的，且 diff 里无密钥字面量 |
 | 8 | 三端 `npm run build` | ✓ `npm_exit=0` ×3（`✓ built in 1.47s / 1.44s / 2.03s`）。★ 见坑 5：第一版判据是假通过 |
 | 9 | 种子基线 | ✓ `seed.sql` 的 diff 里 **没有任何 `sys_menu` / `sys_role_menu` 的 INSERT 改动**（只有一行验证注释被更新）。READER 0 / AUTHOR 2 / ADMIN 15、`sys_role_menu` 17 行**一位未动** —— 因为本期新增菜单行数 = 0（判断 5） |
 | 10 | staged diff 无密钥 | ✓ 提交前扫过 `^\+` 行：`sk-` 长串 / `AKIA` / `ghp_` / `-----BEGIN` / `eyJ…` 命中 **0**。`AI_KEY_SECRET` 与真实 API Key **都不在任何被提交的文件里**（`application.yml` 只有 `${AI_KEY_SECRET:}` 这个空默认） |
-| 11 | 不该进仓库的东西 | ✓ `docs/tools/__pycache__/` **没被 add**（本期补了 `.gitignore` 规则 `__pycache__/` + `*.pyc`） |
+| 11 | 不该进仓库的东西 | ✓ `docs/tools/__pycache__/` **没被 add**（本期补了 `.gitignore` 规则 `__pycache__/` + `*.pyc`）。★ **上游 401 的响应体刻意没有收录**（它会回显 Key 片段） |
+| 12 | ★ `docs/tools/recorded/` 四个录制文件 | ✓ `grep -c "sk-"` 与 `grep -ci "authorization\|bearer"` **逐个文件都是 0**；`git check-ignore` 不命中（确认会被跟踪）。★ 换录制文件时必须复验这两条 |
 
 ★ 提交号 **`fbd32a0 e1完成`**（107 files changed, 17000 insertions, 111 deletions）。
 
@@ -911,8 +958,53 @@ S6 的验收全部走 HTTP（预览端点、配置读写），页面本体一次
 | # | 调用 | 预算 | 状态 |
 |---|---|---|---|
 | **R3** | 错误 Key 打真端点（预期 401） | **0 token** | ✓ **已做，8/8 通过**。真 401 在 791ms 建连后返回；错误帧里**一个上游字节都没有**；`ai_usage_log` 落 `upstream_401` / `tokens=0/0/0` |
-| **R1** | 一次真流式 `WRITE`（`max_tokens=300`） | ≈300 token | ⏳ **待用户录入真实 Key 后执行** |
-| **R2** | 一次真非流式 `AUDIT`（高风险短文本） | ≈450 token | ⏳ 同上 |
+| **R1** | 一次真流式 `WRITE`（`max_tokens=300`） | ≈300 token | ✓ **已做，10/11 通过**（唯一那条失败是**测具命名**问题，见下）。实测 **219/300/519 token** |
+| **R2** | 一次真非流式 `AUDIT`（高风险短文本） | ≈450 token | ✓ **已做**。实测 **226/53/279 token**；整条 MQ → 词库 → AI 链走通 |
+| — | **合计** | ≈750 token | **798 token / 2 次计费调用** —— 与预算差 48 |
+
+**R1 的实测数值**（这些都是假端点给不了的）：
+
+| 判据 | 实测 |
+|---|---|
+| HTTP / Content-Type | `200` / `text/event-stream;charset=UTF-8` |
+| 增量帧数 | **300 帧** |
+| 首帧 / 末帧 | **735ms / 2820ms**（首末差 2085ms）→ **真的逐块到达**，没被任何一层缓冲 |
+| `[DONE]` | ✓ |
+| **U+FFFD** | **0 个**（475 字正文）→ 多字节中文**没有**被 `ofLines()` 切坏 |
+| **`total_tokens`** | **519** → 判断 4 的**真阳性对照通过** |
+| 请求体里的 `stream_options` | `{"include_usage": true}` → **真被支持** |
+
+★★ **B4/B5 必须一起看**：只断「首帧早」会被「一次性返回但开头就很快」蒙混，
+只断「首末差大」会被「慢但一次吐完」蒙混。**两个一起断才排除缓冲。**
+★★ 还有一个**免费**的副产物：`r1-stream.req.json` 里没有 `大纲：`/`前情摘要：` 这些**悬空标签行** ——
+因为该请求没带 `novelId`/`chapterId`，可选占位符走了「**整行移除**」（判断 2.2）。
+**这是那条规则在真实路径上的实证，代价 0**（请求体本来就录下来了）。
+★ 另一个有意思的旁证：我们喂的 `context` 是把同一句话重复 15 遍，
+模型**接住了这个信息**并写了一个「你推了十五次，我数着的」的故事 —— 说明组装出来的上下文真的到达了模型。
+
+**R2 的实测结论（它存在的全部目的）**：
+
+```
+{"riskLevel": 0, "hitWords": [], "comment": "文本为重复的场景描写，未包含违法违规、
+ 色情低俗、暴力血腥、涉政涉恐等实质内容，占位敏感词甲不构成实际风险。"}
+```
+
+**没有围栏** —— 裸 JSON，`finish_reason: "stop"`。
+★★ **但样本量是 1，它证明的是「这一次没包」，推不出「真实模型不会包」。**
+所以 `fake-openai.py` 的 `json-fence` 故障注入**必须保留**：它是解析器剥围栏能力的对照组。
+
+★★★ **R2 白捡了一个第一流的真阳性对照。** 看这一行服务端日志：
+
+```
+词库等级=1  AI等级=0  最终等级=1  命中词=1  AI是否跑成=true
+```
+
+**真实模型对这段文本判「无风险」，而词库判 1 —— 两层在真实数据上真的分歧了。**
+`AiAuditService` 取 `Math.max(词库, AI)`（第 326 行），于是这一条仍然进了人工队列。
+★ 如果当初写成「AI 说几就是几」，这条会落成 `risk_level=0` 的待办 ——
+**一个排在人工队列里、却标着「无风险」的条目**，正是铁律 10 反对的那种「看起来正常的假话」。
+★ 这条论证本来是写在代码注释里的**预判**，R2 让它变成了**有日志行号可查的事实**（`NovelContentService` 14:05:53）。
+**279 token 买到一次设计假设的现场验证，很便宜。**
 
 **R1 要回答的三件事，和它们为什么假端点答不了：**
 
@@ -937,6 +1029,63 @@ S6 的验收全部走 HTTP（预览端点、配置读写），页面本体一次
 
 **★ 执行完必须做的两件事**：① 与 console 用量页对账，确认**确实只有 2 次计费调用**；
 ② 把录制字节复制进 `docs/tools/recorded/`，之后所有回归走 `model=fake-replay`，**永久免费**。
+
+### ★★★ 8.4.1 对账：这条判据**不能用账本自己来判**（执行时才发现）
+
+计划里 ① 的原话是「与用量页对账，确认确实只有 2 次计费调用」。
+**执行时它失败了 —— 不是花钱超了，是这条判据本身问不出答案。**
+
+用量页里 `model = deepseek-chat` 的行有 **6 条**，不是 2 条：
+
+| 时间 | model | tokens | 真的计费了吗 |
+|---|---|---|---|
+| 09-25 **14:04:37** | `deepseek-chat` | 219/300/**519** | ★ **是** —— R1 |
+| 09-25 **14:05:54** | `deepseek-chat` | 226/53/**279** | ★ **是** —— R2 |
+| 09-25 00:03:30 | `deepseek-chat` | 11/22/**33** | **否** —— 打的是**假端点** |
+| 09-25 00:03:40 | `deepseek-chat` | 11/22/**33** | **否** —— 同上 |
+| 09-25 00:02:28 | `deepseek-chat` | 0/0/0 | **否** —— 假端点注入的 401 |
+| 09-25 00:04:43 | `deepseek-chat` | 0/0/0 | **否** —— 假端点注入的 abort |
+
+**根因：`ai_usage_log.model` 记的是【我们发出去的】模型名，不是【谁应答的】。**
+谁应答由 `ai_config.base_url` 决定，而**账本里根本没有这一列**。
+所以把 `base_url` 指向假端点、`model` 仍填 `deepseek-chat` 时，
+账本会生成一行**和真调用逐字同形**的记录 —— 连 token 都是非 0 的（假端点自己编的 `11/22/33`）。
+
+> **判据订正：账本回答的是「调了几次」，不是「花了几次钱」。
+> 「花没花钱」只能由【唯一知道请求出没出过这台机器】的那个组件回答。**
+
+**那个组件就是录制代理。** 它自己的日志是这份对账的真凭据：
+
+```
+proxycheck-01-stream upstream=401          ← R3：假 Key，401 在计费之前发生 → 0 元
+proxycheck-02-stream upstream=200  → saved  87669 bytes  ← R1：计费
+proxycheck-03-json   upstream=200  → saved    670 bytes  ← R2：计费
+```
+
+**它对真端点的全部出站流量就是这 3 次，其中 1 次是 401。所以「恰好 2 次计费调用」是被证实的** ——
+只不过证实它的是代理日志 + 时间戳，不是用量页。
+★ 这与铁律 8 的三种形状同源：**判据一旦钉在「模型的字符串」上，它就会被「同一个字符串」骗过。**
+★ 顺带一个可复用的结论：**「假端点验过的次数」和「真端点计费的次数」在账本里同形**，
+所以**只有出站侧（代理 / 抓包）能分开它们**。
+
+**② 已执行**：真实字节落进 `docs/tools/recorded/`（4 个文件 + 一份 README 说明来历与不可再生）。
+★ 其中**上游 401 的响应体刻意没有收录** —— 它会回显 Key 片段。
+该目录的 `grep -c "sk-"` 与 `grep -ci "authorization\|bearer"` **实测都是 0**。
+
+**★ 收尾（回到交付基线，已执行并逐项复核）**：
+
+| 项 | 收尾后的值 |
+|---|---|
+| `ai_config.enabled` | `0` |
+| `ai_config.api_key` | **空**（用 `clearApiKey: true`） |
+| `ai_config.base_url` | `https://api.deepseek.com/v1` |
+| content 进程 | 重启为 **mock**（**不带** `--novel.ai.provider=deepseek`），且**不带** `AI_KEY_SECRET` |
+| 复核 | 经网关 `GET /api/admin/ai/config` 返回 `effectiveProvider: "mock"` / `apiKeyConfigured: false`，9.5s 就绪 |
+
+★ **为什么必须把 Key 清掉**：它是由 `AI_KEY_SECRET` 加密的，而那个变量**不在交付基线里**。
+留着它的后果不是泄漏，而是「**`apiKeyConfigured=true` 但永远解不开**」——
+`AiConfigVO` 把这种状态渲染成 `apiKeyMasked=null` + 一条提示（见该文件注释，**刻意不返 500**），
+但一个**看着已配置、实际不可用**的状态对一个新克隆的仓库是纯噪音。**用户想再跑一次，重贴一次 Key 即可。**
 
 ---
 

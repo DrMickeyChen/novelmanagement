@@ -160,6 +160,14 @@ interaction 的 `/api/novels/*/comments` 系列（`4`）、search 的 `/api/sear
    ★ 解药是同一个：**换成差分式判据（和对照组比），别用阈值式（数个数）** —— 对照组的对齐是自动的。
    ★★ **M5 白捡的阴性对照**：同一条 traceId 日志里，请求行有 `[xxxx]`，调度线程行是 **`[]` 空的** ——
    这才证明 `[%X{traceId}]` 真在读 MDC，不是个写死的常量。**对照组就在同一份输出里，成本为零。**
+   ★★★ **第四种形状（E1）：判据被【同形的另一条记录】骗过 —— 而它问的是「花了多少钱」。**
+   `ai_usage_log.model` 记的是**我们发出去的**模型名，不是**谁应答的**；谁应答由 `ai_config.base_url`
+   决定，而账本里**没有这一列**。于是「打假端点但 model 填 `deepseek-chat`」会生成一行
+   **与真调用逐字同形**的记录（连 token 都非 0 —— 假端点自己编的）。
+   **实测：账本里 `model=deepseek-chat` 有 6 行，真计费的只有 2 行。**
+   **判据订正：账本回答「调了几次」，不回答「花了几次钱」；
+   「花没花钱」只能由【唯一知道请求出没出过这台机器】的组件回答（录制代理 / 抓包）。**
+   ★ 同源的一句话：**任何「用被测系统自己的记录去审计被测系统」的判据都会这样失效。**
 9. **★★ 削峰削的是【写】，不是读。** 「请求路径上跨服务调用归零」这种说法要警惕 ——
    M3 保留下来的两次 Feign 读**是有信息量的错误码**（`2001` / `3001` 的抗探测设计），不能为了好看搬走。
    准确说法：「请求路径上的**写**从『两次远程读 + 一次本地写』变成『一次投递』」。
@@ -327,14 +335,26 @@ MYSQL_PWD=root123456 "/c/Program Files/MySQL/MySQL Workbench 8.0/mysql.exe" \
   故障开关走**模型名**（`fake-429` / `fake-truncate` / `fake-replay` …）——★ **不认识的模型名会【静默回落 `ok`】**，
   实测踩过：注入 `429`（漏了 `fake-` 前缀）→ 返回完全正常的流，**一次故障都没测到，但流水行数看着对**。
 ★ `docs/tools/recorded/` 放**真实 DeepSeek 响应的原始字节**（R1/R2 录制），之后回归走 `model=fake-replay`，**永久免费**。
+  ★★ **但 `fake-replay` 只覆盖【流式】那条**（它排在 `stream` 分流之前，且永远吐 `text/event-stream`）——
+  拿它跑**审核**会让非流式客户端拿 SSE 帧当 JSON 解析，症状是 `parse_failed` + 「没有 `ai_audit_result` 行」。
+  **审核那条走 `fake-verdict` / `fake-json-fence`。**
   ★★ 之所以要录：`AiAuditVerdict.parse` 成功时**不打原文**，
   所以「真实模型有没有把 JSON 包在 ``` 围栏里」这件事在当前实现里**不可观测** —— 不录就只能推断。
   ★ 录制它需要一个**反向代理**；代理的纪律：`Authorization` 头**只打 `yes|NO`，绝不落盘、绝不打印**。
-★ `docs/tools/__pycache__/` 是运行假端点产生的，**不要提交**（不在 `.gitignore` 里，`git add` 时要避开）。
+  ★★ **上游 401 的响应体不许进这个目录**（它会回显 Key 片段）——
+  这四个文件的 `grep -c "sk-"` 与 `grep -ci "authorization\|bearer"` **换文件时必须复验，都要是 0**。
+  ★ **实测结论（R1/R2，798 token）**：`usage` 只在最后一帧，而那帧的 `choices` **不是空数组**
+  （是 `[{"delta":{"content":""},"finish_reason":"length"}]`）——
+  **与 OpenAI 官方协议里「usage 帧 choices 为 `[]`」不同**。★ 护栏照写：空 `choices` 是**协议允许**的形状，
+  按 DeepSeek 的观测写就只在 DeepSeek 上对。**判据要钉在协议上，别钉在一次观测上。**
+  ★★ **R2 的围栏结论样本量是 1**（这一次没包）——推不出「真实模型不会包」，
+  所以 `json-fence` 故障注入**必须保留**。
+★ `docs/tools/__pycache__/` 是运行假端点产生的，**已在 `.gitignore` 里**（`__pycache__/` + `*.pyc`）。
 
 ## 提交
 
 一期一个 commit，消息 `pN完成` / `mN完成` / `eN完成`（正文写清这一期做了什么、怎么验的）。直接提交到 `main`。
 ★ 提交前复验：12 个锁定文件 md5 未变、staged diff 里没有密钥/密码。
-★ E1 起多两条：**`ai_config` 回到交付基线**（`enabled=0` 且 `api_key` 为空）、
-  **`docs/tools/__pycache__/` 没被 add 进去**（它 untracked 且不在 `.gitignore` 里）。
+★ E1 起多两条：**`ai_config` 回到交付基线**（`enabled=0` 且 `api_key` 为空 —— 它是用
+  `AI_KEY_SECRET` 加密的，而那个变量**不在交付基线里**，留着会变成「显示已配置但永远解不开」）、
+  **staged 里没有 `__pycache__` / 没有上游 401 的响应体**。
