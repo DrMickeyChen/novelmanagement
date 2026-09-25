@@ -44,6 +44,14 @@ pnpm-debug.log*
 .classpath
 .project
 .settings/
+# HBuilderX（uni-app 的官方 IDE，E3 起在用）
+# ★ 它会在工程里生成 .hbuilderx/，实测里面只有一条 launch.json
+#   （内容就是「运行到安卓标准基座」这一条 —— 即"你上次点了哪个运行目标"的残留），
+#   与 .idea/runConfigurations 同性质：本机残留、没有协作价值。
+# ★★ 写成【不带路径的】.hbuilderx/（与上面的 .idea/ 同款）。带 mobile-web/ 前缀的话，
+#    哪天 HBuilderX 直接打开仓库根目录再生成一个，就又不被忽略了 ——
+#    忽略规则失效是静默的，本文件已经为这件事栽过两次（见 application-prod.yml 那两段）。
+.hbuilderx/
 
 # ---------- 操作系统 ----------
 .DS_Store

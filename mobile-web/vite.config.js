@@ -24,5 +24,45 @@ export default defineConfig({
      */
     strictPort: true,
     host: '127.0.0.1',
+
+    /*
+     * ★★★ 这段 proxy 是【给 HBuilderX「运行到浏览器」用的】，它不改变主入口。
+     *
+     * 背景（一次真实的坑）：H5 的接口地址默认值是【相对】的 `/api`
+     * （见 src/utils/request.js 里那条按平台分叉的 DEFAULT_API_BASE）——
+     * 相对地址要靠**同源的转发**才有意义。设计好的那层转发在 dev-proxy(`:3000`) 上，
+     * 所以从 `:3000/mobile/` 打开时一行配置都不用配。
+     * 而 HBuilderX 运行到浏览器时**直接起这个 dev server**（不经过 `:3000`、
+     * 也不经过 npm 脚本），于是 `/api/...` 打到了 5176 自己身上 ——
+     * 症状是「页面能开、每个接口都连不上」，而它看起来完全像【后端没起】。
+     * ★ 加这段之后，**5176 直开**与 **`:3000/mobile/`** 两条路都能通接口。
+     *
+     * ★★ 为什么不去把 H5 的地址改成绝对地址（那样就不需要转发这一层）：
+     *    实测网关**不发 CORS 头** —— 带 `Origin` 的请求没有 `Access-Control-Allow-Origin`，
+     *    预检 `OPTIONS` 直接 **403**，且整个 `backend/` 里 CORS 配置 **0 条**。
+     *    改绝对地址只会让 H5 从「连不上」变成「被浏览器拦」，
+     *    而后者那个报错**更像配置问题**，更难查。
+     *
+     * ★★ 而它**不解决**另一件事，别把它读成「5176 从此也是入口了」：
+     *    localStorage 按 origin 隔离 —— 在 5176 上登录，`/reader/` 里读不到
+     *    （CLAUDE.md 那条承重条款：移动端必须挂在 `:3000` 下）。
+     *    **验收与演示仍然走 `:3000/mobile/`**，这段只是让「在 HBuilderX 里点一下就跑」成立。
+     *
+     * ★ `/uploads` 必须一起转：H5 上 assetUrl() 取的 origin 就是
+     *   `window.location.origin`（asset.js 那个 IIFE 的第 ② 种情形），
+     *   5176 直开时它算出来的是 5176 —— 只转 `/api` 的话，
+     *   症状是「接口全通了、头像全 404」，而它看起来像上传坏了。
+     *   （与本仓库 dev-proxy 那份**同形**：target 指网关、changeOrigin、**不 rewrite**。）
+     */
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    },
   },
 })

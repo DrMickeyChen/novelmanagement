@@ -5,7 +5,7 @@
   "description": "小说管理系统 —— 根目录脚本。只管拉起下面五个子项目，自己不包含任何业务代码",
   "scripts": {
     "install:all": "npm install && npm --prefix reader-web install && npm --prefix author-web install && npm --prefix admin-web install && npm --prefix mobile-web install && npm --prefix dev-proxy install",
-    "dev": "concurrently -n reader,author,admin,mobile,proxy -c cyan,magenta,yellow,blue,green \"npm --prefix reader-web run dev\" \"npm --prefix author-web run dev\" \"npm --prefix admin-web run dev\" \"npm --prefix mobile-web run dev\" \"npm --prefix dev-proxy run dev\"",
+    "dev": "concurrently -n reader,author,admin,proxy -c cyan,magenta,yellow,blue,green \"npm --prefix reader-web run dev\" \"npm --prefix author-web run dev\" \"npm --prefix admin-web run dev\" \"npm --prefix dev-proxy run dev\"",
     "dev:reader": "npm --prefix reader-web run dev",
     "dev:author": "npm --prefix author-web run dev",
     "dev:admin": "npm --prefix admin-web run dev",

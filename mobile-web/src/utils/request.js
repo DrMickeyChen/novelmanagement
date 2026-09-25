@@ -117,8 +117,48 @@ const TIMEOUT = 15000
 // #ifdef MP-WEIXIN
 const DEFAULT_API_BASE = 'http://localhost:8080/api'
 // #endif
+
+/*
+ * ★★★ APP（安卓 / iOS 原生运行时）也必须给【绝对地址】—— 理由与小程序不同，结论一样：
+ *   原生运行时里没有 origin 这个概念，`/api` 没有解析基准，请求直接失败。
+ *
+ * ★★ 而这里必须用【局域网 IP】，不能用 localhost：
+ *   **模拟器 / 真机上的 localhost 指的是【设备自己】，不是这台开发机。**
+ *   症状是「H5 全正常、App 一个请求都不通」，且它与「后端没起」长得**一模一样** ——
+ *   分辨方法：在设备的浏览器里开 http://<局域网IP>:8080/api/ping ，
+ *   通 = 地址问题（就是这条），不通 = 后端 / 防火墙问题。
+ *
+ * ★ 192.168.1.189 是本机实测的局域网 IP（与 .env.mp-weixin 里记的是同一个值）。
+ *   ★★ 换网络（换 WiFi / 换网线）它就会变 —— 写死在源码里是 **dev 专用**的便利，
+ *      不是交付配置：真发 App 要走 https://域名/api（用 VITE_API_BASE 覆盖，
+ *      见文件头「小程序要怎么办」那段，App 同理）。
+ *   ★ 网关监听在 0.0.0.0:8080，所以这条路是通的；连不上先查
+ *      ① 设备与开发机是否同网段 ② Windows 防火墙有没有放行 8080。
+ *
+ * ★ 为什么改在这里、而不是加一个 .env.app：与上面小程序那条同因 ——
+ *   HBuilderX「运行到手机或模拟器」**不经过 npm 脚本**，而 Vite 的 mode 只取 NODE_ENV
+ *   （不带平台名，`vite-plugin-uni/dist/cli/utils.js:103`），
+ *   所以任何 `.env.[平台]` 在 HBuilderX 里都不会被加载。本文件的分叉才是真源。
+ *
+ * ★★ 顺带：这一改让 assetUrl() 也一起对了 —— 它从绝对 API_BASE_URL 里剥出 origin
+ *   （asset.js 那个 IIFE 的第 ① 种情形），头像那类根相对 `/uploads/**`
+ *   本来就是靠这一步补全的，不用改第二处。
+ */
+// #ifdef APP-PLUS
+const DEFAULT_API_BASE = 'http://192.168.1.189:8080/api'
+// #endif
+
+/*
+ * ★★ 用【嵌套 #ifndef】而不是 `#ifndef MP-WEIXIN || APP-PLUS`：
+ *   后者的求值方向（「非 A，或 B」还是「非 (A 或 B)」）本项目从未实测过，
+ *   而猜错的后果是**静默**的 —— H5 会拿到绝对地址，于是从「同源」变成「跨域」，
+ *   报错长得像后端问题（实测：网关不发 CORS 头、预检 OPTIONS 直接 403）。
+ *   嵌套没有任何歧义，多两行换掉一个「猜」。
+ */
 // #ifndef MP-WEIXIN
+// #ifndef APP-PLUS
 const DEFAULT_API_BASE = '/api'
+// #endif
 // #endif
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE || DEFAULT_API_BASE

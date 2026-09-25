@@ -63,9 +63,15 @@ S1 的计划是「装 `wot-design-uni` 跑通一个 `wd-button`，装不上就�
 
 ```bash
 npm run dev            # = uni（H5 开发服务器，:5176）
-npm run dev:mp-weixin  # 小程序构建产物（★ 本机没有微信开发者工具，未验收，见 docs/E3-uni-app.md）
+npm run dev:mp-weixin  # 小程序构建产物（★ E3 收尾已在微信开发者工具里实跑通过，见 docs/E3-uni-app.md 诚实 3）
 ```
 
 ★ **访问入口是 `http://localhost:3000/mobile/`，不是 `:5176`。**
 原因见 `dev-proxy/vite.config.js` 头部：localStorage 按 origin 隔离，
 `/reader/` 登录的状态要在 `/mobile/` 读得到，就必须同源。
+
+★★ E3 收尾给本工程的 `vite.config.js` 也加了 `/api` + `/uploads` 转发
+（为 HBuilderX「运行到浏览器」—— 它直接起这个 dev server、不经过 `:3000`）。
+**于是 `:5176` 直开时接口也是通的** —— 但这**恰恰让上面那条更容易踩**：
+现在只坏「登录态共享」那一半，**且没有任何提示**（症状是"接口全通、人却是未登录"）。
+**入口判据：演示前看一眼地址栏是不是 `:3000`。**
