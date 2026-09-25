@@ -6,10 +6,10 @@
   "scripts": {
     "dev": "uni",
     "dev:h5": "uni",
-    "dev:mp-weixin": "uni -p mp-weixin",
+    "dev:mp-weixin": "uni -p mp-weixin -m mp-weixin",
     "build": "uni build",
     "build:h5": "uni build",
-    "build:mp-weixin": "uni build -p mp-weixin"
+    "build:mp-weixin": "uni build -p mp-weixin -m mp-weixin"
   },
   "dependencies": {
     "@dcloudio/uni-app": "3.0.0-5020620260917001",

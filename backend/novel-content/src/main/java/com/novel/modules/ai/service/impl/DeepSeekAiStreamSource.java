@@ -37,9 +37,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <h3>★★ 切换方式：一行环境变量，零文件改动</h3>
  *
  * <pre>
- *   novel.ai.provider = mock     → {@link MockAiStreamSource}（默认，新克隆的仓库什么都不配就能跑）
- *   novel.ai.provider = deepseek → 本类
+ *   novel.ai.provider = deepseek → 本类（★ 默认，见 application.yml）
+ *   novel.ai.provider = mock     → {@link MockAiStreamSource}（必须显式选，零成本验证用）
  * </pre>
+ * ★ 本类现在带 {@code matchIfMissing = true}：配置项整个缺失时兜底到【真实实现】。
+ *   原来是 mock 兜底，那条论证与它的代价记在 {@link MockAiStreamSource} 的类注释里。
  * ★ 用环境变量 {@code NOVEL_AI_PROVIDER=deepseek} 即可覆盖 yml ——
  * Spring Boot 的环境变量优先级<b>高于</b>配置文件，所以
  * <b>验收时不需要改任何文件、也不需要重新打包</b>。
@@ -118,7 +120,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "deepseek")
+@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "deepseek", matchIfMissing = true)
 public class DeepSeekAiStreamSource implements AiStreamSource {
 
     private final AiConfigService configService;

@@ -49,7 +49,7 @@ import java.util.List;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "mock", matchIfMissing = true)
+@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "mock")
 public class MockAiAuditEvaluator implements AiAuditEvaluator {
 
     /** 写进 {@code ai_usage_log.model} 的取值。★ 用量页据此把演示数据与真实消耗分开 */
@@ -74,7 +74,7 @@ public class MockAiAuditEvaluator implements AiAuditEvaluator {
         this.usageRecorder = usageRecorder;
         log.info("★★ AI 违禁审核当前使用【演示模式】(MockAiAuditEvaluator) —— "
                 + "AI 层固定判为无风险，风险等级完全由关键词词库决定。"
-                + "接真实模型请设置 novel.ai.provider=deepseek");
+                + "★ 这条日志只在【显式】指定 novel.ai.provider=mock 时才会出现（默认已是 deepseek）");
     }
 
     @Override

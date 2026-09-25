@@ -23,10 +23,12 @@
  *   现在只有树；将来如果有「左侧面板的宽度」「上次看的是大纲还是正文」，
  *   也都属于这里，不属于 NodeWorkspace。
  *
- * ★★ 而 `useMountProbe` 那个计数器就是用来**证明**这件事的：
+ * ★★ 这件事是可验证的，`useMountProbe` 那个计数器就是为此存在的：
  *   在树里来回点节点，'WorkLayout' 的计数必须停在 1。
  *   变成 2、3、4 就说明这一层挂错位置了 —— 那正是最危险的那个坑
  *   （它不会报错，只是树会闪、滚动会跳、折叠会复位）。
+ *   ★ 它当前【没有】挂在界面上 —— 徽章已按用户要求撤掉（P4 验收时读到的就是 1）。
+ *     要复现：`const mountCounts = useMountProbe('WorkLayout')` + 一个渲染它的标签，两行。
  *
  * ============================================================
  * ★★ 树的数据由这一层持有，且【就地被改】
@@ -45,14 +47,10 @@
 import { ref, computed, watch, onMounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getOutlineTree } from '@/api/outline'
-import { useMountProbe } from '@/composables/useMountProbe'
 import OutlineTree from '@/components/OutlineTree.vue'
 
 const route = useRoute()
 const router = useRouter()
-
-/* ★ 记一次挂载。DEV 构建下界面右上角会显示这个数字（见下面模板） */
-const mountCounts = useMountProbe('WorkLayout')
 
 const novelId = computed(() => Number(route.params.novelId))
 const nodeId = computed(() => {
@@ -280,10 +278,11 @@ function handleResync() {
       <div class="panel-head">
         <span class="panel-title">大纲</span>
         <span v-if="totalNodes" class="panel-count">{{ totalNodes }} 个节点</span>
-        <!-- ★ 验收工具，只在 DEV 构建里出现。见 composables/useMountProbe.js -->
-        <el-tag v-if="mountCounts.WorkLayout" size="small" type="warning" effect="plain">
-          WorkLayout 挂载 {{ mountCounts.WorkLayout }} 次
-        </el-tag>
+        <!--
+          ★ 这里原本挂着一个「WorkLayout 挂载 N 次」的验收徽章（见 composables/useMountProbe.js）。
+            已按用户要求从界面上撤掉 —— 它对读者没有价值，而它要证明的事（切节点时本层不重建）
+            在 P4 验收时读到的数字是 1，即不变量成立。工具本身留着，重新挂回只需两行。
+        -->
       </div>
 
       <div class="tree-body">

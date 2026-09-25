@@ -40,10 +40,22 @@ import java.util.concurrent.atomic.AtomicReference;
  * 它不像「登录坏了」那样会立刻被发现，是这一期最坏的一种失败。
  *
  * <p>★★ <b>但这里和 JWT 有一处【故意的不同】：密钥没配时，本类【不在启动期报错】。</b>
- * 判据是「新克隆的仓库不配任何东西必须能跑起来」（P4 的 {@code matchIfMissing=true} 换来的，
- * E1 不许破坏它）—— 启动就要求 {@code AI_KEY_SECRET}，等于把「只想跑起来看看」的人挡在门外。
- * 所以：<b>密钥在【用到的那一刻】才检查</b>，{@link #isConfigured()} 为假时
- * {@link #encrypt} / {@link #decrypt} 直接抛，由调用方翻译成 5002（「尚未配置 API Key」）或 500。
+ * 判据是「新克隆的仓库不配任何东西必须能跑起来」—— 启动就要求 {@code AI_KEY_SECRET}，
+ * 等于把「只想跑起来看看」的人挡在门外。所以：<b>密钥在【用到的那一刻】才检查</b>，
+ * {@link #isConfigured()} 为假时 {@link #encrypt} / {@link #decrypt} 直接抛，
+ * 由调用方翻译成 5002（「尚未配置 API Key」）或 500。
+ *
+ * <p>★★★ 那条判据有两个支撑点，其中【一个已经不在了】（E3 期间改 provider 默认值时拆掉的）：
+ * <ol>
+ *   <li>P4 用 {@code novel.ai.provider} 上的 {@code matchIfMissing=true} 让缺配置时兜底到 mock ——
+ *       <b>所以那时候「不配任何东西」连 AI 面板都有演示输出</b>。这个兜底现在挪给了真实实现
+ *       （见 {@code application.yml}），于是 AI 面板在不配 Key 时会返 5002，这是刻意接受的代价；</li>
+ *   <li>{@code AI_KEY_SECRET} 的空默认值 —— 即本类这一段。<b>它没变，也不许变。</b></li>
+ * </ol>
+ * ★★ 关键区分：那条判据其实是【两件事】被写成了同一句话 ——
+ * 「<b>应用能不能启动</b>」（本类负责，仍然成立）与「<b>AI 面板有没有输出</b>」
+ * （原由 matchIfMissing 负责，现在没了）。把它们混成一句，就会在读到「不配任何东西也能跑」
+ * 时以为 AI 也能用 —— 而它现在不能。
  *
  * <h3>★ 密文格式：{@code v1:{base64(IV ‖ 密文+认证标签)}}</h3>
  *

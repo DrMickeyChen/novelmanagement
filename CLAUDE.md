@@ -385,10 +385,16 @@ MYSQL_PWD=root123456 "/c/Program Files/MySQL/MySQL Workbench 8.0/mysql.exe" \
 # 种子账号：admin/admin123（ADMIN）、author01/123456（AUTHOR）、reader01/123456、reader02/123456（READER）
 
 # ★ E1 起 content 多两个【零代码】的开关，都不是环境变量：
-#   ① AI 用哪个实现：命令行参数 --novel.ai.provider=deepseek（YAML 默认 mock）→ 不用重新打包
+#   ① AI 用哪个实现：命令行参数 --novel.ai.provider=（**默认 deepseek，即默认真模型**）→ 不用重新打包
+#      ★★ 「哪个实现在跑」在代码里有【四份拷贝，必须同时改】：YAML 那一行、两个 Bean 上的
+#         matchIfMissing、三处 @Value("${novel.ai.provider:…}") 的缺省值。任何一份不同步都造出假话
+#         （界面/日志说 deepseek、实际跑 mock）—— AiPreflight#spendsMoney 就是读这个值判断「会不会花钱」的。
+#      ★ 默认值由 mock 改成 deepseek 是 E3 的取舍反转，原文与代价记在 application.yml 里。
 #   ② 真调用的地址：管理端「AI 配置」页改 base_url（指向 docs/tools/fake-openai.py 就是假端点）
-# ★ AI_KEY_SECRET 只影响「加解密 api_key」这一件事；不设 AI_KEY_SECRET 起 content = 库里那把 Key 解不开
-#   （表现是 5002「未配置 API Key」，不是乱码）。★ 交付基线：ai_config.enabled=0 且 api_key 为空。
+# ★ AI_KEY_SECRET 卡【两个】方向，都是 5002：写（管理员存 Key → 加密）与读（真调用 → 解密）。
+#   ★ 写那一半原先漏了 pre-check → encrypt 抛 IllegalStateException → 500「服务器开小差了，请稍后再试」
+#     （E3 实测修掉）。**凡「界面叫你去重试、而重试一万次都不会成功」的话，都是这条形状。**
+#   ★ 不设它起 content 不报错，但库里那把 Key 解不开（抛异常，不是乱码）。★ 交付基线：enabled=0 且 api_key 为空。
 ```
 
 ★ 端口用 `strictPort: true`，漂移不报错（`docs/P5` 环境踩坑 3）。

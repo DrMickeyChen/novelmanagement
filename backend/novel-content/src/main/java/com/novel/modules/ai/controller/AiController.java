@@ -118,7 +118,7 @@ public class AiController {
                         AiQuotaService aiQuotaService,
                         AiPreflight aiPreflight,
                         AiSummaryService aiSummaryService,
-                        @Value("${novel.ai.provider:mock}") String provider) {
+                        @Value("${novel.ai.provider:deepseek}") String provider) {
         this.aiStreamSource = aiStreamSource;
         this.aiStreamExecutor = aiStreamExecutor;
         this.aiConfigService = aiConfigService;

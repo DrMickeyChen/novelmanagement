@@ -16,7 +16,7 @@
 |---|---|
 | 后端 | Spring Boot 3.2.12 · Java 21 · MyBatis-Plus · Spring Security + JWT · MySQL 8 · Redis 7 · Knife4j |
 | 前端 | Vue 3.5 · Vite 8 · Element Plus 2.14 · Pinia · Vue Router · Axios（三端同栈） |
-| AI | DeepSeek（OpenAI 兼容协议）。★ 客户端是 **JDK 内置的 `java.net.http.HttpClient`**，**没有引入 webflux / okhttp / langchain**；`novel.ai.provider=mock` 时整套 AI 用本地假实现跑，**不配任何东西也能启动** |
+| AI | DeepSeek（OpenAI 兼容协议）。★ 客户端是 **JDK 内置的 `java.net.http.HttpClient`**，**没有引入 webflux / okhttp / langchain**；★ **默认就是真模型**（`novel.ai.provider` 默认 `deepseek`）；显式给 `--novel.ai.provider=mock` 时整套 AI 改用本地假实现跑，用于零成本演练 |
 | 中间件 | MySQL / Redis（第一期）→ 再加 Nacos / RocketMQ / Elasticsearch（第二期）<br>★ Nacos 自 **M0** 起、RocketMQ 自 **M3** 起（阅读量 / 阅读进度 / 收藏数评分 / 审核流水四条写路径）、**Elasticsearch 自 M4 起已启用**（搜索倒排索引，自建镜像装了 IK 分词器）<br>★ **M5 没有引入任何新中间件** —— Sentinel 是进程内库，traceId 是自己生成的（不上 SkyWalking，没有 `-javaagent`）<br>★ **E1 也没有引入任何新中间件或依赖** —— 配额用已有的 Redis，审核用已有的 RocketMQ，Key 加密用 JDK 的 `javax.crypto` |
 
 ---
@@ -314,12 +314,13 @@ curl -X POST http://localhost:8080/api/auth/register \
 
 ## AI 能力（第三期 E1）
 
-**默认状态下 AI 是关着的，且跑不出一次计费调用** —— 新克隆的仓库 `ai_config.enabled = 0`、`api_key` 为空，
-`novel.ai.provider` 默认 `mock`。三档跑法，按需选：
+**默认状态下 AI 是关着的，且跑不出一次计费调用** —— 新克隆的仓库 `ai_config.enabled = 0`、`api_key` 为空；
+而 `novel.ai.provider` 默认 `deepseek`，也就是**默认就是真模型**（配上 Key 并打开 `enabled` 即生效）。
+四档跑法，按需选：
 
 | 档 | 怎么开 | 花不花钱 | 能验什么 |
 |---|---|---|---|
-| ① **mock**（默认） | 什么都不用做 | 免费 | 整条链路（渲染 / 配额 / 中断 / SSE）——**AI 内容是假的** |
+| ① **mock**（零成本演练） | 启动时**显式**给 `--novel.ai.provider=mock` | 免费 | 整条链路（渲染 / 配额 / 中断 / SSE）——**AI 内容是假的** |
 | ② **假端点** | 起 `python docs/tools/fake-openai.py`，管理端把 `base_url` 指向它 | 免费 | 上面全部 **+ 真 HTTP、真流式、真错误码**（`429/5xx/坏形状` 都能注入） |
 | ③ **回放录制**（推荐） | 同上，再把 `model` 填 **`fake-replay`** | 免费 | 上面全部 **+ 真实模型的实际字节形状**（中文分片、`usage` 帧位置）。★ **只对【流式】那条有效** —— 详见下方警告 |
 | ④ **真 DeepSeek** | 管理端「AI 配置」页填 Key（★ 只有 ADMIN 能填，**只写不读**，接口只回掩码） | 花钱 | 真实模型的**行为**（它怎么理解提示词、会不会加 ``` 围栏） |
@@ -333,12 +334,22 @@ curl -X POST http://localhost:8080/api/auth/register \
 **审核那条要用 `model=fake-verdict`（裸 JSON）或 `model=fake-json-fence`（同一份 JSON 加 ``` 围栏）** ——
 后者正是 R2 那个「真实模型会不会包围栏」问题的对照组。
 
-★ **切到真模型的开关是命令行参数**，不用改代码、不用重新打包：
+★ **切实现的开关是命令行参数 / 环境变量**，不用改代码、不用重新打包：
 
 ```bash
-# 默认是 mock；要接真模型（或假端点）时显式给：
-java -jar novel-content/target/novel-content.jar --novel.ai.provider=deepseek
+# 默认就是 deepseek（真模型）—— 这一行参数现在【不需要】加
+java -jar novel-content/target/novel-content.jar
+
+# 想零成本验证整条链路（或跑 ②③ 那两个假端点档）时，显式切回演示实现：
+java -jar novel-content/target/novel-content.jar --novel.ai.provider=mock
 ```
+
+★★ **「哪个实现在跑」在代码里有【四份拷贝，必须同时改】**：`application.yml` 的那一行、
+两个 Bean 上的 `matchIfMissing`、以及三处 `@Value("${novel.ai.provider:…}")` 的缺省值 ——
+任何一份不同步都会造出**假话**（界面/日志说 `deepseek`、实际跑 `mock`）。
+判据：`AiPreflight#spendsMoney` 就是读这个值来判断「这次调用会不会花钱」的。
+★ 默认值由 `mock` 改成 `deepseek` 是有意的取舍反转，代价（新克隆不配 Key 时 AI 返 `5002`）已接受，
+完整记账在 `application.yml` 那一段与 `MockAiStreamSource` 的类注释里。
 
 ★ **`AI_KEY_SECRET` 必须和加密时用的一致**：它是 AES-GCM 密钥，只影响「加解密 `ai_config.api_key`」这一件事。
 它是**空默认**的（和 `JWT_SECRET` / `INTERNAL_TOKEN` 相反 —— 那两个必须 fail-fast，这个必须能空着启动）。

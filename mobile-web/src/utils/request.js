@@ -87,7 +87,41 @@ const TIMEOUT = 15000
  *   两处各读一次 `VITE_API_BASE` 的话，默认值 `'/api'` 就要写两遍，
  *   迟早有一处被改掉而另一处没改，症状是"普通接口通了、上传 404"。
  */
-export const API_BASE_URL = import.meta.env.VITE_API_BASE || '/api'
+/*
+ * ★★★ 默认值【按平台分叉】：H5 用相对 `'/api'`，小程序用绝对地址。
+ *
+ * 为什么 H5 能用相对的、小程序不能：
+ *   H5 靠「同源」自动正确 —— 开发期由 dev-proxy(`:3000`) 转发、生产由 Nginx 转发。
+ *   而小程序的 `wx.request` **要求完整 URL**，相对地址直接
+ *   `request:fail invalid url "/api/..."` —— 表现是**界面正常、每个接口都失败**
+ *   （页面壳子是本地渲染的，所以「能用」和「一个请求都没通」可以同时成立）。
+ *
+ * ★★★ 为什么这里必须用 `#ifdef` 写死一个默认值，而**不能**只靠环境变量：
+ *   HBuilderX **不经过 `package.json` 的 npm 脚本** —— 它自己直接调
+ *   `@dcloudio/vite-plugin-uni/bin/uni.js -p mp-weixin`（实测命令行的原文，
+ *   `HBuilderX/plugins/uniapp-extension/static/kill.js` 就是它的启动器）。
+ *   而 Vite 只加载 `.env.[mode]`，uni 的 mode 默认取 `NODE_ENV`（= `development`/`production`，
+ *   **不含平台名**，见 `vite-plugin-uni/dist/cli/utils.js:103`）→
+ *   所以 `mobile-web/.env.mp-weixin` **只有**在命令行显式传 `-m mp-weixin` 时才会被读到。
+ *   在 HBuilderX 里点「运行到小程序模拟器」，那个文件是**永远不会生效**的。
+ *   `#ifdef` 是 uni 自己的预处理器，**任何**构建入口都会执行它，与怎么启动无关。
+ *
+ * ★ 因此本文件是【小程序端接口地址的真源】；`mobile-web/.env.mp-weixin` 只是
+ *   **命令行构建**时的覆盖手段（例如真机预览要换成局域网 IP）。
+ *   在 HBuilderX 里跑要改地址，就改下面这个常量 —— 改 env 文件对它无效。
+ *
+ * ★ 默认值用 `localhost`：微信开发者工具的**模拟器**跑在本机上，localhost 就指本机。
+ *   真机预览/真机调试要换成开发机的**局域网 IP**（本机实测 192.168.1.189）——
+ *   那时 localhost 指的是**手机自己**，症状是模拟器正常、真机一个请求都不通。
+ */
+// #ifdef MP-WEIXIN
+const DEFAULT_API_BASE = 'http://localhost:8080/api'
+// #endif
+// #ifndef MP-WEIXIN
+const DEFAULT_API_BASE = '/api'
+// #endif
+
+export const API_BASE_URL = import.meta.env.VITE_API_BASE || DEFAULT_API_BASE
 
 /** ★ 内部用的短名字。**只有这一个地方读 `import.meta.env`**，见上面那段 */
 const BASE_URL = API_BASE_URL

@@ -61,6 +61,16 @@
 | 12 个锁定文件 md5 | `request.js` = `2047681401d85ed69cebbd069f4ee7dd`，三端四个文件逐字节相同 |
 | 种子基线 | `READER` 0 菜单 / `AUTHOR` 2 / `ADMIN` 15，`sys_role_menu` **17 行** |
 
+> ★★ **订正（E3 收尾时改）**：上表第二行那条不变量**已被推翻** —— 它其实把两件事写成了一句话：
+> 「**应用能不能启动**」与「**AI 面板有没有输出**」。E3 期间把 `novel.ai.provider` 的默认值由
+> `mock` 改成 `deepseek`（一次有意的取舍反转），于是：
+> ① 「应用能启动」**仍然成立**，现在由 `AI_KEY_SECRET` 的空默认值**单独**承担；
+> ② 「AI 面板有输出」**不再成立** —— 新克隆的仓库不配 Key 时 AI 功能返 `5002`，这是刻意接受的代价。
+> ★ 判据也要跟着改：上表那句「P4 用 `matchIfMissing=true` 换来的」现在是**假的** ——
+> 那个 `matchIfMissing` 已经挪到 `DeepSeekAiStreamSource` / `DeepSeekAiAuditEvaluator` 上，
+> `MockAiStreamSource` 上**没有**了。完整的四份拷贝同步要求写在 `application.yml` 那一段，
+> 被推翻的原论证以原样引用留在 `MockAiStreamSource` 的类注释里。
+
 ---
 
 ## 二、已拍板的六个决定（开工前定的，实施中没动摇）
@@ -1144,6 +1154,12 @@ proxycheck-03-json   upstream=200  → saved    670 bytes  ← R2：计费
 | content 进程 | 重启为 **mock**（**不带** `--novel.ai.provider=deepseek`），且**不带** `AI_KEY_SECRET` |
 | 复核 | 经网关 `GET /api/admin/ai/config` 返回 `effectiveProvider: "mock"` / `apiKeyConfigured: false`，9.5s 就绪 |
 
+> ★ **订正（E3 收尾时改）**：上表是 **E1 交付当时**的基线，作为历史记录保留。E3 之后
+> 「content 进程重启为 mock」这一行**不再成立**（默认值已是 `deepseek`），现在该跑的是
+> `effectiveProvider: "deepseek"`。★ 而**其余四行一位未动** —— 尤其 `enabled=0` / `api_key` 为空
+> **仍是交付基线**（理由见下面那条「为什么必须把 Key 清掉」）。也就是说：
+> 默认实现变成了真模型，但**「克隆下来跑不出一次计费调用」这条性质没变**，因为闸门在 `enabled`。
+
 ★ **为什么必须把 Key 清掉**：它是由 `AI_KEY_SECRET` 加密的，而那个变量**不在交付基线里**。
 留着它的后果不是泄漏，而是「**`apiKeyConfigured=true` 但永远解不开**」——
 `AiConfigVO` 把这种状态渲染成 `apiKeyMasked=null` + 一条提示（见该文件注释，**刻意不返 500**），
@@ -1158,7 +1174,7 @@ E1 **只加不删**，所以回滚的粒度可以很细：
 | 想退到哪 | 怎么做 |
 |---|---|
 | **只是不想花钱** | `PUT /api/admin/ai/config` 把 `enabled` 置 `0`（种子基线本来就是 `0`）—— **一行配置，不用重新打包** |
-| 退回 mock | 重启 content 时去掉 `--novel.ai.provider=deepseek`（或显式给 `mock`）。★ **YAML 默认值就是 `mock`**，所以「什么都不给」= mock |
+| 退回 mock | 重启 content 时**显式给** `--novel.ai.provider=mock`（或环境变量 `NOVEL_AI_PROVIDER=mock`）。★★ **订正（E3 收尾时改）**：此行原写「YAML 默认值就是 `mock`，所以什么都不给 = mock」—— **现在是反的**，默认已是 `deepseek`，要 mock **必须显式选**。用于零成本验证渲染/配额/中断/SSE 整条链路 |
 | 换掉一把配错的 Key | 管理端点「清除 Key」（`clearApiKey: true`），或直接 `UPDATE ai_config SET api_key=NULL` |
 | **整期回退** | `git revert <e1完成>` + 重新打包。★ **DDL 是幂等的**：`ai_sensitive_word` 是 `CREATE TABLE IF NOT EXISTS`，**留着不影响任何东西**（新表，无人引用）；4 条种子词、5 条模板的改动同理，删除表/行都不影响其余 21 张表 |
 | 词库出问题 | 把 `enabled` 全置 0 → **系统 fail-closed 拒审**（这是设计要的，见判断 3.5）；要「继续放行」得改代码，**没有那个开关** |

@@ -21,9 +21,11 @@ import org.springframework.stereotype.Component;
  * <h3>★★ 切换方式：一行环境变量，零文件改动</h3>
  *
  * <pre>
- *   novel.ai.provider = mock     → {@link MockAiAuditEvaluator}（默认，新克隆的仓库什么都不配就能跑）
- *   novel.ai.provider = deepseek → 本类（流式那条同时切到 DeepSeekAiStreamSource）
+ *   novel.ai.provider = deepseek → 本类（★ 默认，见 application.yml；流式那条同时是 DeepSeekAiStreamSource）
+ *   novel.ai.provider = mock     → {@link MockAiAuditEvaluator}（必须显式选）
  * </pre>
+ * ★ 本类现在带 {@code matchIfMissing = true}：配置项整个缺失时兜底到【真实实现】。
+ *   原来是 mock 兜底，那条论证与它的代价记在 MockAiStreamSource 的类注释里。
  * ★ 用环境变量 {@code NOVEL_AI_PROVIDER=deepseek} 覆盖 yml 即可 —— 环境变量优先级高于配置文件，
  * <b>验收时不改任何文件、不重新打包</b>（与 M4 用 {@code ES_URIS} 指本地代理是同一个手法）。
  *
@@ -66,7 +68,7 @@ import org.springframework.stereotype.Component;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "deepseek")
+@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "deepseek", matchIfMissing = true)
 public class DeepSeekAiAuditEvaluator implements AiAuditEvaluator {
 
     private final AiConfigService configService;

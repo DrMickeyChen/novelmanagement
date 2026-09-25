@@ -77,7 +77,7 @@ public class AiConfigServiceImpl implements AiConfigService {
      * ① 返回给管理端展示（让「填了 Key 不生效」可见）；
      * ② 在日志里说清楚当前跑的是哪个实现。
      */
-    @Value("${novel.ai.provider:mock}")
+    @Value("${novel.ai.provider:deepseek}")
     private String effectiveProvider;
 
     @Override
@@ -109,10 +109,32 @@ public class AiConfigServiceImpl implements AiConfigService {
             /*
              * ★★★ 明文【只在这里出现一次】，加密后立刻丢掉。
              *   ★ 不 log 明文、不 log 密文、不把它塞进任何实体的其它字段。
-             *   ★ crypto.encrypt 在 AI_KEY_SECRET 没配时抛 IllegalStateException → 500。
-             *     这是刻意的：那是服务端没配好，不是用户输入有问题，
-             *     而【绝不能】退化成「那就存明文吧」—— 那一刻加密变成装饰，且没有任何症状。
+             *
+             * ★★★ 但【没配 AI_KEY_SECRET】必须先查、翻译成 5002 —— 不能让 encrypt 抛出去变 500。
+             *
+             *   这是本文件里两条同类路径的【不一致】，而它们是同一个原因：
+             *     decryptCurrentApiKey()（本文件下面）查了 isConfigured() → 5002 + 指向环境变量的文案；
+             *     save()（这里）没查 → AiCrypto.keyOrThrow() 抛 IllegalStateException
+             *       → GlobalExceptionHandler 兜底 → 前端只看到「服务器开小差了，请稍后再试」。
+             *   ★ AiCrypto.encrypt 的 javadoc 明写「调用方应先查 isConfigured()」，
+             *     而这里是全项目【唯一】一个加密调用点 —— 也是唯一没照做的调用点。
+             *
+             *   判据直接沿用 decryptCurrentApiKey 那条（见下面 :228 的注释）：
+             *   缺 AI_KEY_SECRET 是【部署时漏配】，管理员能修，文案必须直接指向那个变量。
+             *   丢进 500 之后，屏幕上那句话是在【叫人去重试】—— 而重试一万次都不会成功。
+             *   ★ 实测症状（E3 期间修掉的就是它）：界面显示「服务器开小差了，请稍后再试」，
+             *     真原因只出现在 backend/logs/novel-content.log 里，界面上一个字都不透露。
+             *
+             *   ★ 这条【不是】「那就存明文吧」的替代品 —— 那条永远不会做：
+             *     encrypt 的异常在 setApiKey(...) 的实参求值时就抛了，一个字节都不会落库。
+             *   ★ 边界（与 decrypt 那条逐字同形）：缺变量 → 5002（可操作）；
+             *     配了却用不了（派生失败 / JCE 坏）→ 仍然 500，那才是程序缺陷，需要人翻日志看异常类型。
              */
+            if (!crypto.isConfigured()) {
+                log.error("管理员要录入 AI 的 API Key，但服务端未配置 AI_KEY_SECRET | 请设置该变量并重启 content");
+                throw new BusinessException(ResultCode.AI_API_KEY_MISSING,
+                        "服务端未配置 AI_KEY_SECRET，无法加密保存 API Key，请联系运维。");
+            }
             row.setApiKey(crypto.encrypt(dto.getApiKey()));
         }
         // else：不传 = 保持原值。★ 见 AiConfigSaveDTO 的类注释（读接口不返回 Key，

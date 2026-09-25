@@ -31,14 +31,29 @@ import java.util.Map;
  * <p><b>★ 什么时候会被换成真实实现：</b>
  * 用配置 {@code novel.ai.provider} 切换（见类上的 {@code @ConditionalOnProperty}）：
  * <pre>
- *   novel.ai.provider: mock      → 本类（默认，开发/演示）
- *   novel.ai.provider: deepseek  → E1 的 DeepSeekAiStreamSource
+ *   novel.ai.provider: deepseek  → E1 的 DeepSeekAiStreamSource（★ 现在是默认）
+ *   novel.ai.provider: mock      → 本类（必须显式选，用于零成本开发/演示）
  * </pre>
+ *
+ * <p><b>★★★ 下面这段是【被推翻的论证】，原文保留</b> —— 它回答「当初为什么默认 mock」：
+ * <blockquote>
  * {@code matchIfMissing = true} 是有意的：没配这个值时用 mock，
  * 于是<b>新克隆下来的仓库不配任何东西就能跑起来</b>。
  * 反过来（默认真实实现）的话，没配 API Key 的人会看到 AI 面板一用就报错，
  * 而错误信息是「尚未配置 API Key」—— 对一个只是想跑起来看看的人来说，
  * 这个门槛完全没必要。
+ * </blockquote>
+ *
+ * <p>★ 推翻它的是「这个系统已经做完，AI 就该是真 AI」这条判断，
+ * 完整记账在 {@code application.yml} 的 {@code novel.ai.provider} 那一段。
+ * <b>上面预言的症状会真的发生，而且是被刻意接受的代价</b>：新克隆的仓库不配 Key 时，
+ * AI 面板返 5002。★ 但损失的【只有 AI 面板】—— 应用照常启动，浏览/写作/审核都可用，
+ * 因为 {@code ai_config.enabled} 的种子本来就是 0。
+ *
+ * <p>★★ 所以本类现在【没有】{@code matchIfMissing}：配置项整个缺失时不再兜底到假数据，
+ * 兜底挪给了 {@link DeepSeekAiStreamSource}。这条很关键 —— 留着它就会造出
+ * 「配置项缺失 → 实际跑 mock，而 {@code AiPreflight#spendsMoney} 按 deepseek 报『会花钱』」
+ * 这种两边不一致的状态。四份拷贝的同步要求见 {@code application.yml}。
  *
  * <p><b>★ 产出的内容不是 lorem ipsum</b>，每个场景给的是<b>结构对得上</b>的东西：
  * <table border="1">
@@ -80,7 +95,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
-@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "mock", matchIfMissing = true)
+@ConditionalOnProperty(name = "novel.ai.provider", havingValue = "mock")
 public class MockAiStreamSource implements AiStreamSource {
 
     /**
@@ -102,7 +117,8 @@ public class MockAiStreamSource implements AiStreamSource {
         this.delayMs = delayMs;
         this.objectMapper = objectMapper;
         log.info("★★ AI 当前使用【演示模式】(MockAiStreamSource) —— 内容由本地生成，不是真实模型。"
-                + "逐字间隔={}ms。接真实模型请设置 novel.ai.provider=deepseek（E1）", delayMs);
+                + "逐字间隔={}ms。★ 这条日志只在【显式】指定 novel.ai.provider=mock 时才会出现；"
+                + "默认（deepseek）下本类不会被创建，所以看到它 = 有人主动切回了演练模式", delayMs);
     }
 
     @Override

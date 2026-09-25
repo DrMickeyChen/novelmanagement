@@ -71,9 +71,14 @@ import java.util.Map;
  * <h3>★★ 为什么两半闸门的适用范围不同</h3>
  *
  * <p><b>「停用 / 没配 Key」只在【会花钱】的实现下才拦。</b>
- * 因为种子里的 {@code ai_config.enabled = 0}，而默认 {@code provider=mock} ——
- * 无条件拦的话，「<b>新克隆的仓库不配任何东西就能跑</b>」
- * （P4 用 {@code matchIfMissing=true} 换来的那条不变量）当场失效。
+ * 理由与「默认是谁」无关：mock 是纯本地的零成本实现，对它要求 Key、扣配额没有意义。
+ *
+ * <p>★★ 但这句话的【实际后果】随默认值一起翻转了，值得记一笔：默认是 mock 时（E3 之前），
+ * 这条闸门配上种子里的 {@code ai_config.enabled = 0}，在默认配置下<b>根本拦不到人</b> ——
+ * 那正是铁律 8 说的「一条不会失败的护栏」。现在 provider 默认是 deepseek
+ * （见 {@code application.yml}），它<b>默认就在拦</b>，这才是它被设计出来要待的位置。
+ * ★ 原来这段还引用过一条「新克隆的仓库不配任何东西就能跑（P4 用 {@code matchIfMissing=true}
+ * 换来的）」的不变量 —— 那个兜底已经挪给真实实现，所以这里不再引用它。
  *
  * <p><b>而配额【两个实现都扣】。</b>它是一个「今天还能用多少次」的限流，
  * 与花不花钱无关；只在真实调用时扣的话，这条闸门在<b>默认配置下永远走不到</b> ——
@@ -98,7 +103,7 @@ public class AiPreflight {
      * <p>★ 用字段注入而不是构造器参数，与 {@code AiConfigServiceImpl} 的取法一致
      * （两处读的是同一个配置项）。
      */
-    @Value("${novel.ai.provider:mock}")
+    @Value("${novel.ai.provider:deepseek}")
     private String provider;
 
     /**
