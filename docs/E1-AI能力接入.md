@@ -871,7 +871,10 @@ S6 的验收全部走 HTTP（预览端点、配置读写），页面本体一次
 | 7 | 路由不变式 | ✓ **网关 `application.yml` 不在变更列表里**（零改动）；本期唯一动过的 yml 是 content 自己的，且 diff 里无密钥字面量 |
 | 8 | 三端 `npm run build` | ✓ `npm_exit=0` ×3（`✓ built in 1.47s / 1.44s / 2.03s`）。★ 见坑 5：第一版判据是假通过 |
 | 9 | 种子基线 | ✓ `seed.sql` 的 diff 里 **没有任何 `sys_menu` / `sys_role_menu` 的 INSERT 改动**（只有一行验证注释被更新）。READER 0 / AUTHOR 2 / ADMIN 15、`sys_role_menu` 17 行**一位未动** —— 因为本期新增菜单行数 = 0（判断 5） |
-| 10 | staged diff 无密钥 | ⏳ 提交前执行；`AI_KEY_SECRET` 与真实 API Key **都不在任何被提交的文件里**（`application.yml` 只有 `${AI_KEY_SECRET:}` 这个空默认） |
+| 10 | staged diff 无密钥 | ✓ 提交前扫过 `^\+` 行：`sk-` 长串 / `AKIA` / `ghp_` / `-----BEGIN` / `eyJ…` 命中 **0**。`AI_KEY_SECRET` 与真实 API Key **都不在任何被提交的文件里**（`application.yml` 只有 `${AI_KEY_SECRET:}` 这个空默认） |
+| 11 | 不该进仓库的东西 | ✓ `docs/tools/__pycache__/` **没被 add**（本期补了 `.gitignore` 规则 `__pycache__/` + `*.pyc`） |
+
+★ 提交号 **`fbd32a0 e1完成`**（107 files changed, 17000 insertions, 111 deletions）。
 
 ### 8.2 ★★ 两条判据在实测中被订正
 
