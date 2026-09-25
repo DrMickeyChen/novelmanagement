@@ -1,5 +1,6 @@
 package com.novel.modules.ai.config;
 
+import com.novel.common.concurrent.ContextPropagatingTaskDecorator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -58,6 +59,43 @@ public class AiAsyncConfig {
         executor.setQueueCapacity(20);
         executor.setThreadNamePrefix(THREAD_PREFIX);
         executor.setKeepAliveSeconds(60);
+
+        /*
+         * ★★★ 补上 traceId：池线程上没有请求上下文，MDC 是 ThreadLocal，换线程就丢。
+         *
+         *   实测过这个缺口（E1 收尾时补的）：本池打的行在日志里长这样 ——
+         *       [] [ai-stream-1] ... AI 流被中断 | scene=WRITE | user=author01
+         *   而同一个日志文件里请求线程的行是 [1d5c0530...] [http-nio-8082-exec-3]。
+         *   于是 `grep <traceId> backend/logs/*.log` 能找到这个请求的入口行、
+         *   闸门行、配额行，【偏偏找不到它那次生成本身】—— 而生成恰恰是
+         *   最需要和请求对上号的那一段（它花钱）。
+         *
+         *   ★ 另外两个池（AuditAggExecutorConfig / ReindexExecutorConfig）一直是装的，
+         *     只有本池漏了。★ 一个说得通的解释是：它建得比 M5 装 traceId 更早，
+         *     而它一直在手工搬 UserContext —— 容易让人觉得「上下文这件事已经处理过了」。
+         *     ★ 后半句是**推断，不是记录**（真正的原因没留档），写在这里是为了
+         *     下次有人问「为什么偏偏漏了它」时，知道这是个猜测而不是结论。
+         *
+         * ★★ 与 AiController 里那段手工的 UserContext.set/clear 的关系：
+         *   【两层，值相同，不冲突，但那一层不许删】。
+         *   本装饰器顺带也搬 UserContext（它两个都搬，见那个类的注释），
+         *   所以装上之后 AiController 那两行在运行期是冗余的 ——
+         *   但那两行是「这个池的身份从哪来」在调用点的可读锚点，
+         *   而且装饰器一旦被谁摘掉，删掉它们的后果是【静默串号】
+         *   （表现见 UserContext 类注释：A 的额度被算到 B 头上）。
+         *   留着的代价只是两个引用的赋值。
+         *
+         * ★ 它装不上的地方（写在这里省得下次再查一遍）：RocketMQ 的生产回调
+         *   与消费都跑在【客户端自己的线程】上（日志里是 NettyClientPublicExecutor_N），
+         *   不归这个池管，任何 TaskDecorator 都够不着。那些行仍然是 `[]` ——
+         *   所以这个缺口只能【缩小】，不可能关上。
+         *
+         * ★★ 一条能想到的路是「把 id 塞进消息头、消费端再入 MDC」——**不要去实现它**：
+         *   M5 §6.3 已经明确决定不做，理由记在那份文档里，最硬的一条是
+         *   「消费者有 maxReconsumeTimes = 3 的重试，同一个 traceId 会在日志里出现多次，
+         *   关联反而被污染」。这里写一笔，是为了不让下一个人把它当成「漏了」再实现一遍。
+         */
+        executor.setTaskDecorator(new ContextPropagatingTaskDecorator());
 
         /*
          * ★ 优雅关闭：应用停止时等正在生成的流收尾（最多 5 秒）。

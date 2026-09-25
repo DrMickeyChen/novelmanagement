@@ -274,8 +274,21 @@ Start-Process -FilePath 'D:\MickeyChen\usefultool\IDEA\JDK\bin\java.exe' `
 # ★★ M5 起排查的入口是 **traceId**：五份日志的 pattern 都是 `[%X{traceId}]`，
 #   同一个请求在网关/content/... 里是【同一个】32 位串。用法：`grep <traceId> backend/logs/*.log`。
 #   ★ 它由网关注入并【强制覆盖】客户端自带的 `X-Trace-Id`（否则能把别人的日志关联到自己身上）。
-#   ★★ **前端【看不到】traceId** —— `request.js` 是锁定文件、响应拦截器 `return res.data`，
-#      响应头在前端被丢掉。用户报错时**问他要不到号**，只能按「时间 + 页面」反查。别以为加了就能报号。
+#   ★★ **前端【看不到】traceId** —— ★ 实测的真实原因不是「前端把响应头丢了」，
+#      而是**网关压根不回写它**（`curl -D -` 打 `:8080`，响应头里没有 `X-Trace-Id`；
+#      `TraceIdFilter` 只读不写）。按旧说法会有人去改 `request.js`（锁定文件，改不动）。
+#      **正确做法是从网关日志按【时刻】反查**。用户报错时问他要不到号，只能「时间 + 页面」。
+#   ★★ **但池线程上它要自己搬**：MDC 是 ThreadLocal，换线程就丢 ——
+#      每个 `ThreadPoolTaskExecutor` 都必须 `setTaskDecorator(new ContextPropagatingTaskDecorator())`。
+#      E1 收尾时补了 `AiAsyncConfig`（另两个池一直有，就它漏了）。
+#      ★ 判据取**相等**（池线程那格 == 请求线程那格），不是「非空」——非空能被随便一个串满足。
+#   ★★★ **RocketMQ 的线程（生产回调 / 消费）永远搬不到**：它们归客户端自己管
+#      （日志里是 `NettyClientPublicExecutor_N`），任何 TaskDecorator 都够不着。
+#      所以**全链路 traceId 是串不起来的，只能串到「我们的池」为止** ——
+#      别把「加个装饰器」当成这个问题的解。
+#      ★ 「塞进消息头、消费端再入 MDC」那条路 **M5 §6.3 已决定不做**，理由在那份文档里
+#        （最硬的一条：重试 `maxReconsumeTimes=3` 会让同一个 id 出现多次，反而污染关联）。
+#        别把它当成「M5 漏了」。
 #   ★ Sentinel 自己的日志【不在】 backend/logs/ —— 在 `backend/logs/csp/`（按 PID 分文件），
 #     `*-block.log` 是熔断拦截、`*-record.log*` 是规则与状态变更（含熔断打开/恢复）。
 #     ★ 直接写 `csp.sentinel.log.dir` 是【无效】的，SCA 只认 `spring.cloud.sentinel.log.dir`。
