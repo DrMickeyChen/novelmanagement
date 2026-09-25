@@ -376,7 +376,7 @@ java -jar novel-content/target/novel-content.jar --novel.ai.provider=deepseek
 | **M5** | **治理：全链路 traceId（网关生成/剥离 → MDC → 五个服务日志）、Sentinel 熔断 + `fallbackFactory` 分档降级（判据 =「消费方能不能诚实地渲染这个缺失」）、前端「失败」与「空」拆成两个状态、管理端审核日志的跨服务聚合改并行、`FeignIdentityConfig` 合并成单源、索引别名原子切换 + 重建改异步** | [docs/M5-治理.md](docs/M5-治理.md) |
 | **E1** | **AI 能力接入：P4 的「真管道 + 假数据」换成接真实模型（JDK `HttpClient` 流式，零新依赖）、`ai_config.api_key` AES-GCM 加密存储且只写不读、每用户每日配额 + 用量账本、提示词模板改成五个占位符的服务端渲染、前情摘要（作者手动触发）、两层违禁审核（内存词库 fail-closed + AI 语义复核走 MQ）、管理端五个页面** | [docs/E1-AI能力接入.md](docs/E1-AI能力接入.md) |
 
-**第二期**（M0~M5）已完成。**第三期 E1 已完成**；E2（创作中心拆分）/ E3（uni-app）明确不做。
+**第二期**（M0~M5）已完成。**第三期 E1 已完成**；**E3（uni-app 移动端）已完成，只交付 H5**（本机无微信开发者工具/appid，跨端只能按结构性判据验，见 [docs/E3-uni-app.md](docs/E3-uni-app.md)）；**E2（创作中心拆分）按大纲自己的建议已完工** —— 大纲写着「不如第一期 P0 就直接建三个应用」，而三端从 P0 起就是分开的，没有可搬迁的东西。
 
 > ★ 每一期的 `docs/Pn-*.md` **不只是设计稿，更是踩坑记录** —— 里面记着「为什么这么做」和
 > 「不这么做会怎样」。改代码之前值得先搜一下对应那一期，很多坑已经踩过了。

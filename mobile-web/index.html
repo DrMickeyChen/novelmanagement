@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <script>
+      /*
+       * uni-app H5 的标准 viewport 处理：支持 env()/constant() 的机型（刘海屏）
+       * 才加 viewport-fit=cover，否则安全区变量取不到值、底部 tabBar 会被 Home 条压住。
+       * ★ 这段是从官方模板逐字抄的，别改写成静态 <meta>。
+       */
+      var coverSupport =
+        'CSS' in window &&
+        typeof CSS.supports === 'function' &&
+        (CSS.supports('top: env(a)') || CSS.supports('top: constant(a)'))
+      document.write(
+        '<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,minimum-scale=1.0,user-scalable=no' +
+          (coverSupport ? ',viewport-fit=cover' : '') +
+          '" />'
+      )
+    </script>
+    <title>小说管理系统</title>
+    <!--preload-links-->
+    <!--app-context-->
+  </head>
+  <body>
+    <div id="app"><!--app-html--></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

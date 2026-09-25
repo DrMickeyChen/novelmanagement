@@ -18,7 +18,14 @@
 求职作品集，主线是「单体 + 三前端」跑通全链路，第二期再拆微服务来体现微服务/消息队列能力。
 第一期 P0 脚手架 → P1 认证权限 → P2 内容主干 → P3 读者端 → P4 创作中心 → P5 管理后台 → P6 书架评论+打磨（**一期已全部完成**）。
 第二期 **M0 骨架搭建、M1 摘 auth+网关接管 JWT、M2 摘 content+Feign、M3 引入 RocketMQ、M4 摘 search+ES、M5 治理（均已完成）**。
-第三期 **E1 AI 能力接入（已完成）** —— E2 创作中心拆分 / E3 uni-app 明确不做。
+第三期 **E1 AI 能力接入（已完成）**、**E3 uni-app 移动端（已完成，★ 只交付 H5）** ——
+E2「创作中心独立成 `author-web`」**按大纲自己的建议已经完工**：大纲写着「不如第一期 P0 就直接建三个应用」，
+而三端从 P0 起就是分开的、`author-web` 的页面全是创作中心 —— **没有可搬迁的东西**，E2 无剩余工作量。
+★ 大纲对 E3 的态度是全项目最消极的（`项目大纲.md:1376`「最贵…时间不够第一个砍」、`:1380`「可以完全不做」、
+`:1389` 砍的顺序里排第一）—— **做它的唯一正当理由是「跨端能力」这一条**，
+**不是「手机上能看小说」**（那 `reader-web` 早就做到了：`composables/useMediaQuery.js` + 触摸翻章）。
+E3 的实际增量 = 「一个 uni-app 工程 + 出小程序/App 的能力 + 原生 tabBar 的导航形态」。
+详见 `docs/E3-uni-app.md` 开头与判断 1~5。
 ★ **E1 的实质是「把 P4 的【真管道 + 假数据】换成真数据」**，并第一次给系统装上**「花钱」**这个维度：
 配额 / 用量账 / Key 安全三件事都是它带来的。见 `docs/E1-AI能力接入.md` 判断 1~8。
 ★★★ **两个 provider 是两套真相来源，不看就会做错**：YAML `novel.ai.provider`（`mock`/`deepseek`）
@@ -47,9 +54,48 @@
 （真实症状是一句**语气笃定的谎话**），并把「跨服务聚合改并行」的对象从详情页挪到**管理端审核日志**。
 见 `docs/M5-治理.md` 一、二。
 **★ 一次只拆一个服务**，顺序不能反：先摘 auth（system）再摘 content，否则双向依赖拆不开（见铁律 1）。
+★ **E3 的实质是「新增一个客户端，换的是跨端能力」**，不是「手机上能看小说」——
+`reader-web` **早就能在手机上用**（`composables/useMediaQuery.js:59` + `styles/responsive.css` +
+阅读器的触摸翻章 `views/reader/index.vue:515-535`），而大纲对 E3 的态度是全项目最消极的一条
+（`项目大纲.md:1380`「**可以完全不做**」、`:1389` 砍的顺序里排第一）。
+增量只有三样：**① 一个 uni-app 工程 ② 出小程序/App 的能力 ③ 原生 tabBar 的导航形态**。
+★★★ **交付物只有 H5**（无微信开发者工具、无 appid）→「跨端」**只能**按结构性判据验
+（`docs/tools/check-mobile-crossplatform.cjs`，自带阳性+反面对照），**文档里不许写「跨端已验证」**。
+★ 附一句选型结论：**若确定永远只发 H5，uni-app 相比普通 Vue3+Vite 是纯亏损** ——
+选它的唯一正当理由是预期会上小程序/App。见 `docs/E3-uni-app.md` 开头三条诚实。
 
-三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
+三前端：`reader-web`:5173 `/reader/`、`author-web`:5174 `/author/`、`admin-web`:5175 `/admin/`、
+★ **`mobile-web`:5176 `/mobile/`（E3 新增，uni-app 的 H5）**、`dev-proxy`:3000（开发期拓扑 == 生产 Nginx 拓扑）。
 开发入口一律用 **`http://localhost:3000/...`** —— localStorage 按 origin 隔离，直连 5175 读不到另外两端的登录态。
+★★ **移动端【必须】挂在 `:3000` 下，这一条是承重的**：它靠 localStorage 与三端共享登录态，
+所以 `dev-proxy` 那条 `/mobile` 与 `manifest.json` 的 `h5.router.base` 都写 `"/mobile"`，
+**中间不做任何 rewrite**（两边一致才对得上）。直连 `:5176` 会让「跨端登录态共享」**静默失效** ——
+不是报错，是「在 `/reader/` 登录了、`/mobile/` 还是未登录」。
+★★★ **`mobile-web` 的 Vue/Vite 被钉死在 `3.4.21` / `5.2.8`，比三端老一个版本（三端 `vue ^3.5.42` / `vite ^8.3.0`）——
+别去统一**：这是 `@dcloudio/vite-plugin-uni` 的 `peerDependencies.vite` 精确写死 `5.2.8` +
+其 `@vue/compiler-*` 精确锁 `3.4.21` 导致的。改本工程不影响三端、改三端也救不了本工程
+（根 `package.json` **没有 `workspaces`**，用的是 `npm --prefix`，各自 `node_modules`）。
+★ **`@dcloudio/*` 的版本号禁止带 `^`**：npm 上它的 `latest` tag 指向 **Vue2 线**，带 `^` 会浮动过去，
+症状是「装完起不来，而报错与版本二字毫无关系」。
+★ **没有 UI 库**（S1 计划装 `wot-design-uni`，实测两个都没装）—— uni 内置组件 + 手写样式，
+`pages.json` 里没有 `easycom` 段。
+★★★ **H5 上 `uni.setStorageSync` 就是 `localStorage`，key 原样、无前缀** —— 于是
+①**只写字符串**（写对象会被包成 `{"type":…,"data":…}`，桌面端读出来就坏了，**两端都不报错**）；
+②key 沿用 `novel_token` / `novel_user`。★ 同一个 localStorage 里：
+**登录态必须共用、阅读进度（`novel_reader_progress_{id}`）应该共用、
+阅读设置必须隔离**（移动端用 `novel_reader_settings_mobile` —— 共用的症状是
+「我在手机上把字号调大，**把电脑上的也改了**」，且无任何提示）。见判断 2/3。
+★★★ **uni-app 的 H5 运行时会按 `router.base` 重写【根相对】地址**（`getRealPath` → `addBase`）：
+后端给的 `/uploads/...` 会被改成 `/mobile/uploads/...` → 404。
+**任何要交给 `<image>` 的后端路径必须先过 `mobile-web/src/utils/asset.js` 的 `assetUrl()`。**
+★ 症状极具误导性：`@error` + `v-if` 会把元素**从 DOM 里摘掉**，于是「元素数 0」读起来像
+「没渲染」，真相是「渲染了、失败了、被替换了」。分开它们要看**浏览器自己的账本**
+（`performance.getEntriesByType('resource')`），**不是**页面代码的自我报告。见判断 5。
+★★ **uni-app 的 H5 深链是 history 模式**：`/mobile/#/pages/x` 不是有效地址 ——
+**hash 被忽略、路由落回首页、页面正常渲染**，于是探针在「看起来是那一页」的地方量首页的 DOM。
+正确形式 `http://localhost:3000/mobile/pages/x/x`；判据钉在 `uni-page[data-page]` 上，别钉在 URL 上。
+★ 12 个锁定文件**仍属三端**，移动端**不复制**它们（它有自己的四件套：`uni.request` / `uni.*StorageSync`）
+—— 替代品是判断 2/3 的**协议兼容判据**（同名 key + 只写字符串 + 同形状 JSON）。
 
 ★★ **M2 起后端分成四个进程，M4 起是五个**：**网关 `:8080`（唯一入口，也是唯一验 JWT 的地方）** →
 `lb://novel-auth` → **auth `:8081`**（`modules/system` 全部：登录/用户/角色菜单/公告/作者申请/ping）／

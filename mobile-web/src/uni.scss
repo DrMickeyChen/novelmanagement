@@ -1,0 +1,13 @@
+/*
+ * ★ uni-app 会把本文件【自动注入】每个组件的 <style lang="scss"> 开头 ——
+ *   不需要（也不能靠）@import 来用它。
+ *
+ * 因此这里【只放变量和 mixin】，绝不放会产生 CSS 输出的规则：
+ * 放一条 `.a { color: red }`，构建产物里就会每个组件各重复一份。
+ */
+
+$novel-primary: #2f6fed;
+$novel-text: #1f2329;
+$novel-text-sub: #8a9099;
+$novel-border: #ebedf0;
+$novel-bg: #f5f6f8;

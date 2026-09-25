@@ -4,21 +4,23 @@
   "version": "1.0.0",
   "description": "小说管理系统 —— 根目录脚本。只管拉起下面五个子项目，自己不包含任何业务代码",
   "scripts": {
-    "install:all": "npm install && npm --prefix reader-web install && npm --prefix author-web install && npm --prefix admin-web install && npm --prefix dev-proxy install",
-    "dev": "concurrently -n reader,author,admin,proxy -c cyan,magenta,yellow,green \"npm --prefix reader-web run dev\" \"npm --prefix author-web run dev\" \"npm --prefix admin-web run dev\" \"npm --prefix dev-proxy run dev\"",
+    "install:all": "npm install && npm --prefix reader-web install && npm --prefix author-web install && npm --prefix admin-web install && npm --prefix mobile-web install && npm --prefix dev-proxy install",
+    "dev": "concurrently -n reader,author,admin,mobile,proxy -c cyan,magenta,yellow,blue,green \"npm --prefix reader-web run dev\" \"npm --prefix author-web run dev\" \"npm --prefix admin-web run dev\" \"npm --prefix mobile-web run dev\" \"npm --prefix dev-proxy run dev\"",
     "dev:reader": "npm --prefix reader-web run dev",
     "dev:author": "npm --prefix author-web run dev",
     "dev:admin": "npm --prefix admin-web run dev",
+    "dev:mobile": "npm --prefix mobile-web run dev",
     "dev:proxy": "npm --prefix dev-proxy run dev",
     "dev:gateway": "mvn -f backend/pom.xml -DskipTests -pl novel-gateway -am package && cd backend && java -jar novel-gateway/target/novel-gateway.jar",
     "dev:auth": "mvn -f backend/pom.xml -DskipTests -pl novel-auth -am package && cd backend && java -jar novel-auth/target/novel-auth.jar",
     "dev:content": "mvn -f backend/pom.xml -DskipTests -pl novel-content -am package && cd backend && java -jar novel-content/target/novel-content.jar",
     "dev:interaction": "mvn -f backend/pom.xml -DskipTests -pl novel-interaction -am package && cd backend && java -jar novel-interaction/target/novel-interaction.jar",
     "dev:search": "mvn -f backend/pom.xml -DskipTests -pl novel-search -am package && cd backend && java -jar novel-search/target/novel-search.jar",
-    "build": "npm --prefix reader-web run build && npm --prefix author-web run build && npm --prefix admin-web run build",
+    "build": "npm --prefix reader-web run build && npm --prefix author-web run build && npm --prefix admin-web run build && npm --prefix mobile-web run build",
     "build:reader": "npm --prefix reader-web run build",
     "build:author": "npm --prefix author-web run build",
-    "build:admin": "npm --prefix admin-web run build"
+    "build:admin": "npm --prefix admin-web run build",
+    "build:mobile": "npm --prefix mobile-web run build"
   },
   "devDependencies": {
     "concurrently": "^10.0.5"

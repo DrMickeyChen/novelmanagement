@@ -1,0 +1,98 @@
+{
+  "pages": [
+    {
+      "path": "pages/index/index",
+      "style": {
+        "navigationBarTitleText": "小说阅读",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/rank/rank",
+      "style": {
+        "navigationBarTitleText": "排行榜",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/shelf/shelf",
+      "style": {
+        "navigationBarTitleText": "我的书架"
+      }
+    },
+    {
+      "path": "pages/profile/profile",
+      "style": {
+        "navigationBarTitleText": "我的"
+      }
+    },
+    {
+      "path": "pages/login/login",
+      "style": {
+        "navigationBarTitleText": "登录"
+      }
+    },
+    {
+      "path": "pages/category/category",
+      "style": {
+        "navigationBarTitleText": "分类"
+      }
+    },
+    {
+      "path": "pages/search/search",
+      "style": {
+        "navigationBarTitleText": "搜索"
+      }
+    },
+    {
+      "path": "pages/novel/novel",
+      "style": {
+        "navigationBarTitleText": "作品详情",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/reader/reader",
+      "style": {
+        "navigationBarTitleText": "阅读"
+      }
+    },
+    {
+      "path": "pages/history/history",
+      "style": {
+        "navigationBarTitleText": "阅读历史",
+        "enablePullDownRefresh": true
+      }
+    },
+    {
+      "path": "pages/applyAuthor/applyAuthor",
+      "style": {
+        "navigationBarTitleText": "申请成为作者"
+      }
+    },
+    {
+      "path": "pages/error/404",
+      "style": {
+        "navigationBarTitleText": "页面不存在"
+      }
+    }
+  ],
+  "globalStyle": {
+    "navigationBarTextStyle": "black",
+    "navigationBarTitleText": "小说阅读",
+    "navigationBarBackgroundColor": "#ffffff",
+    "backgroundColor": "#f5f6f8"
+  },
+  "tabBar": {
+    "color": "#8a93a0",
+    "selectedColor": "#2f6fed",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      { "pagePath": "pages/index/index", "text": "首页" },
+      { "pagePath": "pages/rank/rank", "text": "排行" },
+      { "pagePath": "pages/shelf/shelf", "text": "书架" },
+      { "pagePath": "pages/profile/profile", "text": "我的" }
+    ]
+  }
+}

@@ -82,8 +82,8 @@
     <div class="wrap">
       <h1>小说管理系统 · 开发代理</h1>
       <p class="sub">
-        三个前端应用收在同一个 origin 下的三个路径 —— 和生产的 Nginx 拓扑一致。<br />
-        因为这个页面和下面三个应用同源，它们的
+        四个前端应用收在同一个 origin 下的四个路径 —— 和生产的 Nginx 拓扑一致。<br />
+        因为这个页面和下面四个应用同源，它们的
         <code>localStorage</code> 才会真正共享。
       </p>
 
@@ -111,11 +111,21 @@
         <div class="port">:5175</div>
       </a>
 
+      <a class="card" href="/mobile/">
+        <div>
+          <div class="name">📱 移动端（uni-app）</div>
+          <div class="path">/mobile/ → localhost:5176</div>
+        </div>
+        <div class="port">:5176</div>
+      </a>
+
       <div class="note">
-        <strong>要验证三端免登录：</strong>从阅读端进入 → 点「模拟登录」→ 再点顶部导航跳到创作中心或管理端，
+        <strong>要验证多端免登录：</strong>从阅读端进入 → 点「模拟登录」→ 再点顶部导航跳到创作中心、管理端或移动端，
         不需要重新登录。<br />
-        <strong>注意：</strong>不要直接访问 <code>localhost:5174</code> ——
-        那是另一个 origin，和这里不共享登录态，仅用于单独调试单个应用。
+        <strong>注意：</strong>不要直接访问 <code>localhost:5174</code> / <code>localhost:5176</code> ——
+        那是另一个 origin，和这里不共享登录态，仅用于单独调试单个应用。<br />
+        <strong>移动端建议：</strong>浏览器开发者工具切到手机视图（iPhone / 375px）再看
+        <code>/mobile/</code>，它按移动端布局设计，不是响应式缩放的桌面页面。
       </div>
     </div>
   </body>

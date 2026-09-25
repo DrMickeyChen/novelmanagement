@@ -30,7 +30,18 @@ import { defineConfig } from 'vite'
  *   :3000/reader/ → :5173       https://域名/reader/ → reader-web/dist
  *   :3000/author/ → :5174       https://域名/author/ → author-web/dist
  *   :3000/admin/  → :5175       https://域名/admin/  → admin-web/dist
+ *   :3000/mobile/ → :5176       https://域名/mobile/ → mobile-web/dist/build/h5
  *   :3000/api/    → :8080       https://域名/api/    → gateway:8080
+ * ------------------------------------------------------------
+ *
+ * ★★ E3 的 mobile-web 是【必须】收进这个 origin 的第四端。
+ *
+ * 它不是一个「顺手也代理一下」的补充 —— 它在 :5176 上有【自己的一份】localStorage，
+ * 在那里登录的 token，/reader/ 读不到、反之亦然。
+ * 而移动端与读者端共享登录态（同一组 novel_token / novel_user 键）
+ * 正是本期的设计前提之一，所以它必须挂在 3000 上，不能直连 5176 访问。
+ * ★ 换句话说：把 /mobile 摘掉不会白屏，只会让「跨端登录态共享」这条判据失效 ——
+ *   而它是静默失效的（两端各登各的，看起来一切正常）。
  * ------------------------------------------------------------
  *
  * 启动顺序：三个前端各自 npm run dev，然后这里 npm run dev。
@@ -84,6 +95,21 @@ export default defineConfig({
       },
       '/admin': {
         target: 'http://localhost:5175',
+        changeOrigin: true,
+        ws: true,
+      },
+
+      /*
+       * ★ E3 新增。mobile-web 是 uni-app（Vue3 + Vite）工程，与另外三端的
+       *   目录结构和构建产物都不同，但代理这一层完全一样：前缀转发、不 rewrite。
+       *
+       * ★ 它自己那一侧的对应配置是 src/manifest.json 的 h5.router.base = "/mobile/"
+       *   —— 两边都写 "/mobile"，中间【没有任何 rewrite】，所以只要有一边写错，
+       *   症状就是 404 或白屏，而不是「路径多一层」那种一眼能看出的错。
+       *   验收判据：经 3000 取模块 URL 要拿到 200 + text/javascript（铁律 4）。
+       */
+      '/mobile': {
+        target: 'http://localhost:5176',
         changeOrigin: true,
         ws: true,
       },
