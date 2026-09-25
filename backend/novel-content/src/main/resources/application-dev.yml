@@ -291,6 +291,43 @@ novel:
     #      生产环境靠环境变量 JWT_SECRET 覆盖它（见 application.yml）。
     secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
 
+  # ---------------- AI 的加密密钥（E3 收尾补） ----------------
+  #
+  # ★★ 它保护的是库里的 ai_config.api_key（管理员在「AI 配置」页填的那把真 Key）。
+  #    只有 novel-content 用得到它，所以只有本文件有这么一段。
+  #
+  # ★ 形状与上面的 INTERNAL_TOKEN / JWT_SECRET【逐字同款】：占位符 + 一个 dev 常量。
+  #    ★★ 必须是 ${AI_KEY_SECRET:…} 这个形状，【不能】把值写成裸字面量 ——
+  #      裸字面量会整条覆盖 application.yml 那一行（profile 文件优先级更高），
+  #      于是环境变量 AI_KEY_SECRET 再也覆盖不动它，覆盖那条路就死了。
+  #      占位符形式才是「本地不配就能跑」与「生产配了就生效」同时成立的原因。
+  #    ★ 生产路径一行没变：application.yml 那边仍是 ${AI_KEY_SECRET:}（空默认）→ 5002。
+  #      所以「生产忘配 → 加密变装饰」那条失败模式【没有】被这次改动放过。
+  #
+  # ★★★ 代价与上面两行不同性质，必须说清楚：
+  #    INTERNAL_TOKEN / JWT_SECRET 保护的是【一次性开发数据】（本地虚拟机的库、种子账号），
+  #    这个值保护的是【你自己那把真 DeepSeek Key】—— 而它现在写在 git 里，
+  #    等于 **dev 环境里这把 Key 的加密只是【形式】**：拿到本仓库 + 那个库的人都能解开。
+  #    ★ 所以走这条路的前提是：**dev 库里放的是一把单独申请、限额很低、随时能吊销的 Key**，
+  #      真 Key 只放生产。这是为「本地零配置、IDEA 与 java -jar 行为一致」付的价
+  #      （演示时不必先讲一段「环境变量怎么配」）。
+  #    ★ 反过来说：想在小说的 dev 环境里存主力 Key，就别用这条默认值 ——
+  #      把本行删掉（或显式给 AI_KEY_SECRET），让 application.yml 那条空默认生效。
+  #
+  # ★★ 它自己还撞上 AiCrypto 的一处边界：那边的密钥派生是 SHA-256(secret) 直接当 AES 密钥，
+  #    而上 PBKDF2 被否掉的前提是「这个 secret 是运维生成的高熵随机串」。
+  #    下面这一串【恰恰不是】随机串 —— 它是个公开的、好记的常量。
+  #      · 在 dev 里这不多损失什么：密钥本来就公开，爆破它没有意义；
+  #      · 但它又一次说明【dev 库里的 Key 只能是不心疼的那把】——见上。
+  #
+  # ★ 历史上的 E1 取舍是「绝不给默认值」，那条论证与它防的失败模式都仍然成立，
+  #   只是现在被限定在【生产路径】上。application.yml / AiCrypto / CLAUDE.md / 部署文档里
+  #   那几处说法都已按 profile 补了限定 —— 单说「有默认值」或「没有默认值」都是半句话。
+  #
+  # ★★ 换值之后库里已存的 api_key 密文【全部解不开】（GCM auth tag 对不上 → 抛异常，不是乱码）。
+  ai:
+    key-secret: ${AI_KEY_SECRET:novel-dev-only-ai-key-secret-please-change-in-production-2026}
+
 # ---------------- RocketMQ（M3 新增） ----------------
 #
 # ★★ 这一段是【顶层】的，不在 spring: 下面 —— rocketmq-spring 的前缀就叫

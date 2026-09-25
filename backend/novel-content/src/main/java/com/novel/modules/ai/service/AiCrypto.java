@@ -32,12 +32,19 @@ import java.util.concurrent.atomic.AtomicReference;
  * ★ 这是本项目反复出现的同一个形状：<b>把「配错了」变成「上游 401」，排查方向差得远。</b>
  * （同 {@code AuditLogServiceImpl} 的「降级只对能诚实地渲染出来的字段成立」。）
  *
- * <h3>★★ 密钥怎么来 —— 以及为什么【绝不】给默认值</h3>
+ * <h3>★★ 密钥怎么来 —— 以及为什么【生产路径上】绝不给默认值</h3>
  *
  * <p>{@code AI_KEY_SECRET} 走环境变量，<b>与 {@code JWT_SECRET} / {@code INTERNAL_TOKEN} 同一条规矩</b>：
  * 给了默认值，生产环境忘配时会静默用一个<b>写在 git 里、全世界都知道</b>的字符串当密钥。
  * 那时「加密」变成一个<b>装饰</b>，而<b>没有任何症状</b> ——
  * 它不像「登录坏了」那样会立刻被发现，是这一期最坏的一种失败。
+ *
+ * <p>★★ <b>限定（E3 收尾补）：上面这条规矩说的是【生产路径】。</b>
+ * {@code application.yml} 那行仍是 {@code ${AI_KEY_SECRET:}}（空默认），而
+ * {@code application-dev.yml} 里有一条 dev 常量默认值（与 {@code JWT_SECRET} 同款），
+ * 所以本地开发是零配置的。★ 说「它有 / 没有默认值」之前，先点明说的是哪条 profile。
+ * ★★ 那份 dev 默认值让 <b>dev 库里那把 Key 在效果上等于明文</b>（密钥就写在仓库里）——
+ * 所以 <b>dev 只放低限额、随时可吊销的 Key，真 Key 只放生产</b>。理由写在该文件里。
  *
  * <p>★★ <b>但这里和 JWT 有一处【故意的不同】：密钥没配时，本类【不在启动期报错】。</b>
  * 判据是「新克隆的仓库不配任何东西必须能跑起来」—— 启动就要求 {@code AI_KEY_SECRET}，
@@ -50,7 +57,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li>P4 用 {@code novel.ai.provider} 上的 {@code matchIfMissing=true} 让缺配置时兜底到 mock ——
  *       <b>所以那时候「不配任何东西」连 AI 面板都有演示输出</b>。这个兜底现在挪给了真实实现
  *       （见 {@code application.yml}），于是 AI 面板在不配 Key 时会返 5002，这是刻意接受的代价；</li>
- *   <li>{@code AI_KEY_SECRET} 的空默认值 —— 即本类这一段。<b>它没变，也不许变。</b></li>
+ *   <li>{@code AI_KEY_SECRET} 的空默认值 —— 即本类这一段。<b>它没变，也不许变。</b>
+ *       （★ 指 {@code application.yml} 那条<b>生产</b>路径；dev 那条常量默认值是 E3 收尾另加的，
+ *       见上 —— 它不影响「应用能不能启动」这条判据：两条路径下都不影响。）</li>
  * </ol>
  * ★★ 关键区分：那条判据其实是【两件事】被写成了同一句话 ——
  * 「<b>应用能不能启动</b>」（本类负责，仍然成立）与「<b>AI 面板有没有输出</b>」
