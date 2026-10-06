@@ -52,6 +52,17 @@ pnpm-debug.log*
 #    哪天 HBuilderX 直接打开仓库根目录再生成一个，就又不被忽略了 ——
 #    忽略规则失效是静默的，本文件已经为这件事栽过两次（见 application-prod.yml 那两段）。
 .hbuilderx/
+# Claude Code（AI 编码助手）的本机配置
+# ★★ 这条是给【公开仓库】补的，起因是一次实测：它原先只被本机的
+#    `C:\Users\<用户>\.config\git\ignore`（全局 ignore）挡着，仓库的 .gitignore 里没有。
+#    后果是——在这台机器上一切正常，换一台机器 `git add -A` 就把它带进去了，
+#    而里面是**你的本机绝对路径和权限白名单**（实测含 D:/MickeyChen/... 二十余处）。
+#    「本机配置替仓库挡了灾」这个形状和上面 application-prod.yml 那两段是同一个：
+#    **忽略规则失效是静默的，而且只在别人的机器上失效**。
+# ★ 只忽略 settings.local.json（本机私有），**不忽略整个 .claude/**：
+#    将来若要提交共享的 .claude/skills/ 或 settings.json，门还开着 ——
+#    与上面 .vscode/* + !.vscode/settings.json 是同一套写法。
+.claude/settings.local.json
 
 # ---------- 操作系统 ----------
 .DS_Store

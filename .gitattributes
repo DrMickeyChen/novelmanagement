@@ -1,0 +1,46 @@
+# ============================================================
+# 小说管理系统 · 换行符规则
+# ============================================================
+#
+# ★ 这个文件存在的理由：Git 的换行符行为默认由**每个人本机的 core.autocrlf** 决定，
+#   而这不是一个可以指望的东西。
+#
+#   本机实测：core.autocrlf = true → 索引里存的是 LF（`git ls-files --eol`
+#   577 个文件是 i/lf），所以别人 clone 拿到 LF，脚本能跑。
+#   ★ 但那个「没事」靠的是**本机这一个设置**：任何一个没设 autocrlf 的
+#     Windows 贡献者提交一次，CRLF 就进了仓库 —— 而 Linux/Mac 上
+#     跑 docs/tools/ 里那些 .cjs / .py 工具脚本会 `bad interpreter: ^M`，
+#     报错信息还完全指不到「换行符」这三个字上。
+#
+# ★★ 所以规则要跟着【仓库】走，不是跟着机器走 —— 这就是本文件。
+
+# 把规范化交给仓库：无论提交者本机的 autocrlf 是什么，
+# git 都会在【入库时】把文本文件统一成 LF。
+# 判据（可复跑）：
+#   git ls-files --eol | awk '{print $1}' | sort | uniq -c
+#   → i/ 那一列应当全是 lf，出现 i/crlf 就是有人绕过了这条规则
+* text=auto
+
+# ★ 这里【故意不写 eol=lf】。说明白它管的是什么：
+#     text=auto  管【入库】—— 保证仓库里永远是 LF（本文件要解决的就是这个）
+#     eol=lf     管【出库】—— 会把所有人的工作区也强制成 LF
+#   后者对本项目其实是个改进（docs/ 里那些改中文文档的补丁脚本，
+#   就是被「checkout 出来是 CRLF」坑过才写了额外处理），但它会一次性改动
+#   工作区里 31 个 `i/lf w/crlf` 的文件。**要做得单独做成一次提交**
+#   （加 eol=lf + `git add --renormalize .`），别混在「加个配置文件」里 ——
+#   否则这次提交的 diff 会长得看不出本意。
+
+# ---------- 二进制：绝不做换行符转换 ----------
+# ★ 不声明的话，某些工具链下的 png 会被当成文本「规范化」——
+#   表现是图片损坏，而 git 全程不报任何错。
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.jar   binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.pdf   binary
