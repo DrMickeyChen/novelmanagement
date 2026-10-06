@@ -14,13 +14,43 @@ import { ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useUserStore } from '@/stores/user'
+// ★ 跳转（含开放重定向防护）抽在 utils 里，注册页用的是同一份 —— 见那个文件头
+import { goAfterLogin, withRedirect } from '@/utils/loginRedirect'
 
 const router = useRouter()
 const route = useRoute()
 const userStore = useUserStore()
 
+const formRef = ref()
 const form = ref({ username: '', password: '' })
 const loading = ref(false)
+
+/**
+ * 校验规则。
+ *
+ * ★★ **故意比注册页松** —— 注册页有 `min: 6`，这里没有。
+ *   后端 `LoginDTO` 上同样只有 `@Size(max = 64)`、**没有 min**，理由写在
+ *   `LoginDTO.java:29-37`：登录不该校验密码复杂度，否则历史短密码账号会被
+ *   自己的登录页挡在门外，而且「至少 6 位」这句提示本身就泄露了密码策略。
+ *   ★ 别为了「两页一致」把它抄过来。
+ *
+ * ★ 长度上限那条也不是装饰：`@Size(max = 50/64)` 是后端真实存在的约束，
+ *   前端挡住超长输入可以省掉一次注定失败的往返。
+ */
+const rules = {
+  username: [
+    { required: true, message: '请填写用户名', trigger: 'blur' },
+    { max: 50, message: '用户名过长', trigger: 'blur' },
+  ],
+  password: [
+    { required: true, message: '请填写密码', trigger: 'blur' },
+    // ★ 和后端 `@Size(max = 64)` 一致。★ 没有 min —— 见上面那段说明
+    { max: 64, message: '密码过长', trigger: 'blur' },
+  ],
+}
+
+/** 去注册页。★ 带上 redirect —— 别让「详情页 → 登录 → 注册」这一圈把目标弄丢 */
+const registerPath = withRedirect('/register', route)
 
 /**
  * 登录。
@@ -34,17 +64,21 @@ async function handleLogin() {
   if (loading.value) return // 防止网络慢时连点两次，发出两个登录请求
 
   /*
-   * 前端先挡一道空值。
+   * 前端先挡一道。
    *
    * ★ 后端 LoginDTO 上有 @NotBlank，空值也能挡住 —— 但那样返回的是
    *   code 400「请求内容格式不正确」，对一个只是忘了填用户名的用户来说
    *   这个提示毫无帮助（他不知道自己哪里格式不对）。
    *   前端校验的意义是给出「能看懂、能照着改」的提示，
    *   后端校验的意义是「就算前端被绕过也挡得住」—— 两者都要有，缺一不可。
+   *
+   * ★ 这里由「手写判空」改成 el-form 的 rules（对齐 `applyAuthor/index.vue`
+   *   的范式）：判空只能说「不对」，rules 能把提示挂在**具体那个字段**下面。
    */
-  if (!form.value.username || !form.value.password) {
-    ElMessage.warning('请填写用户名和密码')
-    return
+  try {
+    await formRef.value.validate()
+  } catch {
+    return // 校验没过，el-form 已经在字段下面标红了
   }
 
   loading.value = true
@@ -55,7 +89,7 @@ async function handleLogin() {
       password: form.value.password,
     })
     ElMessage.success(`欢迎回来，${user.nickname || user.username}`)
-    goAfterLogin()
+    goAfterLogin(router, route)
   } catch {
     // 失败原因已经由拦截器提示过；这里什么都不做，让用户留在当前页重试
   } finally {
@@ -65,43 +99,12 @@ async function handleLogin() {
   }
 }
 
-/**
- * 登录成功后跳回来源页。
- *
- * redirect 是 auth.js 里 401 跳转时带上的参数 ——
- * 用户在创作中心 token 过期被踢回来，重新登录后应该回到创作中心，
- * 而不是停在阅读端首页。
- *
- * ★ 这里只接受【本应用内】的相对路径：如果直接把外部 URL 拿来跳，
- *   就是个开放重定向漏洞（攻击者构造 ?redirect=https://钓鱼站 骗用户点）。
- *   所以用 startsWith('/') 卡一道，「//evil.com」这种也要一起挡掉。
+/*
+ * 「登录成功后跳回来源页」这段逻辑（含开放重定向防护）已经搬到
+ * `utils/loginRedirect.js` —— 注册页要用同一份。
+ * ★ 那是安全逻辑，复制两份的代价不是「多几十行」，而是
+ *   「以后只会修其中一份，另一份还是漏的」。
  */
-function goAfterLogin() {
-  const redirect = route.query.redirect
-
-  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//')) {
-    router.replace(redirect)
-    return
-  }
-
-  if (typeof redirect === 'string' && redirect.startsWith('http')) {
-    // 从另外两个端跳回来的，是完整地址，且在自己的 localhost 域内
-    try {
-      const url = new URL(redirect)
-      if (['localhost', '127.0.0.1'].includes(url.hostname)) {
-        window.location.href = redirect
-        return
-      }
-    } catch {
-      // redirect 是个不成形的地址（比如手写的 ?redirect=httpfoo）。
-      // new URL() 会抛 TypeError —— 不接住的话这个异常会冒到 handleLogin
-      // 的 catch 里被静默吞掉，用户看到「欢迎回来」却停在原地不动。
-      // 落到下面走默认跳转即可。
-    }
-  }
-
-  router.replace('/')
-}
 </script>
 
 <template>
@@ -112,8 +115,14 @@ function goAfterLogin() {
         <p class="sub">登录后可在三个端之间免登录切换</p>
       </div>
 
-      <el-form :model="form" label-position="top" @submit.prevent="handleLogin">
-        <el-form-item label="用户名">
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="rules"
+        label-position="top"
+        @submit.prevent="handleLogin"
+      >
+        <el-form-item label="用户名" prop="username">
           <el-input
             v-model="form.username"
             placeholder="请输入用户名"
@@ -121,7 +130,7 @@ function goAfterLogin() {
             @keyup.enter="handleLogin"
           />
         </el-form-item>
-        <el-form-item label="密码">
+        <el-form-item label="密码" prop="password">
           <el-input
             v-model="form.password"
             type="password"
@@ -139,6 +148,12 @@ function goAfterLogin() {
       <el-divider />
 
       <div class="footer-links">
+        <!--
+          ★ 带上 redirect：从详情页点「去登录」、再点这里转去注册的人，
+            注册完应该回到那本书，而不是被丢在首页（同 LoginPrompt 规矩 ④）。
+        -->
+        <router-link :to="registerPath">还没有账号？立即注册</router-link>
+        <span class="sep">·</span>
         <router-link to="/">← 返回首页</router-link>
       </div>
     </el-card>
@@ -181,5 +196,11 @@ function goAfterLogin() {
 .footer-links {
   text-align: center;
   font-size: 13px;
+}
+
+/* 注册链接与「返回首页」之间的分隔点 */
+.footer-links .sep {
+  margin: 0 6px;
+  color: #dcdfe6;
 }
 </style>

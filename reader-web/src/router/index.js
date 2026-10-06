@@ -145,6 +145,17 @@ const routes = [
     meta: { title: '登录' },
   },
   {
+    /*
+     * ★ 和 /login 同款：顶层路由、全屏、**不写 requiresAuth**
+     *   （守卫判的是这个字段的真值，省略就是「不需要登录」，见下面守卫那几行）。
+     *   ★ 这里【不加】「已登录就跳走」—— 登录页也没有这道，两页保持一致。
+     */
+    path: '/register',
+    name: 'register',
+    component: () => import('@/views/register/index.vue'),
+    meta: { title: '注册' },
+  },
+  {
     // 兜底：放到最后，前面的都没匹配上才走这里
     path: '/:pathMatch(.*)*',
     name: 'notFound',

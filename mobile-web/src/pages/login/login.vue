@@ -14,6 +14,8 @@
 import { ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
 import { useUserStore } from '@/stores/user'
+// ★ 跳转（含开放重定向防护）抽在 utils 里，注册页用的是同一份 —— 见那个文件头
+import { goAfterLogin, withRedirect } from '@/utils/redirect'
 
 const userStore = useUserStore()
 
@@ -46,15 +48,31 @@ async function handleLogin() {
   if (loading.value) return // 防止网络慢时连点两次，发出两个登录请求
 
   /*
-   * 前端先挡一道空值。
+   * 前端先挡一道。
    *
    * ★ 后端 LoginDTO 上有 @NotBlank，空值也能挡住 —— 但那样返回的是
    *   code 400「请求内容格式不正确」，对一个只是忘了填用户名的用户来说
    *   这个提示毫无帮助。前端校验的意义是给出「能看懂、能照着改」的提示，
    *   后端校验的意义是「就算前端被绕过也挡得住」—— 两者都要有。
+   *
+   * ★ 下面两条长度上限对应后端 `LoginDTO` 的 `@Size(max = 50)` / `@Size(max = 64)`，
+   *   挡住超长输入可以省掉一次注定失败的往返。
+   *
+   * ★★ **密码这里刻意没有「至少 6 位」** —— `LoginDTO` 上也没有（见
+   *   `LoginDTO.java:29-37`：登录不该校验密码复杂度，否则历史短密码账号会被
+   *   自己的登录页挡在门外，而「至少 6 位」这句提示本身就泄露了密码策略）。
+   *   ★ 注册页有 min 6，这里没有，**两页规则不一样是有意的，别顺手统一**。
    */
   if (!form.value.username || !form.value.password) {
     uni.showToast({ title: '请填写用户名和密码', icon: 'none' })
+    return
+  }
+  if (form.value.username.trim().length > 50) {
+    uni.showToast({ title: '用户名过长', icon: 'none' })
+    return
+  }
+  if (form.value.password.length > 64) {
+    uni.showToast({ title: '密码过长', icon: 'none' })
     return
   }
 
@@ -70,7 +88,7 @@ async function handleLogin() {
     uni.showToast({ title: `欢迎回来，${user.nickname || user.username}`, icon: 'none' })
     // ★ 稍等一下再跳，否则 toast 会被页面切换直接吞掉 ——
     //   用户只看到闪了一下，不知道成没成功
-    setTimeout(goAfterLogin, 600)
+    setTimeout(() => goAfterLogin(redirect.value), 600)
   } catch {
     // 失败原因已经由 request.js 提示过；这里什么都不做，让用户留在当前页重试
   } finally {
@@ -80,28 +98,28 @@ async function handleLogin() {
   }
 }
 
-/**
- * 登录成功后跳到来源页。
- *
- * ★★ 只接受以 `/pages/` 开头的路径 —— 这是移动端版本的**开放重定向**防护。
- *    桌面端那边挡的是 `startsWith('/') && !startsWith('//')`（浏览器地址），
- *    这里挡的必须是 uni 的**页面路径命名空间**：`redirect` 是个页面路径，
- *    任何不以 /pages/ 开头的东西（绝对 URL、`//evil.com`、
- *    `javascript:` 之类）都不该被 reLaunch 拿去用。
- *    ★ 少了这一道，攻击者构造 ?redirect=https://钓鱼站 就能把用户带走。
+/*
+ * 「登录成功后跳回来源页」那段逻辑（含移动端版本的开放重定向防护：
+ * 只接受 `/pages/` 开头的页面路径）已经搬到 `utils/redirect.js` ——
+ * 注册页要用同一份。
+ * ★ 那是安全逻辑，复制两份的代价不是「多二十行」，而是
+ *   「以后只会修其中一份，另一份还是漏的」。
  */
-function goAfterLogin() {
-  const target = redirect.value
-  if (target && target.startsWith('/pages/')) {
-    uni.reLaunch({ url: target })
-    return
-  }
-  uni.reLaunch({ url: '/pages/index/index' })
-}
 
 /** 先随便看看 —— 读者端的浏览路径本来就不需要登录 */
 function goHome() {
   uni.reLaunch({ url: '/pages/index/index' })
+}
+
+/**
+ * 去注册页。
+ *
+ * ★ 用 `uni.navigateTo` 而不是 reLaunch：register 不在 tabBar 里，
+ *   是个普通页面 —— tabBar 页才用 switchTab（见 pages/applyAuthor 的 goLogin）。
+ * ★ 带上 redirect：从详情页被 401 送到这里的人，注册完应该回到那本书。
+ */
+function goRegister() {
+  uni.navigateTo({ url: withRedirect('/pages/register/register', redirect.value) })
 }
 </script>
 
@@ -151,6 +169,14 @@ function goHome() {
       </button>
 
       <text class="ghost" @click="goHome">先随便看看 →</text>
+
+      <!--
+        ★ 注册入口。和桌面端一样放在登录页（那边是 footer-links 那条），
+          移动端的对偶位置就是这里。
+        ★★ 「我的」页（pages/profile）的未登录引导处**刻意不加**第二个入口 ——
+          注册入口只从登录页进，问题「注册要往哪点」才只有一个答案。
+      -->
+      <text class="ghost" @click="goRegister">还没有账号？去注册</text>
     </view>
   </view>
 </template>

@@ -205,6 +205,13 @@ async function handleLogout() {
     </template>
     <template v-else>
       <router-link to="/login" class="nav-link">登录</router-link>
+      <!--
+        ★ 用 `.nav-link`（左族站点导航），不是 `.action-link` —— 见下面那两族
+          样式的说明：这条是「去另一个页面」，不是「去干一件事」。
+        ★ 不带 redirect：它是全站导航入口，不承接上下文，没有「回哪里」可言。
+        ★★ 这一处 markup 两处渲染（桌面导航条 + 窄屏抽屉），所以两端同时生效。
+      -->
+      <router-link to="/register" class="nav-link">注册</router-link>
     </template>
   </div>
 </template>
