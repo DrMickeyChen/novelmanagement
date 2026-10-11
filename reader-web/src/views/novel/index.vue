@@ -20,6 +20,7 @@
  *   它会让「收藏数」看起来像是个只有会员才有的东西。
  *   （按钮的「在不在书架」是另一回事 —— 那个本来就是「我」的状态。）
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
@@ -400,6 +401,7 @@ async function resolveProgressChapter() {
     <template v-else-if="detail">
       <!-- ============ 头部：书名 / 元信息 / 操作按钮 ============ -->
       <el-card shadow="never" class="head">
+        <NovelCover :cover="detail.cover" :title="detail.title" class="detail-cover" />
         <div class="title-row">
           <h1 class="title">{{ detail.title }}</h1>
           <el-tag :type="detail.isFinish === 1 ? 'success' : 'warning'" effect="plain" size="small">
@@ -565,6 +567,8 @@ async function resolveProgressChapter() {
 </template>
 
 <style scoped>
+.head :deep(.el-card__body) { display: flow-root; }
+.detail-cover { float: left; margin: 0 16px 12px 0; }
 .novel-detail {
   padding: 20px 0;
 }

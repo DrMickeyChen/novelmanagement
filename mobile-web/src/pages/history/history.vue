@@ -40,6 +40,7 @@
  * 所以这一格有正确的渲染方式，可以照常显示。
  * （书架页同理，两页的处理刻意一致。）
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed, watch } from 'vue'
 import { onReachBottom, onPullDownRefresh } from '@dcloudio/uni-app'
 import { getHistoryList } from '@/api/reader'
@@ -196,6 +197,7 @@ function timeText(item) {
           hover-class="row--hover"
           @click="open(item)"
         >
+          <NovelCover v-if="item.available !== false" :cover="item.cover" :title="item.title" class="list-cover" />
           <view class="row__head">
             <!--
               ★ 下架时 title 是 null → 用 `作品 #id` 兜底。
@@ -246,6 +248,7 @@ function timeText(item) {
 </template>
 
 <style scoped>
+.list-cover { margin-bottom: 20rpx; }
 .history {
   min-height: 100vh;
   padding: 20rpx 24rpx 40rpx;

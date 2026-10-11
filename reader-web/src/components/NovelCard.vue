@@ -6,10 +6,9 @@
  *   各写一份的话，改一次样式要改四处，而且一定会漏一处 ——
  *   漏的那处不报错，只是在某个页面上长得不一样，很难被发现。
  *
- * ★ 卡片里【没有封面图】：novel 表没有 cover 字段对应的种子数据
- *   （封面是 P4 作者端的事），硬留一个占位图会让整个列表显得很空。
- *   等封面真正有了再往这个组件里加，四处一起生效 —— 这正是抽组件的好处。
+ * Covers are rendered by NovelCover with a title fallback.
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed } from 'vue'
 import { formatAuthorName, formatWordCount } from '@/utils/format'
 
@@ -38,42 +37,47 @@ const isFinished = computed(() => Number(props.novel.isFinish) === 1)
 
 <template>
   <router-link :to="detailPath" class="novel-card">
-    <div class="card-head">
-      <span class="title">{{ novel.title }}</span>
-      <el-tag v-if="isFinished" size="small" type="success" effect="plain">完结</el-tag>
-      <el-tag v-else size="small" type="warning" effect="plain">连载</el-tag>
-    </div>
+    <NovelCover :cover="novel.cover" :title="novel.title" />
+    <div class="card-content">
+      <div class="card-head">
+        <span class="title">{{ novel.title }}</span>
+        <el-tag v-if="isFinished" size="small" type="success" effect="plain">完结</el-tag>
+        <el-tag v-else size="small" type="warning" effect="plain">连载</el-tag>
+      </div>
 
-    <div class="meta">
-      <!--
-        ★ authorName 和 categoryName 都是后端 JOIN 出来的（NovelVO 里带的），
-          前端不用再查一次 —— 后端为此加了 ContentUserLookup 做批量取昵称，
-          就是不想让前端拿到一堆 authorId 之后自己一个个去查。
-          ★★ M5 起两者的兜底**故意不一样**，理由在 formatAuthorName 的注释里：
-             authorName 跨服务（auth 挂了就整个消失 → 显示 `—`），
-             categoryName 是本库 JOIN（取不到就是真没有 → 显示「未分类」）。
-             ★ 卡片这一层**分辨不出**「auth 挂了」和「作者没了」——
-             但本系统里后者不存在（每本书都有作者），所以 `—` 是对的，
-             而原来的「佚名」是一句读起来很正常、内容是错的假话。
-      -->
-      <span class="author">{{ formatAuthorName(novel.authorName) }}</span>
-      <el-divider direction="vertical" />
-      <span>{{ novel.categoryName || '未分类' }}</span>
-    </div>
+      <div class="meta">
+        <!--
+          ★ authorName 和 categoryName 都是后端 JOIN 出来的（NovelVO 里带的），
+            前端不用再查一次 —— 后端为此加了 ContentUserLookup 做批量取昵称，
+            就是不想让前端拿到一堆 authorId 之后自己一个个去查。
+            ★★ M5 起两者的兜底**故意不一样**，理由在 formatAuthorName 的注释里：
+               authorName 跨服务（auth 挂了就整个消失 → 显示 `—`），
+               categoryName 是本库 JOIN（取不到就是真没有 → 显示「未分类」）。
+               ★ 卡片这一层**分辨不出**「auth 挂了」和「作者没了」——
+               但本系统里后者不存在（每本书都有作者），所以 `—` 是对的，
+               而原来的「佚名」是一句读起来很正常、内容是错的假话。
+        -->
+        <span class="author">{{ formatAuthorName(novel.authorName) }}</span>
+        <el-divider direction="vertical" />
+        <span>{{ novel.categoryName || '未分类' }}</span>
+      </div>
 
-    <div class="stats">
-      <span>{{ novel.chapterCount || 0 }} 章</span>
-      <el-divider direction="vertical" />
-      <span>{{ wordCountText }}</span>
-      <el-divider direction="vertical" />
-      <span>{{ novel.viewCount || 0 }} 阅读</span>
+      <div class="stats">
+        <span>{{ novel.chapterCount || 0 }} 章</span>
+        <el-divider direction="vertical" />
+        <span>{{ wordCountText }}</span>
+        <el-divider direction="vertical" />
+        <span>{{ novel.viewCount || 0 }} 阅读</span>
+      </div>
     </div>
   </router-link>
 </template>
 
 <style scoped>
+.card-content { flex: 1; min-width: 0; }
 .novel-card {
-  display: block;
+  display: flex;
+  gap: 14px;
   padding: 14px 16px;
   background: #fff;
   border: 1px solid #e4e7ed;
@@ -111,6 +115,7 @@ const isFinished = computed(() => Number(props.novel.isFinish) === 1)
 
 .meta,
 .stats {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   font-size: 13px;

@@ -26,6 +26,7 @@
  * ★ 所以这里自己写卡片，但**版式照抄** `.grid` 那套（见文件末尾）——
  *   和分类页的列宽/间距一致，翻过来不会觉得像另一个站。
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getShelfList, removeFromShelf } from '@/api/shelf'
@@ -169,6 +170,7 @@ const totalText = computed(() => (loaded.value ? `共 ${total.value} 本` : ''))
           ★★ 下架的书【不能整行过滤掉】：读者会以为自己的书架丢了东西，
             而真实原因只是那本书下架了。渲染成占位卡，并且照样给「移除」。
         -->
+        <NovelCover v-if="item.available" :cover="item.cover" :title="item.title" class="list-cover" />
         <template v-if="item.available">
           <router-link :to="`/novel/${item.novelId}`" class="card-title">
             {{ item.title }}
@@ -249,6 +251,7 @@ const totalText = computed(() => (loaded.value ? `共 ${total.value} 本` : ''))
 </template>
 
 <style scoped>
+.list-cover { margin-bottom: 12px; }
 /*
  * ★ 版式和分类页（`views/category/index.vue`）一致：同样的 `.grid` 列宽、
  *   同样的 `.pager`、同样的 `.page-head`。书架是另一个列表页，

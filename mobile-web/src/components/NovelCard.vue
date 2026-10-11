@@ -13,9 +13,9 @@
  * ★ 分隔符不再用 el-divider，改成 `text` 里直接写「·」——
  *   多一个组件实例只为了画一根竖线，在手机上不划算。
  *
- * ★ 卡片里【没有封面图】：novel 表没有封面字段对应的种子数据，
- *   硬留一个占位图会让整个列表显得很空。
+ * Covers are rendered by NovelCover with a title fallback.
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed } from 'vue'
 import { formatAuthorName, formatWordCount } from '@/utils/format'
 
@@ -44,42 +44,48 @@ function open() {
 
 <template>
   <view class="novel-card" hover-class="novel-card--active" :hover-stay-time="80" @click="open">
-    <view class="head">
-      <text class="title">{{ novel.title }}</text>
+    <NovelCover :cover="novel.cover" :title="novel.title" />
+    <view class="card-content">
+      <view class="head">
+        <text class="title">{{ novel.title }}</text>
+        <!--
+          ★ 用两个并列的 text + v-if，而不是「同一个节点换 class」：
+             后者在 uni 的编译里会因为 class 是动态的而生成一段运行期逻辑，
+             而这里只有两个互斥的静态分支，编译结果更简单。
+        -->
+        <text v-if="isFinished" class="badge badge--done">完结</text>
+        <text v-else class="badge badge--ongoing">连载</text>
+      </view>
+
       <!--
-        ★ 用两个并列的 text + v-if，而不是「同一个节点换 class」：
-           后者在 uni 的编译里会因为 class 是动态的而生成一段运行期逻辑，
-           而这里只有两个互斥的静态分支，编译结果更简单。
+        ★★ authorName 和 categoryName 的兜底【故意不一样】，理由见
+           utils/format.js 里 formatAuthorName 的完整论证：
+             authorName 跨服务（auth 挂了就整个消失 → 显示 `—`），
+             categoryName 是本库 JOIN（取不到就是真被删了 → 显示「未分类」）。
+           判据是「这个字段会不会因为别人挂了而消失」，不是「它重不重要」。
       -->
-      <text v-if="isFinished" class="badge badge--done">完结</text>
-      <text v-else class="badge badge--ongoing">连载</text>
-    </view>
+      <view class="meta">
+        <text class="author">{{ formatAuthorName(novel.authorName) }}</text>
+        <text class="dot">·</text>
+        <text>{{ novel.categoryName || '未分类' }}</text>
+      </view>
 
-    <!--
-      ★★ authorName 和 categoryName 的兜底【故意不一样】，理由见
-         utils/format.js 里 formatAuthorName 的完整论证：
-           authorName 跨服务（auth 挂了就整个消失 → 显示 `—`），
-           categoryName 是本库 JOIN（取不到就是真被删了 → 显示「未分类」）。
-         判据是「这个字段会不会因为别人挂了而消失」，不是「它重不重要」。
-    -->
-    <view class="meta">
-      <text class="author">{{ formatAuthorName(novel.authorName) }}</text>
-      <text class="dot">·</text>
-      <text>{{ novel.categoryName || '未分类' }}</text>
-    </view>
-
-    <view class="stats">
-      <text>{{ novel.chapterCount || 0 }} 章</text>
-      <text class="dot">·</text>
-      <text>{{ wordCountText }}</text>
-      <text class="dot">·</text>
-      <text>{{ novel.viewCount || 0 }} 阅读</text>
+      <view class="stats">
+        <text>{{ novel.chapterCount || 0 }} 章</text>
+        <text class="dot">·</text>
+        <text>{{ wordCountText }}</text>
+        <text class="dot">·</text>
+        <text>{{ novel.viewCount || 0 }} 阅读</text>
+      </view>
     </view>
   </view>
 </template>
 
 <style scoped>
+.card-content { flex: 1; min-width: 0; }
 .novel-card {
+  display: flex;
+  gap: 24rpx;
   padding: 24rpx 28rpx;
   background: #fff;
   border-radius: 16rpx;
@@ -140,6 +146,7 @@ function open() {
 
 .meta,
 .stats {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   font-size: 24rpx;

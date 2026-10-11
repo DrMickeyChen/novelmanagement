@@ -1,0 +1,274 @@
+{
+  "retained_admin": {
+    "id": 1,
+    "username": "admin"
+  },
+  "counts": {
+    "ai_usage_log": 60,
+    "author_apply": 15,
+    "read_history": 61,
+    "ai_audit_result": 11,
+    "ai_summary": 10,
+    "chapter": 130,
+    "novel_comment": 128,
+    "novel_outline": 230,
+    "sys_notice": 6,
+    "chapter_content": 130,
+    "novel_category": 7,
+    "novel": 20,
+    "sys_user": 20,
+    "user_shelf": 61,
+    "audit_log": 242,
+    "sys_user_role": 20
+  },
+  "cleared_cache_keys": 12,
+  "books": [
+    {
+      "id": 3019,
+      "title": "九霄问道",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/d48b3f145ead4dd68b90c67e10dd7a5a.jpg",
+      "author_id": 1015
+    },
+    {
+      "id": 3020,
+      "title": "星河拾荒者",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/74995cbbb2dd4fab8ccfc46cd6a9539d.jpg",
+      "author_id": 1016
+    },
+    {
+      "id": 3021,
+      "title": "长安夜行录",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/ae65aec16bd5476e87a9175c5389c3e2.jpg",
+      "author_id": 1017
+    },
+    {
+      "id": 3022,
+      "title": "雨巷邮局",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/6b4153b56b2442b6bc92868f13d766a5.jpg",
+      "author_id": 1018
+    },
+    {
+      "id": 3023,
+      "title": "雾港来信",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/9ab0cd94f7e948988310d698d69e3a31.jpg",
+      "author_id": 1019
+    },
+    {
+      "id": 3024,
+      "title": "风起临川",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/15d0999688964a0fa1376ac53dc4a369.jpg",
+      "author_id": 1020
+    },
+    {
+      "id": 3025,
+      "title": "时光咖啡馆",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/2ae5e5c340604d898798b6a1bd59baf8.jpg",
+      "author_id": 1021
+    },
+    {
+      "id": 3026,
+      "title": "最后一座灯塔",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/5cacf85cddf14d628a3bb5890990b285.jpg",
+      "author_id": 1022
+    },
+    {
+      "id": 3027,
+      "title": "山海食记",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/a16ac219db90404b8ceb9521e8027796.jpg",
+      "author_id": 1023
+    },
+    {
+      "id": 3028,
+      "title": "旧城新生",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/579e948bcabb487ba225d9e362f804d1.jpg",
+      "author_id": 1024
+    },
+    {
+      "id": 3029,
+      "title": "天机书院",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/0073e0b1a9fc4e658e6da8761c792c5c.jpg",
+      "author_id": 1015
+    },
+    {
+      "id": 3030,
+      "title": "月面第七站",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/f21de5fb263a44abb8cbb2ca45340555.jpg",
+      "author_id": 1016
+    },
+    {
+      "id": 3031,
+      "title": "大运河商路",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/a199ce1e7aae445889354b82014f3cda.jpg",
+      "author_id": 1017
+    },
+    {
+      "id": 3032,
+      "title": "晚风有回声",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/d53102d0b5e749af9d9d753e3d4e6058.jpg",
+      "author_id": 1018
+    },
+    {
+      "id": 3033,
+      "title": "白塔档案",
+      "status": 2,
+      "cover": "/uploads/cover/2026/10/11/877c29f590a34db3879db3d89ddcb4f1.jpg",
+      "author_id": 1019
+    },
+    {
+      "id": 3034,
+      "title": "听雪刀",
+      "status": 0,
+      "cover": "/uploads/cover/2026/10/11/6ca589d8985d4eabaa12629a35c6c782.jpg",
+      "author_id": 1020
+    },
+    {
+      "id": 3035,
+      "title": "把春天寄给你",
+      "status": 1,
+      "cover": "/uploads/cover/2026/10/11/3c0d345ed69546f7896a161ca21a2430.jpg",
+      "author_id": 1021
+    },
+    {
+      "id": 3036,
+      "title": "深蓝航线",
+      "status": 1,
+      "cover": "/uploads/cover/2026/10/11/3e65d8f178a343c589d3730a9f4de7c5.jpg",
+      "author_id": 1022
+    },
+    {
+      "id": 3037,
+      "title": "云边修理铺",
+      "status": 4,
+      "cover": "/uploads/cover/2026/10/11/740f68c6edaa4d958d9f7fbdafb65bf2.jpg",
+      "author_id": 1023
+    },
+    {
+      "id": 3038,
+      "title": "明日开门",
+      "status": 3,
+      "cover": "/uploads/cover/2026/10/11/6e719fcf91154e6fa267a7e32018b524.jpg",
+      "author_id": 1024
+    }
+  ],
+  "accounts": [
+    {
+      "username": "reader01",
+      "nickname": "山间听雨",
+      "id": 1005
+    },
+    {
+      "username": "reader02",
+      "nickname": "橘子汽水",
+      "id": 1006
+    },
+    {
+      "username": "reader03",
+      "nickname": "书海拾贝",
+      "id": 1007
+    },
+    {
+      "username": "reader04",
+      "nickname": "晚星",
+      "id": 1008
+    },
+    {
+      "username": "reader05",
+      "nickname": "小满",
+      "id": 1009
+    },
+    {
+      "username": "reader06",
+      "nickname": "木棉",
+      "id": 1010
+    },
+    {
+      "username": "reader07",
+      "nickname": "北岸",
+      "id": 1011
+    },
+    {
+      "username": "reader08",
+      "nickname": "一页清风",
+      "id": 1012
+    },
+    {
+      "username": "reader09",
+      "nickname": "浅墨",
+      "id": 1013
+    },
+    {
+      "username": "reader10",
+      "nickname": "晨读时光",
+      "id": 1014
+    },
+    {
+      "username": "author01",
+      "nickname": "墨川",
+      "id": 1015
+    },
+    {
+      "username": "author02",
+      "nickname": "星野",
+      "id": 1016
+    },
+    {
+      "username": "author03",
+      "nickname": "青灯",
+      "id": 1017
+    },
+    {
+      "username": "author04",
+      "nickname": "南风",
+      "id": 1018
+    },
+    {
+      "username": "author05",
+      "nickname": "白露",
+      "id": 1019
+    },
+    {
+      "username": "author06",
+      "nickname": "江月",
+      "id": 1020
+    },
+    {
+      "username": "author07",
+      "nickname": "鹿鸣",
+      "id": 1021
+    },
+    {
+      "username": "author08",
+      "nickname": "远山",
+      "id": 1022
+    },
+    {
+      "username": "author09",
+      "nickname": "竹里",
+      "id": 1023
+    },
+    {
+      "username": "author10",
+      "nickname": "拾光",
+      "id": 1024
+    }
+  ],
+  "published_books": 15,
+  "chapter_range": [
+    5,
+    8
+  ]
+}

@@ -29,6 +29,7 @@
  *   分开处理只会得到一个「有书名、目录永远空着」的残页 ——
  *   那看起来像「这本书没有章节」，是错的。
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed, ref } from 'vue'
 import { onLoad, onPullDownRefresh, onReachBottom } from '@dcloudio/uni-app'
 import { getNovelCatalog, getNovelChapters, getNovelDetail, reportNovelView } from '@/api/novel'
@@ -351,6 +352,7 @@ function goHome() {
     <template v-else-if="detail">
       <!-- ============ 头部 ============ -->
       <view class="hero">
+        <NovelCover :cover="detail.cover" :title="detail.title" class="detail-cover" />
         <text class="hero__title">{{ detail.title }}</text>
         <view class="hero__tags">
           <text class="tag" :class="detail.isFinish === 1 ? 'tag--done' : 'tag--serial'">
@@ -459,6 +461,7 @@ function goHome() {
 </template>
 
 <style scoped>
+.detail-cover { margin-bottom: 20rpx; }
 .page {
   padding: 20rpx;
 }

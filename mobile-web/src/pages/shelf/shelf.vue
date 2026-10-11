@@ -21,6 +21,7 @@
  *   用户只是点了一下 tab 就被弹走，而原因他完全看不到。
  *   所以 onMounted 里先判 `userStore.isLogin`。
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import { onReachBottom, onShow } from '@dcloudio/uni-app'
 import { getShelfList, removeFromShelf } from '@/api/shelf'
@@ -248,6 +249,7 @@ function openReader(item) {
             ★★ 下架的书【不能整行过滤掉】：读者会以为自己的书架丢了东西，
               而真实原因只是那本书下架了。渲染成占位卡，并且照样给「移除」。
           -->
+          <NovelCover v-if="item.available" :cover="item.cover" :title="item.title" class="list-cover" @click="openNovel(item)" />
           <template v-if="item.available">
             <text class="card__title" @click="openNovel(item)">{{ item.title }}</text>
             <view class="card__meta">
@@ -329,6 +331,7 @@ function openReader(item) {
 </template>
 
 <style scoped>
+.list-cover { margin-bottom: 20rpx; }
 .shelf {
   min-height: 100vh;
   padding: 20rpx 24rpx 40rpx;

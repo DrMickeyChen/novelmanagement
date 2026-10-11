@@ -17,6 +17,7 @@
  *   且 `read_history` 没有 `deleted` 列，做了就只能物理删，
  *   「误删历史」不可恢复）。要做的话是「按需」清单里的事。
  */
+import NovelCover from '@/components/NovelCover.vue'
 import { onMounted } from 'vue'
 import { getHistoryList } from '@/api/reader'
 import { usePagedList } from '@/composables/usePagedList'
@@ -88,6 +89,7 @@ function chapterLabel(item) {
 
     <div v-loading="loading" class="list">
       <div v-for="item in list" :key="item.novelId" class="row">
+        <NovelCover v-if="item.available" :cover="item.cover" :title="item.title" class="list-cover" />
         <div class="info">
           <!-- ★ 下架的书不整行删掉，渲染成占位 —— 理由同书架页 -->
           <router-link v-if="item.available" :to="`/novel/${item.novelId}`" class="book-title">
@@ -164,6 +166,7 @@ function chapterLabel(item) {
 </template>
 
 <style scoped>
+.list-cover { margin: 0; }
 .history {
   padding: 20px 0;
 }

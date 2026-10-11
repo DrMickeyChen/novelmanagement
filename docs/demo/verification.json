@@ -1,0 +1,107 @@
+{
+  "database_integrity": "passed",
+  "checks": [
+    {
+      "check": "all_demo_accounts_login",
+      "accounts": 20,
+      "roles": "10 READER, 10 AUTHOR"
+    },
+    {
+      "check": "administrator_preserved",
+      "username": "admin",
+      "credentials_and_roles": "unchanged"
+    },
+    {
+      "check": "covers_via_gateway_and_web_proxy",
+      "images": 20,
+      "routes": [
+        "/uploads/cover/**"
+      ]
+    },
+    {
+      "check": "reader_list",
+      "books": 15,
+      "all_have_cover": true
+    },
+    {
+      "check": "categories_notices_and_rank_covers",
+      "categories": 7,
+      "published_notices": 5,
+      "rank_lists": 3
+    },
+    {
+      "check": "reader_details_catalog_and_text",
+      "books": 15,
+      "chapters_nonempty": true
+    },
+    {
+      "check": "shelf_history_and_offline_placeholder",
+      "shelf_books": 6,
+      "history_books": 6,
+      "available_books_have_covers": true
+    },
+    {
+      "check": "book_reviews_and_author_replies",
+      "root_comments": 5,
+      "replies_nonempty": true
+    },
+    {
+      "check": "author_works_and_outline",
+      "works": 2,
+      "outline_nonempty": true
+    },
+    {
+      "check": "admin_dashboard_counts_and_trend",
+      "novels": 20,
+      "users": 21,
+      "comments": 128,
+      "trend_days": 30
+    },
+    {
+      "check": "author_applications",
+      "records": 15
+    },
+    {
+      "check": "comment_moderation",
+      "records": 128
+    },
+    {
+      "check": "ai_usage_fixtures",
+      "records": 60
+    },
+    {
+      "check": "ai_audit_fixtures",
+      "records": 11
+    },
+    {
+      "check": "redis_like_members_match_sql",
+      "comments": 120
+    },
+    {
+      "check": "elasticsearch_rebuild_and_search",
+      "status": "SUCCEEDED",
+      "indexed": 20,
+      "search_books": 15
+    }
+  ],
+  "counts": {
+    "ai_usage_log": 60,
+    "author_apply": 15,
+    "read_history": 61,
+    "ai_audit_result": 11,
+    "ai_summary": 10,
+    "chapter": 130,
+    "novel_comment": 128,
+    "novel_outline": 230,
+    "sys_notice": 6,
+    "chapter_content": 130,
+    "novel_category": 7,
+    "novel": 20,
+    "sys_user": 20,
+    "user_shelf": 61,
+    "audit_log": 242,
+    "sys_user_role": 20
+  },
+  "public_books": 15,
+  "status": "passed"
+}
