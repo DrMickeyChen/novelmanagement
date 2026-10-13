@@ -63,6 +63,9 @@ const FINISH_OPTIONS = [
 
 const categoryId = ref('')
 const categoryName = ref('')
+const categories = ref([])
+const categoriesLoading = ref(false)
+const categoriesFailed = ref(false)
 const sort = ref('latest')
 const finish = ref('')
 
@@ -100,11 +103,13 @@ onLoad((options) => {
   categoryId.value = options?.id || ''
   // ★ name 是首页传的，encodeURIComponent 过 —— 解回来（中文分类名）
   categoryName.value = options?.name ? decodeURIComponent(options.name) : ''
+  if (SORT_OPTIONS.some(item => item.key === options?.sort)) sort.value = options.sort
+  if (FINISH_OPTIONS.some(item => item.key === options?.finish)) finish.value = options.finish
 })
 
 onMounted(() => {
-  // ★ 只有没带 name 时才去查（见文件头第 ② 条）
-  if (!categoryName.value) loadCategoryName()
+  // 分类列表同时用于页内切换；名称参数用于列表加载前的即时标题。
+  loadCategoryName()
   load()
 })
 
@@ -119,12 +124,24 @@ onReachBottom(() => {
  *   为它弹一个错误框，会盖在正常加载出来的列表上面，主次颠倒了。
  */
 async function loadCategoryName() {
+  categoriesLoading.value = true
+  categoriesFailed.value = false
   try {
     const all = (await getCategoryList()) || []
-    categoryName.value = all.find((c) => String(c.id) === String(categoryId.value))?.name || ''
+    categories.value = all
+    categoryName.value = all.find((c) => String(c.id) === String(categoryId.value))?.name || categoryName.value
   } catch {
-    categoryName.value = ''
+    categoriesFailed.value = true
+  } finally {
+    categoriesLoading.value = false
   }
+}
+
+function pickCategory(item) {
+  if (String(item.id) === String(categoryId.value)) return
+  uni.redirectTo({
+    url: `/pages/category/category?id=${item.id}&name=${encodeURIComponent(item.name)}&sort=${sort.value}&finish=${finish.value}`,
+  })
 }
 
 /**
@@ -160,6 +177,17 @@ function retry() {
 
 <template>
   <view class="category">
+    <scroll-view scroll-x class="category-nav">
+      <view class="category-nav__row">
+        <view v-for="item in categories" :key="item.id" class="chip"
+          :class="String(item.id) === String(categoryId) ? 'chip--on' : ''"
+          @click="pickCategory(item)">
+          <text class="chip__text">{{ item.name }}</text>
+        </view>
+        <text v-if="categoriesLoading" class="category-nav__hint">分类加载中…</text>
+        <text v-else-if="categoriesFailed" class="category-nav__hint" @click="loadCategoryName">分类加载失败，点击重试</text>
+      </view>
+    </scroll-view>
     <view class="head">
       <text class="head__title">{{ categoryName || '分类' }}</text>
       <!-- ★ loaded 才显示本数，否则首屏会闪一下「共 0 本」 -->
@@ -222,6 +250,25 @@ function retry() {
   min-height: 100vh;
   padding: 20rpx 24rpx 40rpx;
   background: #f5f6f8;
+}
+
+.category-nav {
+  margin-bottom: 16rpx;
+  background: #fff;
+  border-radius: 16rpx;
+}
+
+.category-nav__row {
+  display: inline-flex;
+  align-items: center;
+  padding: 16rpx 16rpx 4rpx;
+  white-space: nowrap;
+}
+
+.category-nav__hint {
+  padding: 10rpx 8rpx 22rpx;
+  font-size: 24rpx;
+  color: #9aa3b0;
 }
 
 .head {

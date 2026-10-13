@@ -102,6 +102,7 @@ public class NovelServiceImpl implements NovelService {
     /** 完结标记：是 */
     private static final int FINISHED_YES = 1;
 
+    private final com.novel.modules.content.importing.NovelSourceService sourceService;
     private final NovelMapper novelMapper;
     private final NovelCategoryMapper categoryMapper;
     private final ChapterMapper chapterMapper;
@@ -290,7 +291,8 @@ public class NovelServiceImpl implements NovelService {
                  *   同样（更明显地）是语法错误。
                  */
                 .and(w -> w.like(Novel::getTitle, kw)
-                        .or(!authorIds.isEmpty(), x -> x.in(Novel::getAuthorId, authorIds)));
+                        .or(!authorIds.isEmpty(), x -> x.in(Novel::getAuthorId, authorIds))
+                        .or().apply("EXISTS (SELECT 1 FROM novel_source ns WHERE ns.novel_id = novel.id AND ns.original_author LIKE {0})", "%" + kw + "%"));
 
         /*
          * ★ 排序用 view_count 降序 —— 这不是「相关性排序」，是【在没有相关性可言时
@@ -337,6 +339,7 @@ public class NovelServiceImpl implements NovelService {
             throw new BusinessException(ResultCode.NOVEL_NOT_FOUND);
         }
 
+        sourceService.enrich(novel);
         NovelDetailVO vo = NovelDetailVO.of(novel,
                 categoryNameOf(novel.getCategoryId()),
                 userLookup.nicknameOf(novel.getAuthorId()));
@@ -560,6 +563,7 @@ public class NovelServiceImpl implements NovelService {
     public NovelDetailVO authorDetail(Long id) {
         Novel novel = requireOwnedNovel(id);
 
+        sourceService.enrich(novel);
         NovelDetailVO vo = NovelDetailVO.of(novel,
                 categoryNameOf(novel.getCategoryId()),
                 userLookup.nicknameOf(novel.getAuthorId()));
@@ -577,6 +581,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void update(Long id, NovelUpdateDTO dto) {
+        sourceService.ensureNotImporting(id);
         Novel novel = requireOwnedNovel(id);
 
         /*
@@ -636,6 +641,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
+        sourceService.ensureNotImporting(id);
         Novel novel = requireOwnedNovel(id);
 
         /*
@@ -713,6 +719,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void submit(Long id) {
+        sourceService.ensureNotImporting(id);
         Novel novel = requireOwnedNovel(id);
         // 状态合不合法由状态机说了算，这里不重复判断（重复判断迟早和状态机不一致）
         transitStatus(novel, NovelStatus.PENDING, null);
@@ -721,6 +728,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void withdraw(Long id) {
+        sourceService.ensureNotImporting(id);
         Novel novel = requireOwnedNovel(id);
         /*
          * ★ 和 submit 一样，这里【不】显式判断「当前必须是 PENDING」——
@@ -775,6 +783,7 @@ public class NovelServiceImpl implements NovelService {
          */
         Novel novel = requireNovel(id);
 
+        sourceService.enrich(novel);
         NovelDetailVO vo = NovelDetailVO.of(novel,
                 categoryNameOf(novel.getCategoryId()),
                 userLookup.nicknameOf(novel.getAuthorId()));
@@ -791,6 +800,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void audit(Long id, boolean pass, String remark) {
+        sourceService.ensureNotImporting(id);
         Novel novel = requireNovel(id);
 
         /*
@@ -820,6 +830,7 @@ public class NovelServiceImpl implements NovelService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void changeStatus(Long id, NovelStatus target, String remark) {
+        sourceService.ensureNotImporting(id);
         /*
          * ★ 这个接口只接受 2（上架）和 3（下架）两个目标。
          *
@@ -907,6 +918,22 @@ public class NovelServiceImpl implements NovelService {
     /* ================================================================
      *  ★ 状态机 —— 作品状态的唯一改动入口
      * ================================================================ */
+
+    @Override
+    @Transactional(rollbackFor = Exception.class)
+    public void publishImported(Long novelId) {
+        if (!com.novel.common.security.UserContext.hasRole("ADMIN")) {
+            throw new BusinessException(ResultCode.FORBIDDEN);
+        }
+        Novel novel = requireNovel(novelId);
+        sourceService.enrich(novel);
+        if (!"EXTERNAL".equals(novel.getSourceType()) || novel.getStatus() != NovelStatus.DRAFT) {
+            throw new BusinessException(ResultCode.NOVEL_STATUS_ILLEGAL);
+        }
+        // Same state machine and audit trail, in one transaction: no manual chapter review required.
+        transitStatus(novel, NovelStatus.PENDING, "管理员外部 TXT 导入");
+        transitStatus(novel, NovelStatus.PUBLISHED, "管理员外部 TXT 导入并发布");
+    }
 
     /**
      * 把作品流转到目标状态。★ <b>整个项目里唯一改 {@code novel.status} 的地方。</b>
@@ -1233,6 +1260,7 @@ public class NovelServiceImpl implements NovelService {
             return List.of();
         }
 
+        sourceService.enrich(records);
         Map<Long, String> authorNames = userLookup.nicknamesOf(
                 records.stream().map(Novel::getAuthorId).toList());
         Map<Long, String> categoryNames = categoryNamesOf(
@@ -1241,7 +1269,7 @@ public class NovelServiceImpl implements NovelService {
         return records.stream()
                 // ★ M4：NovelVO 搬去了 novel-common，装配点改成 content 这边的 NovelVos
                 //   （它收 Novel 实体，所以只能留在 content —— 见 NovelVos 的类注释）
-                .map(n -> NovelVos.of(n, categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId())))
+                .map(n -> NovelVos.of(n, categoryNames.get(n.getCategoryId()), sourceService.authorName(n, authorNames.get(n.getAuthorId()))))
                 .toList();
     }
 
@@ -1273,6 +1301,7 @@ public class NovelServiceImpl implements NovelService {
             return Map.of();
         }
 
+        sourceService.enrich(novels);
         Map<Long, String> authorNames = userLookup.nicknamesOf(
                 novels.stream().map(Novel::getAuthorId).toList());
         Map<Long, String> categoryNames = categoryNamesOf(
@@ -1287,7 +1316,7 @@ public class NovelServiceImpl implements NovelService {
              *   这里只是把值递过去，不是「每个调用方各自 set 一遍」。
              */
             briefs.put(n.getId(), NovelBriefVO.of(n.getId(), n.getTitle(), n.getCover(),
-                    categoryNames.get(n.getCategoryId()), authorNames.get(n.getAuthorId()),
+                    categoryNames.get(n.getCategoryId()), sourceService.authorName(n, authorNames.get(n.getAuthorId())),
                     n.getChapterCount(), n.getLastChapterId(), n.getCollectCount(),
                     n.getLastUpdateTime()));
         }
@@ -1426,6 +1455,7 @@ public class NovelServiceImpl implements NovelService {
          * ★★ 一次批量取昵称（一次 IN 查询），不是每条记录查一次。
          *   这里没有分类名 —— 索引里刻意不含 categoryName，理由见 NovelIndexDoc 的类注释。
          */
+        sourceService.enrich(novels);
         Map<Long, String> authorNames = userLookup.nicknamesOf(
                 novels.stream().map(Novel::getAuthorId).toList());
 
@@ -1481,6 +1511,7 @@ public class NovelServiceImpl implements NovelService {
          *   ★ 顺带：全量重建【每个周期都会跑】，所以这里的 N+1 不是「偶尔慢一下」，
          *     是每次重建都在烧。
          */
+        sourceService.enrich(page.getRecords());
         Map<Long, String> authorNames = userLookup.nicknamesOf(
                 page.getRecords().stream().map(Novel::getAuthorId).toList());
 
@@ -1587,7 +1618,7 @@ public class NovelServiceImpl implements NovelService {
         NovelIndexDoc doc = new NovelIndexDoc();
         doc.setId(novel.getId());
         doc.setTitle(novel.getTitle());
-        doc.setAuthorName(authorName);
+        doc.setAuthorName(sourceService.authorName(novel, authorName));
         doc.setIntro(novel.getIntro());
         /*
          * ★ status 存【数字码】不存枚举 —— 理由见 NovelIndexDoc 的类注释

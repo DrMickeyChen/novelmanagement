@@ -1,0 +1,92 @@
+
+spring:
+
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://192.168.127.137:3306/novel?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&allowMultiQueries=true
+    username: root
+    password: root123456
+
+    hikari:
+      pool-name: NovelAiHikariPool
+      minimum-idle: 5
+      maximum-pool-size: 20
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      connection-timeout: 10000
+      connection-test-query: SELECT 1
+
+  data:
+    redis:
+      host: 192.168.127.137
+      port: 6379
+      password: redis123456
+      database: 0
+      timeout: 5000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 2
+          max-wait: 3000ms
+
+  cloud:
+    nacos:
+      discovery:
+        server-addr: 192.168.127.137:8848
+
+        username: nacos
+        password: nacos
+
+        ip: 127.0.0.1
+
+    openfeign:
+      client:
+        config:
+          default:
+            connect-timeout: 2000
+            read-timeout: 5000
+
+    sentinel:
+      log:
+        dir: logs/csp
+        switch-pid: true
+
+novel:
+  internal:
+    token: ${INTERNAL_TOKEN:novel-dev-only-internal-token-please-change-in-production-2026}
+
+  jwt:
+    secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
+
+  ai:
+    key-secret: ${AI_KEY_SECRET:novel-dev-only-ai-key-secret-please-change-in-production-2026}
+
+rocketmq:
+  name-server: 192.168.127.137:9876
+
+  producer:
+    group: novel-producer
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
+logging:
+  level:
+    com.novel: debug
+    com.novel.modules: debug
+    org.springframework.jdbc: debug
+
+  file:
+    name: logs/novel-ai.log
+
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"
+
+  logback:
+    rollingpolicy:
+      max-file-size: 50MB
+      max-history: 7

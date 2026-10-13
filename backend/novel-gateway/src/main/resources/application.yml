@@ -169,6 +169,13 @@ spring:
         #       backend/novel-auth/src/main/java/com/novel/modules/system/controller/
 
         # --- 登录 / 注册 / 登出 / 当前用户 ---
+        # AI routes precede the broad content admin route.
+        - id: ai-service
+          uri: lb://novel-ai
+          order: 2
+          predicates:
+            - Path=/api/ai,/api/ai/**,/api/admin/ai,/api/admin/ai/**
+
         - id: auth-auth
           uri: lb://novel-auth
           order: 1
@@ -403,7 +410,7 @@ spring:
           uri: lb://novel-content
           order: 5
           predicates:
-            - Path=/api/categories,/api/ai,/api/ai/**
+            - Path=/api/categories
 
         # ============================================================
         # 五、上传的静态文件（作品封面、用户头像）—— order: 10

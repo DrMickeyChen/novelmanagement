@@ -98,6 +98,7 @@
     <modules>
         <module>novel-common</module>
         <module>novel-content</module>
+        <module>novel-ai</module>
         <module>novel-interaction</module>
         <module>novel-gateway</module>
         <module>novel-auth</module>

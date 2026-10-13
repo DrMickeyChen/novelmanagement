@@ -130,6 +130,7 @@ backend/src/main/resources/application-prod.yaml
 # ---------- 上传的文件 ----------
 novel-uploads/
 uploads/
+data/import-books/
 
 # ---------- 说明 ----------
 # application-dev.yml 【故意不忽略】：里面只有本地虚拟机的开发密码

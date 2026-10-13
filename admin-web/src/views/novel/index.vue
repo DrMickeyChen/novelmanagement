@@ -39,6 +39,8 @@ import { formatWordCount, formatDateTime } from '@/utils/format'
 import { novelStatusType } from '@/utils/status'
 import { confirm } from '@/utils/confirm'
 import NovelPreview from '@/components/NovelPreview.vue'
+import NovelImportDialog from '@/components/NovelImportDialog.vue'
+const importVisible = ref(false)
 
 /* ==================== 筛选 ==================== */
 
@@ -219,6 +221,7 @@ async function doChangeStatus(row, target) {
 
         <el-button type="primary" @click="search">查询</el-button>
         <el-button @click="reset">重置</el-button>
+        <el-button type="success" @click="importVisible = true">导入 TXT</el-button>
       </div>
     </el-card>
 
@@ -228,6 +231,9 @@ async function doChangeStatus(row, target) {
         <el-table-column prop="title" label="书名" min-width="200" show-overflow-tooltip />
         <el-table-column prop="authorName" label="作者" width="120" show-overflow-tooltip />
         <el-table-column prop="categoryName" label="分类" width="100" />
+        <el-table-column label="来源" width="110">
+          <template #default="{ row }"><el-tag :type="row.sourceType === 'EXTERNAL' ? 'warning' : 'info'" size="small">{{ row.sourceType === 'EXTERNAL' ? '外部导入' : '平台原创' }}</el-tag></template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="novelStatusType(row.status)" size="small">
@@ -301,6 +307,8 @@ async function doChangeStatus(row, target) {
         @size-change="paged.changeSize"
       />
     </el-card>
+
+    <NovelImportDialog v-model="importVisible" :categories="categories" @imported="paged.reload()" />
 
     <!-- ==================== 详情弹窗（只读，和审核弹窗不是一回事） ==================== -->
     <el-dialog v-model="detailVisible" title="作品详情" width="760px" top="6vh">

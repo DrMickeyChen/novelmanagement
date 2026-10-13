@@ -364,6 +364,7 @@ function goHome() {
         <view class="hero__meta">
           <!-- ★ M5：`—` 而不是「佚名」—— 判据见 utils/format.js 的 formatAuthorName -->
           <text class="hero__author">{{ formatAuthorName(detail.authorName) }}</text>
+          <text v-if="detail.sourceType === 'EXTERNAL'"> · 外部导入</text>
           <text class="hero__dot">·</text>
           <text class="hero__link" @click="openCategory">{{ detail.categoryName || '未分类' }}</text>
         </view>

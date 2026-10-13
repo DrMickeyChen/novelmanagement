@@ -82,6 +82,9 @@ import java.time.LocalDateTime;
 @Schema(description = "作品列表项")
 public class NovelVO {
 
+    private String sourceType;
+    private String originalAuthor;
+
     @Schema(description = "作品 id", example = "1")
     private Long id;
 

@@ -98,7 +98,9 @@ public final class NovelVos {
         vo.setTitle(entity.getTitle());
         vo.setCover(entity.getCover());
         vo.setAuthorId(entity.getAuthorId());
-        vo.setAuthorName(authorName);
+        vo.setAuthorName("EXTERNAL".equals(entity.getSourceType()) ? entity.getOriginalAuthor() : authorName);
+        vo.setSourceType(entity.getSourceType());
+        vo.setOriginalAuthor(entity.getOriginalAuthor());
         vo.setCategoryId(entity.getCategoryId());
         vo.setCategoryName(categoryName);
         vo.setStatus(entity.getStatus());

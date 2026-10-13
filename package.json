@@ -13,6 +13,7 @@
     "dev:proxy": "npm --prefix dev-proxy run dev",
     "dev:gateway": "mvn -f backend/pom.xml -DskipTests -pl novel-gateway -am package && cd backend && java -jar novel-gateway/target/novel-gateway.jar",
     "dev:auth": "mvn -f backend/pom.xml -DskipTests -pl novel-auth -am package && cd backend && java -jar novel-auth/target/novel-auth.jar",
+    "dev:ai": "mvn -f backend/pom.xml -DskipTests -pl novel-ai -am package && cd backend && java -jar novel-ai/target/novel-ai.jar",
     "dev:content": "mvn -f backend/pom.xml -DskipTests -pl novel-content -am package && cd backend && java -jar novel-content/target/novel-content.jar",
     "dev:interaction": "mvn -f backend/pom.xml -DskipTests -pl novel-interaction -am package && cd backend && java -jar novel-interaction/target/novel-interaction.jar",
     "dev:search": "mvn -f backend/pom.xml -DskipTests -pl novel-search -am package && cd backend && java -jar novel-search/target/novel-search.jar",

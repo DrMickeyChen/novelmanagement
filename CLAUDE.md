@@ -452,3 +452,9 @@ MYSQL_PWD=root123456 "/c/Program Files/MySQL/MySQL Workbench 8.0/mysql.exe" \
   所以真正的理由是 ① `enabled=0` 才是「克隆下来跑不出一次计费调用」那道闸门
   ② 别把你花钱的 Key 交给任何一个克隆的人）、
   **staged 里没有 `__pycache__` / 没有上游 401 的响应体**。
+
+## AI 服务拆分后的运行约定（覆盖前文 AI 属于 content 的描述）
+
+AI 独立为 `novel-ai :8085`，`modules/ai` 与 AI 审核消费者只在此服务。原 `novel.ai.*` 配置移到 AI；沿用原 `AI_KEY_SECRET`。AI 路由 order 2，前端路径不变。表归属与启动步骤见 [docs/ai-service-split.md](docs/ai-service-split.md)。
+
+AI 同步读 content/auth/interaction；content 不同步调用 AI。人工审核流水与 AI 待办改为可重试的最终一致同步，不能声称仍是原子提交。AI 消费组保留旧名 `group-content-ai-audit` 以沿用位点，迁移先停旧 content，再起新 content/AI。移动类后必须 `mvn clean package`，避免旧类残留在内容 JAR 中。

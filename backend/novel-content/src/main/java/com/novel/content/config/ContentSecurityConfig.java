@@ -380,7 +380,6 @@ public class ContentSecurityConfig {
                          *   所以这两条规则在同一个文件里，顺序无所谓 ——
                          *   但都要在 anyRequest() 之前。
                          */
-                        .requestMatchers("/api/ai/**").hasAnyRole("AUTHOR", "ADMIN")
 
                         /*
                          * 除白名单外一律要求已登录。

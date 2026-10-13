@@ -1,0 +1,81 @@
+
+server:
+  port: 8085
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+spring:
+  application:
+    name: novel-ai
+
+  profiles:
+    active: dev
+
+  jackson:
+    time-zone: GMT+8
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+      fail-on-empty-beans: false
+
+
+feign:
+  sentinel:
+    enabled: true
+
+novel:
+  internal:
+    token: ${INTERNAL_TOKEN}
+
+  jwt:
+    secret: ${JWT_SECRET}
+
+    expire-days: 7
+
+  ai:
+    provider: deepseek
+
+    key-secret: ${AI_KEY_SECRET:}
+
+    mock-delay-ms: 15
+
+rocketmq:
+  name-server: ${ROCKETMQ_NAME_SERVER}
+
+  producer:
+    group: novel-producer
+
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+
+  type-aliases-package: com.novel.modules.**.entity
+
+  configuration:
+    map-underscore-to-camel-case: true
+    cache-enabled: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+  global-config:
+    banner: false
+    db-config:
+      id-type: auto
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+knife4j:
+  enable: true
+  setting:
+    language: zh_cn
+    enable-footer: false
+    enable-open-api: false
+
+logging:
+  level:
+    root: info
+    com.novel: debug
+    org.springframework.web: info
+  pattern:
+    console: "%d{HH:mm:ss.SSS} %-5level [%X{traceId}] [%thread] %logger{36} - %msg%n"

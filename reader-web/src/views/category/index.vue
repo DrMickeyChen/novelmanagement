@@ -50,7 +50,10 @@ const sort = ref('latest')
 const finish = ref('')
 
 /** 分类名。★ 后端没有「查单个分类」的接口，从分类列表里挑一个 */
-const categoryName = ref('')
+const categories = ref([])
+const loadingCategories = ref(false)
+const categoriesFailed = ref(false)
+const categoryName = computed(() => categories.value.find(c => String(c.id) === String(categoryId.value))?.name || '')
 
 const {
   list,
@@ -104,7 +107,7 @@ function retry() {
  * 而「悬疑」只有 2 页 → 空白列表但总数显示 20 条，看起来像后端分页算错了。
  * reload() 会把页码重置回 1 再查，见 composables/usePagedList.js 的说明。
  */
-watch([sort, finish], () => reload())
+watch([sort, finish], () => reload().catch(() => {}))
 
 /**
  * ★ 换分类也要 reload()，同样是为了回到第 1 页。
@@ -116,8 +119,7 @@ watch([sort, finish], () => reload())
  *   刷新一下又正常了，看起来像灵异事件。
  */
 watch(categoryId, () => {
-  loadCategoryName()
-  reload()
+  reload().catch(() => {})
 })
 
 /**
@@ -129,17 +131,34 @@ watch(categoryId, () => {
  *     真要严格静默得给 request 传 silent，但那样连「后端挂了」都看不见。）
  */
 async function loadCategoryName() {
+  loadingCategories.value = true
+  categoriesFailed.value = false
   try {
-    const list = (await getCategoryList()) || []
-    categoryName.value = list.find((c) => String(c.id) === String(categoryId.value))?.name || ''
+    categories.value = (await getCategoryList()) || []
   } catch {
-    categoryName.value = ''
+    categoriesFailed.value = true
+  } finally {
+    loadingCategories.value = false
   }
 }
 </script>
 
 <template>
   <div class="category">
+    <nav v-loading="loadingCategories" class="category-nav" aria-label="小说分类">
+      <router-link
+        v-for="item in categories"
+        :key="item.id"
+        :to="{ name: 'category', params: { id: item.id } }"
+        class="category-link"
+        :class="{ active: String(item.id) === String(categoryId) }"
+        :aria-current="String(item.id) === String(categoryId) ? 'page' : undefined"
+      >{{ item.name }}</router-link>
+      <div v-if="categoriesFailed" class="category-error">
+        分类暂时加载失败
+        <el-button size="small" text type="primary" @click="loadCategoryName">重试</el-button>
+      </div>
+    </nav>
     <div class="page-head">
       <h2 class="title">{{ categoryName || '分类' }}</h2>
       <span v-if="loaded" class="count">共 {{ total }} 本</span>
@@ -195,6 +214,46 @@ async function loadCategoryName() {
 <style scoped>
 .category {
   padding: 20px 0;
+}
+
+.category-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 36px;
+  padding: 14px;
+  margin-bottom: 20px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+}
+
+.category-link {
+  padding: 8px 16px;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 5px;
+  color: var(--el-text-color-regular);
+  text-decoration: none;
+  transition: background-color .15s, border-color .15s;
+}
+
+.category-link:hover,
+.category-link:focus-visible {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+
+.category-link.active {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  font-weight: 600;
+}
+
+.category-error {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 
 .page-head {

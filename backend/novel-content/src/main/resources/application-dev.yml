@@ -325,34 +325,6 @@ novel:
   #   那几处说法都已按 profile 补了限定 —— 单说「有默认值」或「没有默认值」都是半句话。
   #
   # ★★ 换值之后库里已存的 api_key 密文【全部解不开】（GCM auth tag 对不上 → 抛异常，不是乱码）。
-  ai:
-    key-secret: ${AI_KEY_SECRET:novel-dev-only-ai-key-secret-please-change-in-production-2026}
-
-# ---------------- RocketMQ（M3 新增） ----------------
-#
-# ★★ 这一段是【顶层】的，不在 spring: 下面 —— rocketmq-spring 的前缀就叫
-#    rocketmq（RocketMQProperties 上是 @ConfigurationProperties("rocketmq")）。
-#    写成 spring.rocketmq.* 【不会报错】，只会被静默忽略、broker 地址退回默认的
-#    localhost:9876，症状是「消息像发出去了，消费者一条都没收到」。
-#
-# ★★★ 这两个键【必须成对配齐】，而且漏了【不报错】—— 这是本节最大的坑。
-#    查过 2.3.6 的字节码，RocketMQAutoConfiguration 的条件是：
-#      defaultMQProducer  @ConditionalOnProperty(prefix="rocketmq",
-#                            value={"name-server","producer.group"})
-#      rocketMQTemplate   @ConditionalOnMissingBean("rocketMQTemplate")
-#                         + 条件是「存在 DefaultMQProducer 或 DefaultLitePullConsumer」
-#    所以少配任何一个 → producer bean 不创建 → RocketMQTemplate 不创建。
-#    ★ 服务照样起得来，直到某个 @Autowired RocketMQTemplate 的地方报
-#      「no bean of type 'RocketMQTemplate'」。★ 也就是说：配错的表现是
-#      「启动失败，但报错信息里一个 rocketmq 字样都没有」，
-#      会把人往依赖、往 @ComponentScan 上带，方向全错。
-#
-# ★ name-server 是虚拟机 Docker 里的容器（不是 localhost —— 后端跑在 Windows 上，
-#   broker 和 MySQL/Redis/Nacos 一样在虚拟机里）。
-#   9876 是 NameServer；broker 的 10911 是 NameServer 查出来告诉客户端的，不用配。
-#
-# ★ 值必须在【三份】application-dev.yml 里一致（content / interaction / auth）——
-#   和 MySQL/Redis/Nacos 那三处是同一个道理（见文件头）。
 rocketmq:
   name-server: 192.168.127.137:9876
 
@@ -427,5 +399,5 @@ logging:
   #   一个 debug 级别的日志文件能长到几个 G（SQL 全在打）。
   logback:
     rollingpolicy:
-      max-file-size: 10MB
+      max-file-size: 50MB
       max-history: 7

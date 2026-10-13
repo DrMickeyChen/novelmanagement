@@ -45,6 +45,12 @@ public class Novel implements Serializable {
     @TableId(type = IdType.AUTO)
     private Long id;
 
+    @TableField(exist = false)
+    private String sourceType;
+
+    @TableField(exist = false)
+    private String originalAuthor;
+
     /** 书名 */
     private String title;
 

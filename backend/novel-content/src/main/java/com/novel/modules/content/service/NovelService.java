@@ -40,6 +40,9 @@ import java.util.Map;
  */
 public interface NovelService {
 
+    /** Administrator-only publication of a fully written external import. */
+    void publishImported(Long novelId);
+
     /* ==================== 读者端（匿名可访问） ==================== */
 
     /**

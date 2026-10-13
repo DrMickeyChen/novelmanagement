@@ -53,6 +53,7 @@ defineProps({
 
 <template>
   <div v-if="novel">
+    <div class="field"><span class="field-label">来源</span><span>{{ novel.sourceType === 'EXTERNAL' ? '外部导入' : '平台原创' }}</span></div>
     <div class="field">
       <span class="field-label">作者</span>
       <span>{{ novel.authorName || '—' }}</span>

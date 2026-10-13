@@ -8,72 +8,17 @@ import org.springframework.cloud.openfeign.EnableFeignClients;
 import org.springframework.core.env.Environment;
 
 /**
- * 小说管理系统 —— 内容服务启动类（第二期 M2 起）
- *
- * <p><b>本服务装着：</b>{@code modules/content}（小说 / 章节 / 分类 / 大纲 /
- * 审核流水 / 数据大盘）+ {@code modules/ai}（AI 写作助手）。
- * 它从第一期的单体里摘出来，M2 之前住在 novel-backend 进程里。
- *
- * <p><b>★ 为什么 AI 跟着 content 走：</b>大纲 §三约束 4 / §11.1 服务职责表 /
- * §四目录结构三处原文都指向 content，业务上也说得通 ——
- * AI 写作助手生成的是<b>章节正文</b>，与内容同域。
- *
- * <p><b>★ 为什么 {@code @MapperScan("com.novel.modules.**.mapper")} 不用改：</b>
- * 这个通配在本服务的 classpath 上只会命中 content 的 mapper，
- * 因为 system / interaction 的 mapper 都已经不在这个服务的 classpath 上了。
- * ★★ 四个服务写同一个通配、扫出不同结果，是因为它们的 classpath 不同 ——
- * 不是因为配置有什么玄机。这也是 M2 之后【仍然】不需要给它们各写一份
- * {@code basePackages} 的原因。
- *
- * <p><b>★ {@code @EnableFeignClients} 为什么需要它：</b>
- * 本服务有<b>两个</b>出站调用，都是铁律 1 说的「业务语义的接口住在消费方」：
- * <ul>
- *   <li>拿作者昵称 → novel-auth（{@code AuthUserClient}，M1 就有）</li>
- *   <li>★★ 拿评论正文 → novel-interaction（{@code CommentTextLookup} 的实现）。
- *       这就是铁律 1 原文里点名的那个反向接缝 ——
- *       接口留在消费方（本服务），实现变成「发一次 HTTP 请求」。</li>
- * </ul>
- * 不加这个注解，{@code @FeignClient} 接口不会被注册成 Bean，
- * 启动或首次调用时才报「找不到可注入的类型」。
- * <p>★ 它的默认扫描范围是启动类所在包（{@code com.novel}），
- * 客户端所在的 {@code com.novel.modules.content.client} 在范围内。
- *
- * <p><b>★★ 为什么这个类上【没有】{@code @EnableScheduling}，而阅读量落库却照跑：</b>
- * {@code NovelViewAggregator} 在<b>本进程的堆内存</b>里攒阅读量
- * （消息由 {@code ViewReportConsumer} 收下来交进去），
- * 靠一个 {@code @Scheduled} 任务把积压的增量批量回写数据库。
- * ★ M3 之前这件事是 {@code NovelViewCounter} 干的（计数攒在 Redis 的
- * {@code NOVEL_VIEWS} + {@code NOVEL_VIEW_DIRTY} 里）—— 那个类已经删掉了，
- * 但「谁在提供 {@code @EnableScheduling}」这个问题一个字都没变。
- * 按直觉，这个注解应该挂在启动类上 —— <b>但它不在这儿，而在
- * {@code com.novel.common.config.SchedulingConfig} 上</b>，
- * 那是个会被<b>每个服务</b>扫到的 {@code @Configuration}。
- * <ul>
- *   <li>★ 所以本服务【不要】再写一遍 {@code @EnableScheduling}。
- *       写了不会报错（这个注解是幂等的），但会让人以为「是这行在起作用」，
- *       而真正起作用的那一行在 common 里 —— 将来有人去动它时，会以为
- *       只影响某个服务。</li>
- *   <li>★★ 更要紧的是那条<b>连带事实</b>：四个服务<b>全都</b>在跑
- *       {@code @EnableScheduling}，也全都建了一个 {@code ThreadPoolTaskScheduler}。
- *       M2 之后只有 content 里真的有 {@code @Scheduled} 方法，
- *       所以「多实例下定时任务会重复执行」这条风险（见 SchedulingConfig 的长注释）
- *       目前只落在本服务头上。
- *       <p>★★ <b>但 M3 之后阅读量这一条【不再是那个风险的例子了】</b> ——
- *       改造前它确实是：计数在 Redis（共享），起两个 content 实例，
- *       两边都会看见同一个脏集，回写就会重（这正是老代码要 {@code SREM} 认领的原因）。
- *       M3 把计数换成了<b>每实例私有的堆内存</b>，一条消息也只投给一个实例，
- *       于是「多实例重复执行」在这里<b>不再是一个问题</b>。
- *       ★ 所以这段话留下的教训不是「阅读量很危险」，
- *       而是<b>「共享状态才是那个风险源」</b>—— 换成私有状态，风险自己就没了。
- *       <p>★ 单机开发环境仍然<b>完全测不出</b>多实例相关的任何差异。</li>
- * </ul>
- *
- * @author MickeyChen
+ * Content service: novels, chapters, categories, outlines, publication and human audit.
+ * AI handlers and audit consumers are owned by the independent novel-ai service (8085).
  */
 @Slf4j
 @SpringBootApplication
 @EnableFeignClients
-@MapperScan("com.novel.modules.**.mapper")
+@org.mybatis.spring.annotation.MapperScans({
+        @MapperScan("com.novel.modules.**.mapper"),
+        @MapperScan(basePackages = "com.novel.modules.content.importing",
+                annotationClass = org.apache.ibatis.annotations.Mapper.class)
+})
 public class ContentApplication {
 
     public static void main(String[] args) {

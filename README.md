@@ -1,5 +1,8 @@
 # 小说管理系统
 
+> **AI 服务拆分更新**：新增第六个后端进程 `novel-ai :8085`，AI 已从内容服务迁出。升级时新增启动 `AiApplication`、重启 content 和 gateway，沿用原 AI 加密密钥。8085 只对内网开放。下文历史阶段的“五个进程”和“AI 属于 content”描述以 [AI 微服务拆分说明](docs/ai-service-split.md) 为准。
+
+
 一个**单体后端 + 三前端**的网文平台，跑通「作者创作 → 编辑审核 → 读者阅读 → 运营管理」全链路。
 后端是一个 Spring Boot 应用，前端拆成读者端 / 创作中心 / 管理端三个独立应用，**开发和生产的拓扑完全一致**（同一域名下的三个路径）。
 
@@ -428,7 +431,8 @@ npm run install:all    # 装全部依赖
 mvn -Dmaven.repo.local=<你的本地仓库> -f backend/pom.xml package
 npm run dev:gateway     # 网关   （= 打包 + cd backend + java -jar）
 npm run dev:auth        # auth
-npm run dev:content     # 内容服务（作品/章节/分类/AI）
+npm run dev:content     # 内容服务（作品/章节/分类）
+npm run dev:ai          # AI 服务（模型、创作辅助、审核、用量）
 npm run dev:interaction # 互动服务（评论/书架/历史）
 npm run dev:search      # 搜索服务（ES 检索/索引重建）
 

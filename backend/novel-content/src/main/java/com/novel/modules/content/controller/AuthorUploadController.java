@@ -73,6 +73,9 @@ public class AuthorUploadController {
                     不是用户的错，不该给他一个「再试一次」的引导。""")
     @PostMapping("/api/author/upload/cover")
     public Result<String> uploadCover(@RequestParam("file") MultipartFile file) {
+        if (file.getSize() > 10L * 1024 * 1024) {
+            throw new com.novel.common.exception.BusinessException(com.novel.common.result.ResultCode.PARAM_ERROR, "封面不能超过 10MB");
+        }
         return Result.success("上传成功", imageStorage.store(file, ImageKind.COVER));
     }
 }

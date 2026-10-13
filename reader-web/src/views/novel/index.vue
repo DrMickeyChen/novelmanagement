@@ -412,6 +412,7 @@ async function resolveProgressChapter() {
         <div class="meta">
           <!-- ★ M5：`—` 而不是「佚名」—— 判据见 utils/format.js 的 formatAuthorName -->
           <span class="author">{{ formatAuthorName(detail.authorName) }}</span>
+          <el-tag v-if="detail.sourceType === 'EXTERNAL'" size="small" type="info">外部导入</el-tag>
           <el-divider direction="vertical" />
           <router-link :to="`/category/${detail.categoryId}`" class="link">
             {{ detail.categoryName || '未分类' }}
