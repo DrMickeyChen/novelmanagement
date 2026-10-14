@@ -349,6 +349,8 @@ public final class MqConstant {
      * 是把一个原子操作<b>降级</b>成最终一致。<b>那是大纲里一条不该存在的设计。</b>
      */
     public static final String GROUP_SEARCH_INDEX = "group-search-index";
+    /** AI owns bounded knowledge generation; search's ordinary book index uses its own group. */
+    public static final String GROUP_AI_BOOK_KNOWLEDGE = "group-ai-book-knowledge";
 
     /**
      * ★★ <b>content 消费 {@link #TAG_AI_AUDIT}（AI 违禁审核，并发 + 内容指纹幂等）。</b>

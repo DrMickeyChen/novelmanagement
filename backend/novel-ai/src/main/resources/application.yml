@@ -26,6 +26,15 @@ feign:
     enabled: true
 
 novel:
+  book-finder:
+    embedding:
+      url: ${BOOK_EMBEDDING_URL:}
+      model: ${BOOK_EMBEDDING_MODEL:}
+      key: ${BOOK_EMBEDDING_KEY:}
+    rerank:
+      url: ${BOOK_RERANK_URL:}
+      model: ${BOOK_RERANK_MODEL:}
+      key: ${BOOK_RERANK_KEY:}
   internal:
     token: ${INTERNAL_TOKEN}
 

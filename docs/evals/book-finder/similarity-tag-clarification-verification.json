@@ -1,0 +1,155 @@
+{
+  "recordedAt": "2026-10-14T03:49:08.156283+00:00",
+  "verificationType": "automated_regression_with_test_doubles",
+  "paidModelCalls": 0,
+  "realModelAccuracyMeasured": false,
+  "totals": {
+    "tests": 58,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "suites": [
+    {
+      "suite": "BookFinderAgentTest",
+      "tests": 34,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "readerStillChargesAndRefundsRejectedRun",
+        "followupPreservesHardConditionsAndExcludesShownIds",
+        "cumulativeBudgetAllowsAdvancedLoopBeyondTwentyThousand",
+        "cumulativeBudgetStillStopsOverSixtyThousand",
+        "cachedRetryDoesNotAcquireQuotaOrCallModel",
+        "explicitContinuationStillInheritsFilters",
+        "bodyEvidenceHasValidatedProvenanceWithoutLeakingPlot",
+        "unknownToolNeverInvokesBackend",
+        "recoveredCandidateStillMustPassFinalVisibilityCheck",
+        "evidenceOutsideCandidateSetNeverInvokesKnowledge",
+        "requiredPreferenceCannotBeSilentlyIgnoredWhenOnlyIntroIsAvailable",
+        "inferredSimilarityTagDoesNotChangeHardConditionsOnRetry",
+        "fourthBookReferenceRetainsOrderedCardsAndSurvivesEmptyClarification",
+        "incompleteJsonGetsOneRepairAndPersistentFailureIsActionable",
+        "unindexedBodyIsExplicitlyReportedInsteadOfRepeatingIntro",
+        "greetingQuestionCorrectsFalseClarificationFlag",
+        "lastRegularRoundStillHasOneBoundedFormatRepair",
+        "malformedFinalAnswerIsRepairedOnceWithoutRepeatingTools",
+        "executionCannotLoopForever",
+        "fullToolLoopReturnsGroundedStringIdAndStoresState",
+        "inventedBodyCitationIsRejected",
+        "fabricatedIdIsRejectedWithoutCommittingConversation",
+        "newTopicResetsOldFiltersAndDoesNotSendOldTopicToModel",
+        "explicitlyRequestedTagIsNotConvertedToSoftPreference",
+        "adminSkipsDailyQuotaAndRejectedRunDoesNotRefund",
+        "emptyRecommendationRecoversCandidatesAndLogsActualDetailCall",
+        "genreAbbreviationUsesRealCategoryWithoutRepeatingKeyword",
+        "recommendationRefreshAndFourthReferenceExecuteThreeRealAgentTurns",
+        "disappearingBookIsRemovedByFinalVisibilityCheck",
+        "emptyRecommendationDoesNotOverrideStyleClarification",
+        "failingEvidenceServiceKeepsBasicSearchAvailable",
+        "noCandidatesOrGreetingDoesNotInventRecommendations",
+        "unsupportedEvidenceIsDiscarded",
+        "inferredSimilarityTagBecomesSoftPreferenceAndKeepsExplicitFilters"
+      ]
+    },
+    {
+      "suite": "BookFinderControllerHttpTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "anonymousCannotSpendAndInvalidRequestsNeverReachAgent",
+        "consecutiveRequestsEachCompleteAndReleaseTheirWorker",
+        "adminQuotaReportsUnlimitedWithoutReadingDailyCounter",
+        "readerGetsRealSseEventsAndWorkerRetainsIdentity"
+      ]
+    },
+    {
+      "suite": "BookFinderEvaluationTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "reportSurvivesServiceRestartAndRejectsPathTraversal",
+        "aggregatesFailuresLatencyCostAndHumanReviewSeparately",
+        "calculatesMetricsWithoutInventingAccuracyForEmptyRecommendations"
+      ]
+    },
+    {
+      "suite": "BookFinderIntentTest",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "explicitRefinementsAndReferencesKeepConditions",
+        "independentCultivationRequestDoesNotInheritFanfiction"
+      ]
+    },
+    {
+      "suite": "BookFinderMcpTest",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "httpTransportReturnsJsonRpcParseErrorAndSupportsValidRequests",
+        "unknownToolCannotReachBusinessLogicAndBadVersionIsRejected",
+        "supportsInitializeNotificationDiscoveryAndUnknownMethod",
+        "toolsCallUsesSharedToolsAndReturnsMcpContent"
+      ]
+    },
+    {
+      "suite": "BookFinderModelTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "compatibleEndpointReceivesToolDefinitionsAndReturnsCallAndUsage"
+      ]
+    },
+    {
+      "suite": "BookFinderRedisSmokeTest",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "cases": [
+        "realRedisEnforcesOwnershipLockQuotaAndSerialization"
+      ]
+    },
+    {
+      "suite": "PreferenceEvidenceTest",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "openingEvidenceCannotEstablishAllBookAbsence",
+        "similarityOrMissingCitationsNeverConfirmsPreference",
+        "OnlyFreshCitationsCanSupportOrContradictAndOtherCriteriaStayUnknown"
+      ]
+    },
+    {
+      "suite": "RetrievalModelsTest",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "rerankValidatesIndexesAndActuallyOrdersByScores",
+        "savedConfigurationOverridesEnvironmentAndSplitsBatches",
+        "missingProviderCannotSilentlyPretendToEmbed",
+        "duplicateEmbeddingIndexesAreRejected",
+        "embeddingReordersByIndexAndDoesNotExposeKey",
+        "savedRerankConfigIsUsedImmediatelyAndExplicitClearDisablesIt"
+      ]
+    }
+  ],
+  "agentSourceSha256": "98ea2b67b179770fadebf0201d146bda8c44d165a9d0600f75c9fc6c3833918f",
+  "promptSha256": "e1f77ecec572d4e02020f0574e194f178e07ec72e45a2ce312a8de69761789fd"
+}

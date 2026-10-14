@@ -194,6 +194,7 @@ public class AiUsageVO {
      * 不是调用方给的。★ 也不能返回「未知场景」这种看着像正常取值的字符串。
      */
     private static String sceneDesc(Integer scene) {
+        if (Integer.valueOf(7).equals(scene)) return "读者找书";
         if (scene == null) {
             return null;
         }

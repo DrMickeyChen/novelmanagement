@@ -46,6 +46,10 @@ spring:
           default:
             connect-timeout: 2000
             read-timeout: 5000
+          agentBookSearch:
+            # Search ES socket timeout is 10s; allow it to return before Feign aborts.
+            connect-timeout: 2000
+            read-timeout: 12000
 
     sentinel:
       log:

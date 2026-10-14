@@ -1,0 +1,11 @@
+[
+  {"id":"broad","group":"broad-refresh","prompt":"推荐几本小说","allowEmpty":false,"clarify":false},
+  {"id":"refresh","group":"broad-refresh","prompt":"换一批","allowEmpty":false,"clarify":false},
+  {"id":"fourth-reference","group":"broad-refresh","prompt":"类似第4本的还有吗","allowEmpty":false,"clarify":false},
+  {"id":"filtered","group":"filtered-refresh","prompt":"推荐已完结、二十万到一百万字的小说","expected":{"completed":true,"minWords":200000,"maxWords":1000000},"allowEmpty":false,"clarify":false},
+  {"id":"filtered-refresh","group":"filtered-refresh","prompt":"换一批","expected":{"completed":true,"minWords":200000,"maxWords":1000000},"allowEmpty":false,"clarify":false},
+  {"id":"chinese-reference","group":"filtered-refresh","prompt":"类似第四本的还有吗","expected":{"completed":true,"minWords":200000,"maxWords":1000000},"allowEmpty":false,"clarify":false},
+  {"id":"greeting","prompt":"你好","allowEmpty":true,"clarify":true},
+  {"id":"missing-reference","prompt":"类似第99本的还有吗","allowEmpty":true,"clarify":true},
+  {"id":"required-style","prompt":"必须是虐文，同时有修仙情节，有没有符合的小说","allowEmpty":true}
+]

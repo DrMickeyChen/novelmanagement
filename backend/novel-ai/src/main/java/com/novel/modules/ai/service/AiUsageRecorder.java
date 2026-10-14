@@ -69,6 +69,15 @@ public class AiUsageRecorder {
      * @param entry 见 {@link Entry}；{@code failure} 为 {@code null} 表示成功
      */
     public void record(Entry entry) {
+        record(entry, entry.scene() == null ? null : entry.scene().getCode());
+    }
+
+    /** Scene 7 is reader book finding; it has file prompts, not an author template. */
+    public void recordBookFinder(Entry entry) {
+        record(entry, 7);
+    }
+
+    private void record(Entry entry, Integer sceneCode) {
         try {
             AiUsageLog row = new AiUsageLog();
             Long userId = entry.userId();
@@ -83,7 +92,7 @@ public class AiUsageRecorder {
                 userId = UNKNOWN_USER_ID;
             }
             row.setUserId(userId);
-            row.setScene(entry.scene() == null ? null : entry.scene().getCode());
+            row.setScene(sceneCode);
             row.setNovelId(entry.novelId());
             row.setChapterId(entry.chapterId());
             row.setModel(entry.model());

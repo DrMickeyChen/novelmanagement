@@ -1,0 +1,1601 @@
+{
+  "id": "568cf1f3-aca6-4ff9-a418-72c26c9d092c",
+  "label": "Isolated Mock verification",
+  "startedAt": "2026-10-13T14:39:07.422413Z",
+  "status": "DONE",
+  "codeVersion": "unrecorded",
+  "mock": true,
+  "suite": {
+    "label": "Isolated Mock verification",
+    "cases": [
+      {
+        "id": "first",
+        "prompt": "推荐已完结的悬疑小说",
+        "group": "refresh",
+        "expected": {
+          "completed": true,
+          "excludeIds": [],
+          "limit": 20
+        },
+        "allowEmpty": false
+      },
+      {
+        "id": "next",
+        "prompt": "换一批",
+        "group": "refresh",
+        "allowEmpty": true
+      }
+    ]
+  },
+  "rows": [
+    {
+      "case": {
+        "id": "first",
+        "prompt": "推荐已完结的悬疑小说",
+        "group": "refresh",
+        "expected": {
+          "completed": true,
+          "excludeIds": [],
+          "limit": 20
+        },
+        "allowEmpty": false
+      },
+      "review": "PENDING",
+      "model": "mock",
+      "answer": {
+        "conversationId": "ce348fbf-6cd7-4462-8d25-c944d0694cce",
+        "requestId": "7a5857e3-1b7b-4085-8915-5ecca6566357",
+        "answer": "【本地演示模式，未调用大模型】\n为你找到 3 本符合当前硬筛选条件的候选作品。正文核对情况见卡片；不能据此保证节奏、战力等软偏好。",
+        "conditions": {
+          "category": "悬疑",
+          "completed": true,
+          "excludeIds": [],
+          "limit": 20
+        },
+        "recommendations": [
+          {
+            "book": {
+              "id": "8000015669596330",
+              "title": "隔离验收书1",
+              "author": "测试作者",
+              "cover": "",
+              "category": "悬疑",
+              "tags": "推理",
+              "intro": "开篇是侦探调查案件的故事。",
+              "completed": true,
+              "wordCount": 300000
+            },
+            "reason": "符合筛选条件：分类：悬疑、已完结。 简介依据：开篇是侦探调查案件的故事。",
+            "evidence": "开篇是侦探调查案件的故事。",
+            "matches": [
+              "分类：悬疑",
+              "已完结"
+            ],
+            "sources": [],
+            "assessments": []
+          },
+          {
+            "book": {
+              "id": "8000015669596331",
+              "title": "隔离验收书2",
+              "author": "测试作者",
+              "cover": "",
+              "category": "悬疑",
+              "tags": "推理",
+              "intro": "开篇是侦探调查案件的故事。",
+              "completed": true,
+              "wordCount": 300000
+            },
+            "reason": "符合筛选条件：分类：悬疑、已完结。 简介依据：开篇是侦探调查案件的故事。",
+            "evidence": "开篇是侦探调查案件的故事。",
+            "matches": [
+              "分类：悬疑",
+              "已完结"
+            ],
+            "sources": [],
+            "assessments": []
+          },
+          {
+            "book": {
+              "id": "8000015669596332",
+              "title": "隔离验收书3",
+              "author": "测试作者",
+              "cover": "",
+              "category": "悬疑",
+              "tags": "推理",
+              "intro": "开篇是侦探调查案件的故事。",
+              "completed": true,
+              "wordCount": 300000
+            },
+            "reason": "符合筛选条件：分类：悬疑、已完结。 简介依据：开篇是侦探调查案件的故事。",
+            "evidence": "开篇是侦探调查案件的故事。",
+            "matches": [
+              "分类：悬疑",
+              "已完结"
+            ],
+            "sources": [],
+            "assessments": []
+          }
+        ],
+        "needsClarification": false,
+        "mock": true,
+        "usage": {
+          "modelCalls": 3,
+          "toolCalls": 2,
+          "totalTokens": 0,
+          "durationMs": 24,
+          "promptTokens": 0,
+          "completionTokens": 0
+        }
+      },
+      "evidenceSnapshots": [],
+      "recommended": 3,
+      "hardMatches": 3,
+      "duplicates": 0,
+      "automaticPass": true,
+      "status": "DONE",
+      "durationMs": 43,
+      "requestId": "7a5857e3-1b7b-4085-8915-5ecca6566357",
+      "trace": {
+        "mock": true,
+        "status": "done",
+        "usage": {
+          "modelCalls": 3,
+          "toolCalls": 2,
+          "totalTokens": 0,
+          "durationMs": 24,
+          "promptTokens": 0,
+          "completionTokens": 0
+        },
+        "startedAt": 1791902349582,
+        "tools": [
+          {
+            "name": "searchBooks",
+            "durationMs": 11,
+            "count": 3
+          },
+          {
+            "name": "getBookDetails",
+            "durationMs": 3,
+            "count": 3
+          }
+        ],
+        "model": "mock"
+      }
+    },
+    {
+      "case": {
+        "id": "next",
+        "prompt": "换一批",
+        "group": "refresh",
+        "allowEmpty": true
+      },
+      "review": "PENDING",
+      "model": "mock",
+      "answer": {
+        "conversationId": "ce348fbf-6cd7-4462-8d25-c944d0694cce",
+        "requestId": "316cfa0a-9a52-412c-874d-edfa757b7b15",
+        "answer": "【本地演示模式，未调用大模型】\n没有找到符合当前条件的新作品。可以告诉我是否放宽分类或字数条件。",
+        "conditions": {
+          "category": "悬疑",
+          "completed": true,
+          "excludeIds": [],
+          "limit": 20
+        },
+        "recommendations": [],
+        "needsClarification": true,
+        "mock": true,
+        "usage": {
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "totalTokens": 0,
+          "durationMs": 20,
+          "promptTokens": 0,
+          "completionTokens": 0
+        }
+      },
+      "evidenceSnapshots": [],
+      "recommended": 0,
+      "hardMatches": 0,
+      "duplicates": 0,
+      "automaticPass": true,
+      "status": "DONE",
+      "durationMs": 34,
+      "requestId": "316cfa0a-9a52-412c-874d-edfa757b7b15",
+      "trace": {
+        "mock": true,
+        "status": "done",
+        "usage": {
+          "modelCalls": 2,
+          "toolCalls": 1,
+          "totalTokens": 0,
+          "durationMs": 20,
+          "promptTokens": 0,
+          "completionTokens": 0
+        },
+        "startedAt": 1791902349639,
+        "tools": [
+          {
+            "name": "searchBooks",
+            "durationMs": 11,
+            "count": 0
+          }
+        ],
+        "model": "mock"
+      }
+    }
+  ],
+  "costScope": "仅聊天模型费用估算；不含缓存优惠、Embedding、Rerank及失败未返回的用量",
+  "retrievalConfig": {
+    "embeddingConfigured": false,
+    "rerankConfigured": false,
+    "embeddingModel": "",
+    "rerankModel": "",
+    "vectorSearch": "ES 原生 HNSW 近邻 + BM25 + RRF 融合"
+  },
+  "knowledgeVersions": [
+    {
+      "coveredChapters": 1,
+      "fingerprint": "fixture-8000015669596332",
+      "bookId": "8000015669596332",
+      "embeddingModel": ""
+    },
+    {
+      "coveredChapters": 1,
+      "fingerprint": "fixture-8000015669596331",
+      "bookId": "8000015669596331",
+      "embeddingModel": ""
+    },
+    {
+      "coveredChapters": 1,
+      "fingerprint": "fixture-8000015669596330",
+      "bookId": "8000015669596330",
+      "embeddingModel": ""
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3c973d06b31d01f6d75f9ae2e660fee241396ccb4b97d2ff95723f1cd5810e20",
+      "bookId": "3228",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "673279123f1ae38f83845e4ba49bb53778edbe5214fe5f08b16ed0eab2b8e0f8",
+      "bookId": "3229",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "605e46787b2d8a131f2f31c86cecff3f530986bc85c1d8858ef17263246d88d1",
+      "bookId": "3230",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a793ed8edd64949aa779fbd0d53daaa5f291653608cfddb823f9700bcebcbfa3",
+      "bookId": "3231",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "fbcc85909fd3698916e8655cfdc71d4cce2190059edf5f1cefcf507a1fe1a571",
+      "bookId": "3232",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1868f62a0601b79dc583d60a3329b684f8946f0dc7105bcd7be345400b9be396",
+      "bookId": "3233",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "7376c59da82c1c1b24eb05816b191781b0508c12d1ecf8f02343cffecbfb2665",
+      "bookId": "3234",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "c453466eda8997efa9f9af18a5fce375270506d09232017b18badaa3f468764f",
+      "bookId": "3235",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "06076a382933dcbcdfa376285184f729b827ae8ff29e5e8e45d8d58ea140a47f",
+      "bookId": "3236",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "55be3e539626bb686c05a6d932b4d71bde2087acace85c76560455f2bc885dfd",
+      "bookId": "3237",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a14be82a3012a8f600ceca1e10d73e46b1f333cc50413545640baad8e1ce1677",
+      "bookId": "3238",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3c2a3a2037f8be239309182bb8eaf603eb7bc14a94881121131a6bf96addae41",
+      "bookId": "3239",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "5565fb51ec9ea19264ed666d027609d44fd59d0cf88a753cc15f2e7ad46435ee",
+      "bookId": "3240",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0ae45466416b207b80b8a2cf0ab9db5b9e320edbd18c4a24340658a317fe7c2f",
+      "bookId": "3241",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f4598731ab3d4374ba1d5138f4cf98799200fcda86197d5fe911c3a32affb7bf",
+      "bookId": "3242",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ad4adcffd6abc016e71badb2aa2b7876ccbf714d72f1d5d9281befc97e08f84a",
+      "bookId": "3243",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3d43e59daa8a060feedd7cec9cc38d233de4542a785375b30650cce427c27c6a",
+      "bookId": "3244",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4af03f73c16aca2dd94d55ed14319c02e11a2a34e420d5d6aac4d020265cfdb0",
+      "bookId": "3245",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "cb2d0ddd1e544b96d5ef5fb4956609f8bd9a4ff2c8492a43bc6aa264a28a1426",
+      "bookId": "3246",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 9,
+      "fingerprint": "cc23894a7632d4058293bc66c9c332a8d8b547540eaea95e30931cdfbbb22472",
+      "bookId": "3247",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b5f0addc78a7f551b84e5338b3455f24d81245727fe78094c2a10af0992daaf0",
+      "bookId": "3248",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "11f77fc796f2a2a42b25bc4d00e1e3014a30fa2efcd07f89dcf864efed511973",
+      "bookId": "3249",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1d61345995634025b42abf7a7e25cfed469abb8e287ccc7ac3d70772ba279b59",
+      "bookId": "3250",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3b8be44d63f0b7bbac4ce304823a09485340c7a177fec08157981614a4fd0a84",
+      "bookId": "3251",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "db336e9ff9bbacada9745d511f44c33b02a10697a5bac952cd8de74b9b7ea633",
+      "bookId": "3252",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "16196ac69a02887fd914677918aaa75b5e0cfb3fd4145a781f1ca9630c59fbdd",
+      "bookId": "3253",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2adb765318f5929b2107db387e41de20291c1b80689ecb87a495fd60d36d02b4",
+      "bookId": "3254",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "af55ffcff12504cec7e260ca9b8fffc6c54e22dfe04ef155d0c66db53f8987bb",
+      "bookId": "3255",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ed4f384d9f3a81fb7fb9fb2baea832c6db0797fa84063e2c00b73550bb3b17d1",
+      "bookId": "3256",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a4f31dedb0eb982ce186ca1b9dffbd1f921f44f5f618ae0cca1432a7e4727a63",
+      "bookId": "3257",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "5d0e489acb5f7b9d5468bc5ceffbfc8be72fc4e0901aedb63104cdfe3094a371",
+      "bookId": "3258",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b9097aa7f8e292a5f63974403930e9b519bc809695bf77b2683aa4dd4724864e",
+      "bookId": "3259",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3d59ed81e33793a91fb65cb4445467f3f0654d5a86f38eabfb45e4bd04f397bf",
+      "bookId": "3260",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9487f2acce6716a018b5e362b10f36f08d4f5ffc72f79e1b619c910f56743e47",
+      "bookId": "3261",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "94bd59b17cbee4f5e7eeaae27d601e24012cb479135954c5f3bb8beed2065a80",
+      "bookId": "3262",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "bbcec36d28dd5775cad91ba8b0493806589da597c19f7fe198bff13db4620324",
+      "bookId": "3263",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0cfe653665720da5ba7f3d8da3d9c6f5862250106c085d6e24af76ea8781038a",
+      "bookId": "3264",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "7e49b6cc51dea82b75824e30f718d3bf08cb658237d4edb8b85801206301c138",
+      "bookId": "3265",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6f9b92ce095b07498a002a3ada72eda81b3e80065d341fb1aeed0b4f8af07b39",
+      "bookId": "3266",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1cf117f716ce36dbd9a058e12576ccde373e3d94676d5ea683e89a119f15e145",
+      "bookId": "3267",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 9,
+      "fingerprint": "55669cc99fef905bdd9a0bdced171c02f045f4401f87f8b0cf3481bbf8322570",
+      "bookId": "3268",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "8a21f5adfdfd65d534f7abfcef32485a8cc03f9daa4b8b29c48c621a6874241d",
+      "bookId": "3269",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "e6e6809aa1f1a2ff547c8681b34222d4dcd30e074bdf6b293e87561a394252a9",
+      "bookId": "3270",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "572949d966bca920766424963cfccabe904e8bf89a6d500ebc3da747468ce770",
+      "bookId": "3271",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 4,
+      "fingerprint": "439b6ede877048c00fd6d3a11b4063f6dba122d3cde0a29ac7364e38ea4b378a",
+      "bookId": "3272",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "83769b525b1024a77d3e327d91ff4d4304e3bb01a3469556b40002be6653b6b2",
+      "bookId": "3273",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9daa319580139a383ba767f1d85f44fd0c9eb0d086ea04866b674a01ec686e9a",
+      "bookId": "3274",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2f0642f15c64c82bd23bd6393d1a16b86841ca758cfbe709ef99a1e0a6b56310",
+      "bookId": "3275",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 2,
+      "fingerprint": "db791a45a8ed20ed0510e871c316ccca7bb855a6166813250017aa30ec3a35d9",
+      "bookId": "3276",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0bb03bde06edc64e0d44f802c2e94af9f0d8b43e4e1e882e489f4be644432ad4",
+      "bookId": "3277",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "68557c8d9431098ae3afc70a692655f12080b823e5fa6b4de72a282f1e45e096",
+      "bookId": "3278",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 9,
+      "fingerprint": "5a26491d943a254e03dee894f539b76150b06b3f55485d11188d39dd179427e7",
+      "bookId": "3279",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2c8f7d1ccfbd12ce27647d2611038c4d1e02d946dc18e40afb9476b06a969463",
+      "bookId": "3280",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f89f5c287acbc5bf29f1dd6cf155783e82d2a1a3fb042df184d147b9bcaabd3f",
+      "bookId": "3281",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f2be6da3437b5079012d3f493ad6013eacf932020465f583ca0cf3995d3d5400",
+      "bookId": "3282",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "deb3b26cc75eef2cb16a919ab1df92320f441bf10b4d2100f15157bd6faf8250",
+      "bookId": "3283",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a800f9fe182dbdfe5cbc314c805549aa554087e6566b3d595b2ba81016662df2",
+      "bookId": "3284",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "003eea29a8dd35fc90b66f7fcf120c23ef402c1b78ecff777585d5a6c1b9d906",
+      "bookId": "3285",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a52b2b9f6ed75605814c28c69e12be3b698e0c4a162e7b307683bb64e81f99c0",
+      "bookId": "3286",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "dd442181b6d8911021618679fcae13ef58f3cfc712cf4e41835fa020b8d93127",
+      "bookId": "3287",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "aa89b4335817e5e2e94d5aa61f9b4cb67590c41703981fb9daf5320f642e00bd",
+      "bookId": "3288",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1df9be4b52a989df202caba01b7d66e5cd012e3538ec53f0b64152d279d88906",
+      "bookId": "3289",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f9df09605d517e520880cfd23cac8124f00962ac5cfe0709b7d42deaf31ef0de",
+      "bookId": "3290",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "05f748b3d4ccc726368254372de54e589dea13cc9a35eacb87da412d412dbe1b",
+      "bookId": "3291",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0cd1c6b5fca5341ebb53098b4359b2bb00f316c6af9ac5b64624c1c6742a29e8",
+      "bookId": "3292",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6e9bad7a2ec6cf5c6d06b7d392204b35c565e32ad5c01ca7b1e1213f390fa191",
+      "bookId": "3293",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "20a00b16f80dbf61505daeb37218c73b0852ffcd1ad838140afa24e9637ea4db",
+      "bookId": "3294",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9e077f72683eb9e95d1b4a94a3510282ef185987146c106192fed30e2d3fe0ea",
+      "bookId": "3295",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "573089d663133ad11e60be8368183d9350effca0f3f27afc2296033ba0585288",
+      "bookId": "3296",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "493b1153fb00dfb992188d0cf6c1720f59760c08743bd460cc258723bfc2afd7",
+      "bookId": "3297",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "67207208007c37a83b95da9c8bbd5ea8431b0d15df969158c8d85d589ff7c1c0",
+      "bookId": "3298",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3fbbd8b5011e0006b07ac7481dae6947aba666ea19b99d9479b40b321ce98773",
+      "bookId": "3299",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f59e6d3f202fed46444b9ba0b926fed5a78958073dfac8d40ac6e55a0a8e1135",
+      "bookId": "3300",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6984942bff6289332df804948155868a130835217e2d9a7cc303b2023ed24815",
+      "bookId": "3301",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0a301369d550772ca06654658011b41a28b26832924ed48be840ae99dbff5a74",
+      "bookId": "3302",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "95d12e877831435b566c82c809dcf3618af20d36bd307a7e84ec29efaea913b5",
+      "bookId": "3303",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "bd6d4cd693d28f45bb6c2e2e28cbfd359ce289619a16422936bd476d85ed6e49",
+      "bookId": "3304",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "20903b166e2c8b8dad7a19dae24d883f83030a115d491e8497bccafae1397a7f",
+      "bookId": "3305",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0048dfa6576ce6ab037c3216311888d7428e4740576f75e8e281e567403a04fe",
+      "bookId": "3306",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "cd7e0253460c5ae5170cc179f384a5f36641eb7eaade3af251580e125a88e136",
+      "bookId": "3307",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "5573c41072eef7305ee0f21a5d0532918314d601a2add53bfdf6f33dc6ef29e2",
+      "bookId": "3308",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b1fa8dfa5945aec3b28a9e126642feb4173635d2af6bea9914d368f2696a6c28",
+      "bookId": "3309",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "e35116623b1d8a7fb1c6e2711cd4a720f92ea07bd17801b1fc1a63c5a4ad4298",
+      "bookId": "3310",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0729d95574ea7fdeed8e0dd69e620efdbb22369c7e080608357c64de36856199",
+      "bookId": "3311",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "04caf1ab5e3069584a0a262af3c3d7cf651b9f75ce1d65e4ac29c5fac31f8a4c",
+      "bookId": "3312",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "70df9065fee2160ae06ef18c19eeec0ee927e99cc574ba29b852dde4e94bd82b",
+      "bookId": "3313",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6b5067c275d627ebe8dedf81c3ae203769927562f7c14a4c0ea3eb035bdf6ba6",
+      "bookId": "3314",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "09ec8b4cd325f1b1a9504034d418742d1f10c639bb4b72574456db41b012b224",
+      "bookId": "3315",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2253aedbd936697f70ddaf41520a61762157006131059c6552eef8e7cb44834d",
+      "bookId": "3316",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4f0681d754b9ef517edb53309a81c5a8c9285abc495ed887b3a87292a5a1ecca",
+      "bookId": "3317",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ca58d9c48ca77dd7c3dee9c95eceb98d0efa6dd50336235d9e9c571030a74864",
+      "bookId": "3318",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f55072602fbb9fff6fc559a1e6df6358651499d7fe6c0943b290aa57b3cc389c",
+      "bookId": "3319",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f842dca90f3ed272c787619a4c8b4acd2bad750c91acd2ac247f03593b6666e4",
+      "bookId": "3320",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 3,
+      "fingerprint": "96d75a9140fe4853a760d45c4e4e66d5a289b0c2e8e72fecd4c1f30686164ec0",
+      "bookId": "3321",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4eb68f31f31bb2e6c3504683a4001a973b5ffe76c1b9e102e8d63989758a0bf6",
+      "bookId": "3322",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0fe992418b736e9908482768439eda0da9faa0c74bfe7140ee1e37f2f7e2258b",
+      "bookId": "3323",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "41449e730bfe045fcb54701874e4ceadeb97375ea8d5536bb3ce40ddec0a1273",
+      "bookId": "3324",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "145a387eefe881f338cde74c4473968c02f058d0f2fcba1689524926ec0407b8",
+      "bookId": "3325",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "14f232cbb2b0a031c9ce5fa38ebedd7034ea0931358244ebe90e7eec83fb2be4",
+      "bookId": "3326",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2e89d69e4d9d41372b5e957fdd5c7a23accfb9746902cbb384d376db3c41a5f5",
+      "bookId": "3327",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "92ded501214db0bbcf044f72c437507f1d3757597756296fc4ab7324d0a2dc15",
+      "bookId": "3328",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4bbddf6033dbedea15edabeff72dfbc6a2a776b799b810229bb001986266555d",
+      "bookId": "3329",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2a8d986a7761bab343c46da5add720da8876317f14ef36065328d3ac56ee6751",
+      "bookId": "3330",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "74d1f355affcdf3beace5ac8e7cbab2617d89723ec47b34aeca22e7e33228454",
+      "bookId": "3331",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ac6f52ee8dfbf1ce1082f9b9adea6c9f6658206daf2fa3fc5946c7f2d90530d4",
+      "bookId": "3332",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2e9f1a5843c25db2f6c0f355be469c6f0026bceb948631d40d8721d4ad014236",
+      "bookId": "3333",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "25facf75caac125f4cbc3385688c9f69fa2bddeed6f412d9c9d2b763f2070b1c",
+      "bookId": "3334",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "24ee658212543d845d54dc97f363ddc42b32039c51534d36bf57f8c40a4264e0",
+      "bookId": "3335",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "078255e35ae322aecd8019ae98b0a5acc61330f6e23ee8b7ce021b537a57debe",
+      "bookId": "3336",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6eb01515d0aab79a7ac510c18f8ee72476dae9526db3e5d729483acb8de6afec",
+      "bookId": "3337",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "66903c200cf73f00d1cdc94417931aa7962eaa44eeae0bd6f7e28241e58832a5",
+      "bookId": "3338",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "afe14fbba00215e6818b87a57a306d633fa1678437fed4672d18d991ea12fc70",
+      "bookId": "3339",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "386c8107ae634d46f0e0d817087619ff8c3fd497919e32e990b56e45fcd934d7",
+      "bookId": "3340",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f40fbc2917c4a7314bfc9cfb331f8df336fa6b26ac3046930f058d3b7ad78f73",
+      "bookId": "3341",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6faaaa9368c9973a82710a68271bef9987420a0dd947c3e4975da2b66afa027a",
+      "bookId": "3342",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "feccad29370167b7231baa90935e545edf7bb295d11d395c3ae854d6368260a8",
+      "bookId": "3343",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2bff3fb69daa8d2113fa41836937dfd40a80184011157e04a95bc8d7cacc48a3",
+      "bookId": "3344",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "486193ec8e990dee2ef13c042d4c8c5daf32ce05177685b3cfd4e7885d49f8e2",
+      "bookId": "3345",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "fd32fcc8df38add5b22d97adf2b4122fabb0bc02d66a1562faa7c29128596c0b",
+      "bookId": "3346",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "e104a0c943d2122838eb0beb538284dc8baaec84319472861bb5c5e9dcdc6f07",
+      "bookId": "3347",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6251fd2884b8e16709f316031f4eeae558879b20a60d84e621aaac5dfd2024bb",
+      "bookId": "3348",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "45902fff7764bc2eacfb46bdb596e3c6b7093adbfcb534f0f7e1142edceb24c0",
+      "bookId": "3349",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "94cbc93776646567373cc34ca36eba17ca0aced533477ad8c5d7cd3ac8a0adf3",
+      "bookId": "3350",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3977ff8cc10a076490bf081a51574769ae1fc3ebe51284cdcefd816321ae9d38",
+      "bookId": "3351",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "10b7f56f7606200f26a0bef6e359157c71559b7d82dd476ba3732b50665266a3",
+      "bookId": "3352",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "bddca3bfc5b8329f0fd8a38713f548e5d9f6804ad45b7c69d0587bd393355795",
+      "bookId": "3353",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9082883b55d2b95f9c55b4e77873938e1e2f3b9a27db7e5135b2a9e8f18aeadc",
+      "bookId": "3354",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "8b7d5fbad2dc747859408e77a857d4fa87a9281f3eaa98fa5cc827b1bdacd779",
+      "bookId": "3355",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "81d67bffe7c2cfa9f85ca5507759db6f879ad177e2f87edffaa45af44438b3da",
+      "bookId": "3356",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "edf10c3cd18a8768d9bb3ab13ee76e0764904d7e4da7f45bded05443f73fe7b2",
+      "bookId": "3357",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "20832731cedfc59cdad8f729df394c1f6f6e436f8631db669bc4732bd7884743",
+      "bookId": "3358",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1ba255e78c514205e76f75ff00cdcdf27915822cb49a609ef7e443c61e18789f",
+      "bookId": "3359",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "d935597a874d8d09496462219472ba5945cd7e1708a045fa17a1da0fd8baaa2e",
+      "bookId": "3360",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 2,
+      "fingerprint": "c6785414083568c68c1a5a3f319ea70ecc21d4ed3e2f3fca904110e5f4430d9e",
+      "bookId": "3361",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "be35569d08231d004a8b23877e0708cf1763ebca5345139797eb61a5200f2ea3",
+      "bookId": "3362",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "57c6982c7c9d3139b7eba3c0054e87c7e5edb89ae7bd184a72e9dc8659e53bcf",
+      "bookId": "3363",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "20f9e7865e14aa7dfddd0639e8ad50ae5782017da90cb80d872b81fa43d54d07",
+      "bookId": "3364",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3fb17245ce5ae7578f2942315564416fad1d7da4055d02f4b8d5513f6ba1cd75",
+      "bookId": "3365",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f91a75e867399024635f5cf32973a6be63cffc3afd6bcc0406ecd6c4ce11ec63",
+      "bookId": "3366",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a9714ebc3fc9a4e1f3270ed05a4d721bc32a7a3235747f55320d671b0bb6ee01",
+      "bookId": "3367",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "43112b9b1b5dff5c7989af7baced58913eb12104c917414a05b73b3e1f3a09e9",
+      "bookId": "3368",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2c194555703bef816b6fd9dcaeb87b6aba6c946823a63665e3893fa261484aea",
+      "bookId": "3369",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "59ef8d5feba5f619c01ba3f6e98020de88cabf9adb1dffd9980f7343e6c6fc06",
+      "bookId": "3370",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ef7cdcb24b514541125187e299144102fdb5862d332a5ed0409f6ec7adab73e4",
+      "bookId": "3371",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "bd5e8e2bdd18a9233278cb3cfa4fbb4030bff94190261e2e71f725a3d17f80d3",
+      "bookId": "3372",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "757a7c1e9cdeddb5faa2c49f384ab8e3f01baf41044045f0c38ece0b0e949f31",
+      "bookId": "3373",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "452f71fe1fcce784c53dff872e50ea93c47432e4086ee22965f232d87668a2e0",
+      "bookId": "3374",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f40c4df680409bc960707fc28ab639144e637bf00db4dc59683e5391f7e01d70",
+      "bookId": "3375",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "5f3b02a76db4f25ec0f2c15137619c23d7059c97c52901c165bbdb1ed5e60d55",
+      "bookId": "3376",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b5aa4bcb53e13c044702440e9e74715510294c5cc3884916128013bc077e39f4",
+      "bookId": "3377",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b500375d4d8ef0d075a8bc166b232c825f518d7d7564da28a5fe3396e8579025",
+      "bookId": "3378",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f06f4423caad2fe5a5081c73836ff555694681f9b7f60a040cae2455cc0f5c21",
+      "bookId": "3379",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "c5bcb95f0bf3df861a54c4128e9848929c31bac9f78a9163a11c87397a29e61d",
+      "bookId": "3380",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6911057b98313d61c1c3f33ee5cda905587e2895a2baa72608eac52da389b1fc",
+      "bookId": "3381",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "aa6680cd5ff3cdf2a25c382862c84c14346a3fce3fefcadfcf8d2d32a50b915a",
+      "bookId": "3382",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "8253e010231fe9336c2712d791b9406363c8b8ff1eb1e51496fa5d0bb206e82c",
+      "bookId": "3383",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3ec67362ddbc71a8e23d3d5a308be8106ab31de56ee24e3a78177c52dd092a7e",
+      "bookId": "3384",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "523ef48a6ed54d0d35b77a0d120ccbd8b7892aff2f322e92b29ca797b019c4d9",
+      "bookId": "3385",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1aeabdc2a615b435a46049bb768b4780ebdc2918c3e022d1a953806404b525e3",
+      "bookId": "3386",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3cd2bbc1e773bd3b1c6de8eb34fb97e28f9849f5b2d8a5bc709028ae8ee06132",
+      "bookId": "3387",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1a55905ce70453a530bb122d8a811c1015322975523197ebde6be6e1ef459cae",
+      "bookId": "3388",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4bdf30346131cac1cdf10049dac440471d613b3d56f8eb72f2855af8e7b46f82",
+      "bookId": "3389",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4035e4a1ecbf0f4c8336f519367d87122b57bd173230dc89e9d14ce4d5f325ae",
+      "bookId": "3390",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0ff6d6ab894d09541a88a512d627362b77760b5dcb36553963deaec3e1075f7c",
+      "bookId": "3391",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "8b9a8ad7e47c3e695b4b5be531e80250b573d21ae54413dc4a1cb595abcd3b7d",
+      "bookId": "3392",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "c2ae58d238319719ab190f19ba3d832e87ce247899adeb91d530eaca592ce8b0",
+      "bookId": "3393",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "d9a068b7501be3f32adef98972d0cd17934ad240720d17012369204705698a41",
+      "bookId": "3394",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "c94b794fa2aa93a4b02257c0f7e425ea44c7e88862af184ab2a5d59d9beebd75",
+      "bookId": "3395",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4f59e590f16049e76ea72d621bddb207ea1c4b4e78557c8caab1faa78c1c5028",
+      "bookId": "3396",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "5fef9abbe7e973dac37d185021f91db748bdabaee5395ec1bb63da5ab2dc3546",
+      "bookId": "3397",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "e7114aece099b5ebd116b43a5eb0de23a2658ed36329105df2143b83ea09e5ea",
+      "bookId": "3398",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0e7ba4e95b3db1e66f84347dcc6bdfaa4de36da9fdabb2ee403d4c241b1b43d4",
+      "bookId": "3399",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 8,
+      "fingerprint": "0f992b8733ca1c62224e7e3a7134d9c0b759c919ca5b79a437b912fcf0f79b30",
+      "bookId": "3400",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "22dd2fe9773aaec9fe22580cf47a8a127f54f9ceaaa26983cfce2d511a4132a2",
+      "bookId": "3401",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1d30e7ea34da3f3e73045dd7c1f5864535cab021c7335e2f7ac382818d646447",
+      "bookId": "3402",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9c0fe0714c3824b17b53629f9c8168d7f379b2491c44128cd038e8b957308358",
+      "bookId": "3403",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "8b645c8be092b42fdc8fb6e976c3a0315745f209284445b4be265d039434c889",
+      "bookId": "3404",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 4,
+      "fingerprint": "a57ffba68f969232e0d175e3a4f8d53a35f5bd946c601f25283b4e1a77f2fffb",
+      "bookId": "3405",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6db7833bfb2fd11a865115695326e08b750004de31b7e991cd8e113a75633d45",
+      "bookId": "3406",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "eb94d13577f255233613b9b3709aa2fa3aaf47513a0f047b4c83465221660c0d",
+      "bookId": "3407",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f8d12a0ade1f5a05fe6bd1ccf21eb221d66ab47dd0db7bbd2b71559863f7f210",
+      "bookId": "3408",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "db597e09ad335f98b938c10f564d35c34d519de0bc114b85e999d2694671ee34",
+      "bookId": "3409",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 5,
+      "fingerprint": "2427ceab52d72ff1d840375e2d576f17f184215b4dab9a107f93b2fbd1a6441e",
+      "bookId": "3410",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "50d3b0cf73f6906ad3dcfe75ba3a986e764eb9784642937e4fd5bc6843424156",
+      "bookId": "3411",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "d04fa1638cf59e23f2e7d2ef8dfc30fb151d7daca0ea179aa3d350f1a7c60753",
+      "bookId": "3412",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "50d4d4d76ec186e67be765dd35fa808fee2687326901dbc5e46c25fcd9cc6f60",
+      "bookId": "3413",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "55e6c732cace5d4fbd81b4a501495e4452be436ba65410f076f04da65dd6d2a5",
+      "bookId": "3414",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "e9fecd04f057187d11061afb3d3a5455696fe5ea1eca3c0a76d9d62afdcfc194",
+      "bookId": "3415",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ec89ef3651efa0e2a3e4c4ffbde8fe6317e9fc754c9b00e865caaaad03d2d115",
+      "bookId": "3416",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "9786833580c6052338a6d87e566e3bfb79c9e2fc5cac9c2661d5bcec5f05cd7e",
+      "bookId": "3417",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "ec398c9562bea1a3568b6f94a8bb654b878cb1890b1b14a3869ba2ad64022b58",
+      "bookId": "3418",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a9f863236cb1a1dc3e1159305b7d40291c51f1397c1f9a10cb3d90ac98a69f3c",
+      "bookId": "3419",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "d649fde81443c640712c701545b59fe994697b7398bc06cd98c94d637d3d6974",
+      "bookId": "3420",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "6356069a8c8254d7fa823d3cbc0b37a9b36d1501ed90c79afde6e62df4c6db41",
+      "bookId": "3421",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "2b50c8f160ff0bd17db35485e1a4b0bc73afdd0e166b3f591c7337241fda6b9b",
+      "bookId": "3422",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "1d4513ba750aa73ece77e91e34363fc1161cf399479e3d9d63b1dfd7632b6c6a",
+      "bookId": "3423",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a1d9b6ebad9a290902eb8a382eecebb6a04133a08cb8af6ea7ccfd9fa3d2c131",
+      "bookId": "3424",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "59b317d1057d4ec6ab7a792e4c7bb6134bb383017cea6669a19027c30247b71b",
+      "bookId": "3425",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "7b22a243a5980f70fe54406f2a412d54eaee743234cb74bf33809e53efb5e4b4",
+      "bookId": "3426",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "264de535e3ef926db2e5787a207f7ccee0d79a5b91e4dc8245319e7f21b660e4",
+      "bookId": "3427",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "84295fa57df4c26838dff3e96931d0ff637bc0491f07e76ea310e3960794553d",
+      "bookId": "3428",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "55ff4452002450d42dc29934dcb685d0b5ce2d0d52689b921dd8c0e1e20ead30",
+      "bookId": "3430",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0cd253a1fb9cc83f867f26776aa80c2fafa43ebd1869c00a5e9e15be2b827dd3",
+      "bookId": "3431",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a34afba93d13b7f1d34ab7d3a7cad28dec76b0de633255e2877141546da5e68a",
+      "bookId": "3432",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "3996bfff0751d0447260755414a78335673168f50e1054cf15ff8ef0803691e6",
+      "bookId": "3433",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0abe7d06fb5b26b7380ce0f9964d1e8720ac5e1327540d6a599a650838006412",
+      "bookId": "3434",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "c5cc909b9df3f128a6bcd2a7306c8535784271e56478ca7c08a09da3d9efb46a",
+      "bookId": "3435",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "455f963d78c40b15b74c747332644c5b23d433431bfa0a86a90c33684970afff",
+      "bookId": "3436",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a499d72611cf0a4526208969ee5820003e54caf61a9d0a56032dea80b4f3455e",
+      "bookId": "3437",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "f97bafcf4aed852e1c2f47341e48cc2372ed357e93b1497aebe20aa0b49de6b7",
+      "bookId": "3438",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "b1a7caf66f9d108550fd02df4eac1941b3b08685ce187bab2dbe02047269fc41",
+      "bookId": "3439",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a400c13aa1a2671764eda361fbd499a5790da6ae8c1ae411cb8b592e50259bd8",
+      "bookId": "3440",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0acf7a14d4cfae9c031fd5ea7fa4c3d61bbfd724ad65bc7fdeaa422634b9361a",
+      "bookId": "3441",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "4e83ef7b4da8979f96ec022c55322dd5bf4e93873cdd82082e815a2458e86c32",
+      "bookId": "3442",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "bb9309471cce6c122529ddc36a0e9a41638bdc51fda521faaa4b20cfa015734e",
+      "bookId": "3443",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "41d2783c832c843d8eb251f79aee5d52b1c81b32e7adaf5fb2dd6284504b2b9e",
+      "bookId": "3444",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "218c91accb0439e2d09b1aa4578fe0a38582279bcc1e292eb51bd1dfdb072fad",
+      "bookId": "3445",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "a81d59a8ce3a0c1ed8cb295dd3eb9425aa1068f928df0e87ca54e208fb1a0c1f",
+      "bookId": "3446",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "54ae2f368c35b37a5da2e16aec65f494c979079af9041d176777b68e301d7db5",
+      "bookId": "3447",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "0b0c72c55244105900232a14eb85c92911d87ba835498c927627380c1d40b75c",
+      "bookId": "3448",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    },
+    {
+      "coveredChapters": 10,
+      "fingerprint": "efe68028c8e46c39274e95be7f14d0ee7c80b050917123b00db6e3dad9cd251d",
+      "bookId": "3429",
+      "embeddingModel": "BAAI/bge-m3@184936e8717c6c94"
+    }
+  ],
+  "promptSha256": "95af224b946181c8f9dc48131a58bad2ea80b7bcc45e6b5a6421ae1c8f5c55b1",
+  "agentCodeSha256": "32ba3bb3fcc8fe8381320a2d042c07634fac8121e06ddd225509ebd2cd5177c9",
+  "metrics": {
+    "executed": 2,
+    "planned": 2,
+    "automaticPassed": 2,
+    "recommendedBooks": 3,
+    "hardMatchedBooks": 3,
+    "reportedTotalTokens": 0,
+    "reviewed": 0,
+    "humanSupported": 0,
+    "hardConditionRate": 1.0,
+    "automaticPassRate": 1.0,
+    "p95Ms": 43,
+    "averageMs": 38.5,
+    "humanSupportRate": null,
+    "estimatedChatCost": null
+  },
+  "finishedAt": "2026-10-13T14:39:09.672455100Z"
+}

@@ -1,0 +1,21 @@
+import request from '@/utils/request'
+const root = '/admin/ai/book-finder'
+export const getKnowledgeStatus = config => request.get(`${root}/status`, config)
+export const getKnowledge = config => request.get(`${root}/knowledge`, config)
+export const getKnowledgeTasks = config => request.get(`${root}/tasks`, config)
+export const buildKnowledge = payload => request.post(`${root}/build`, payload)
+export const deleteKnowledge = id => request.delete(`${root}/knowledge/${id}`)
+export const getFinderSkills = config => request.get(`${root}/skills`, config)
+export const toggleFinderSkill = (id, enabled) => request.put(`${root}/skills/${id}`, { enabled })
+export const previewKnowledge = id => request.get(`${root}/knowledge/${id}`)
+export const getKnowledgeNotes = config => request.get(`${root}/notes`, config)
+export const saveKnowledgeDraft = (id, payload) => request.put(`${root}/notes/${id}`, payload)
+export const generateKnowledgeDraft = id => request.post(`${root}/notes/${id}/generate`)
+export const reviewKnowledgeDraft = (id, approved) => request.post(`${root}/notes/${id}/review`, { approved })
+export const getFinderRuns = config => request.get(`${root}/runs`, config)
+export const getEmbeddingConfig = () => request.get(`${root}/embedding-config`)
+export const saveEmbeddingConfig = payload => request.put(`${root}/embedding-config`, payload)
+export const getRerankConfig = () => request.get(`${root}/rerank-config`)
+export const saveRerankConfig = payload => request.put(`${root}/rerank-config`, payload)
+
+export const reindexKnowledge = ids => request.post(`${root}/reindex`, ids)

@@ -1,0 +1,11 @@
+{
+  "books": 416,
+  "twoRequestMilliseconds": [
+    2154.17,
+    2005.35,
+    2069.83
+  ],
+  "sourceVersionsMatch": true,
+  "bodyAndVectorsReturned": false,
+  "paidModelCalls": 0
+}

@@ -1,0 +1,126 @@
+[
+  {
+    "name": "searchBooks",
+    "description": "按完整条件搜索站内已上架小说。此工具无会话状态，省略字段表示不限制；换一批时客户端传入 excludeIds。最多返回20本，分类使用平台实际名称，没有候选不能擅自放宽用户条件。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "keyword": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "书名、简介、外部作者或标签关键词；最多100字"
+        },
+        "category": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "分类名称，精确匹配"
+        },
+        "tag": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "单个标签，精确匹配"
+        },
+        "completed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "minWords": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "maxWords": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "excludeIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 500
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 20
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "getBookDetails",
+    "description": "批量核对本轮候选或上轮推荐的真实简介、分类、标签、封面与完结状态。最多20本。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  },
+  {
+    "name": "searchBookEvidence",
+    "description": "对本轮搜索且已查详情的候选检索正文证据。返回逐字片段、章节来源、版本和覆盖范围；相关性分数不证明偏好成立。无索引或版本过期返回资料不足。正文仅供内部分析，不能复述给读者。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "ids",
+        "query"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false
+    }
+  }
+]

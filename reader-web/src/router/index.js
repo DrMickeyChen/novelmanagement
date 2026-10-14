@@ -69,6 +69,12 @@ const routes = [
         meta: { title: '搜索' },
       },
       {
+        path: 'book-finder',
+        name: 'bookFinder',
+        component: () => import('@/views/book-finder/index.vue'),
+        meta: { title: '找书助手', requiresAuth: true },
+      },
+      {
         path: 'novel/:id',
         name: 'novelDetail',
         component: () => import('@/views/novel/index.vue'),

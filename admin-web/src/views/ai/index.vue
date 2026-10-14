@@ -89,6 +89,11 @@
  * **归属仍然追得下去**：点调用人 → 筛出这个人的全部调用。
  */
 import { ref, reactive, computed, onMounted } from 'vue'
+import BookKnowledgePanel from '@/components/BookKnowledgePanel.vue'
+import BookFinderEvaluationPanel from '@/components/BookFinderEvaluationPanel.vue'
+import BookFinderMcpPanel from '@/components/BookFinderMcpPanel.vue'
+import EmbeddingConfigPanel from '@/components/EmbeddingConfigPanel.vue'
+import RerankConfigPanel from '@/components/RerankConfigPanel.vue'
 import { ElMessage } from 'element-plus'
 import {
   getAiConfig,
@@ -112,6 +117,8 @@ import { confirm } from '@/utils/confirm'
 import { formatDateTime } from '@/utils/format'
 
 const activeTab = ref('config')
+const chatTab = ref('connection'), reportTab = ref('agent'), retrievalRevision = ref(0)
+const knowledgeTab = ref('connection')
 
 /* ==================== tab 1：模型配置 ==================== */
 
@@ -950,9 +957,11 @@ async function toggleWord(row) {
 
 <template>
   <div>
-    <el-tabs v-model="activeTab" class="ai-tabs">
-      <!-- ==================== tab 1：模型配置 ==================== -->
-      <el-tab-pane label="模型配置" name="config">
+    <p class="ai-navigation-tip">按模型能力管理接入与功能，运行记录统一排查。</p>
+    <el-tabs v-model="activeTab" class="ai-tabs" @tab-change="retrievalRevision++">
+      <el-tab-pane label="聊天模型与生成" name="config">
+        <el-tabs v-model="chatTab">
+          <el-tab-pane label="模型接入" name="connection">
         <!--
           ★★ provider 横幅：只有 effectiveProvider 才是「现在跑的是谁」。
              mock 下填 Key 完全无效，而这件事必须被看见，否则管理员会反复重填。
@@ -1091,9 +1100,7 @@ async function toggleWord(row) {
           </el-form>
         </el-card>
       </el-tab-pane>
-
-      <!-- ==================== tab 2：提示词模板 ==================== -->
-      <el-tab-pane label="提示词模板" name="prompt">
+          <el-tab-pane label="提示词模板" name="prompt">
         <el-alert
           type="info"
           show-icon
@@ -1349,254 +1356,7 @@ async function toggleWord(row) {
           </template>
         </el-dialog>
       </el-tab-pane>
-
-      <!-- ==================== tab 3：用量统计 ==================== -->
-      <el-tab-pane label="用量统计" name="usage">
-        <!--
-          ★★ 汇总失败 → 显示「暂时拿不到」，**绝不显示 0**。
-             「今日 0 次调用」和「后端挂了」在视觉上必须能分开。
-        -->
-        <el-alert
-          v-if="summaryFailed"
-          type="error"
-          show-icon
-          :closable="false"
-          class="provider-alert"
-          title="用量汇总暂时拿不到（不是「今天没人用」）"
-        >
-          <template #default>
-            <el-button link type="primary" @click="loadSummary">重试</el-button>
-          </template>
-        </el-alert>
-
-        <el-row v-else :gutter="12" class="stat-row">
-          <!-- 今日 -->
-          <el-col :span="6">
-            <el-card shadow="never" class="stat-card">
-              <div class="stat-label">
-                今日调用
-                <span class="stat-day">{{ summary?.statDay || '' }}</span>
-              </div>
-              <div class="stat-value">
-                <span v-if="summary">{{ fmtNum(summary.today.calls) }}</span>
-                <span v-else class="none">—</span>
-              </div>
-              <div class="stat-sub">
-                <template v-if="summary">
-                  成功 {{ fmtNum(summary.today.successCalls) }} ·
-                  失败 {{ fmtNum(summary.today.failedCalls) }} ·
-                  {{ fmtNum(summary.today.distinctUsers) }} 人
-                </template>
-              </div>
-            </el-card>
-          </el-col>
-
-          <!-- 今日 token -->
-          <el-col :span="6">
-            <el-card shadow="never" class="stat-card">
-              <div class="stat-label">今日 token</div>
-              <div class="stat-value">
-                <span v-if="summary">{{ fmtNum(summary.today.totalTokens) }}</span>
-                <span v-else class="none">—</span>
-              </div>
-              <!--
-                ★★★ 这一行是这张卡片存在的全部意义。
-                   没有它，「今日 3,240 token」会被读成一个完整的数，
-                   而真相可能是「3,240 + 4 次不知道」——
-                   偏小的方向恰好是「看起来更省钱」。
-              -->
-              <div v-if="summary && summary.today.untrackedTokenCalls > 0" class="stat-sub warn">
-                其中 {{ fmtNum(summary.today.untrackedTokenCalls) }} 次未统计到用量
-              </div>
-              <div v-else-if="summary" class="stat-sub">全部调用都有用量数据</div>
-            </el-card>
-          </el-col>
-
-          <!-- 累计 -->
-          <el-col :span="6">
-            <el-card shadow="never" class="stat-card">
-              <div class="stat-label">累计调用</div>
-              <div class="stat-value">
-                <span v-if="summary">{{ fmtNum(summary.total.calls) }}</span>
-                <span v-else class="none">—</span>
-              </div>
-              <div class="stat-sub">
-                <template v-if="summary">
-                  成功 {{ fmtNum(summary.total.successCalls) }} ·
-                  失败 {{ fmtNum(summary.total.failedCalls) }} ·
-                  {{ fmtNum(summary.total.distinctUsers) }} 人
-                </template>
-              </div>
-            </el-card>
-          </el-col>
-
-          <!-- 累计 token -->
-          <el-col :span="6">
-            <el-card shadow="never" class="stat-card">
-              <div class="stat-label">累计 token</div>
-              <div class="stat-value">
-                <span v-if="summary">{{ fmtNum(summary.total.totalTokens) }}</span>
-                <span v-else class="none">—</span>
-              </div>
-              <div v-if="summary && summary.total.untrackedTokenCalls > 0" class="stat-sub warn">
-                其中 {{ fmtNum(summary.total.untrackedTokenCalls) }} 次未统计到用量
-              </div>
-              <div v-else-if="summary" class="stat-sub">全部调用都有用量数据</div>
-            </el-card>
-          </el-col>
-        </el-row>
-
-        <!-- ==================== 筛选栏 ==================== -->
-        <el-card shadow="never" class="filter-card">
-          <div class="filter">
-            <el-select v-model="filter.scene" style="width: 140px" @change="search">
-              <el-option v-for="o in SCENES" :key="String(o.value)" :label="o.label" :value="o.value" />
-            </el-select>
-
-            <el-select v-model="filter.success" style="width: 130px" @change="search">
-              <el-option
-                v-for="o in SUCCESS_OPTIONS"
-                :key="String(o.value)"
-                :label="o.label"
-                :value="o.value"
-              />
-            </el-select>
-
-            <el-date-picker
-              v-model="filter.range"
-              type="daterange"
-              value-format="YYYY-MM-DD"
-              range-separator="至"
-              start-placeholder="开始日期"
-              end-placeholder="结束日期"
-              style="width: 260px"
-              @change="search"
-            />
-
-            <el-button @click="reset">重置</el-button>
-            <el-button @click="refreshAll">刷新</el-button>
-
-            <!--
-              ★ 调用人筛选做成可见、可关闭的标签（同审核日志页）：
-                藏起来的话，用户点完「只看此人」再换别的条件，
-                会忘记还挂着一个看不见的筛选，然后觉得用量「少了很多」。
-            -->
-            <el-tag v-if="filter.userId" closable type="warning" effect="plain" @close="clearUser">
-              只看：{{ filter.userName || `用户 #${filter.userId}` }} 的调用
-            </el-tag>
-          </div>
-
-          <p class="hint">
-            这一页是<b>只读</b>的流水账，界面上不提供任何修改和删除 —— 能改的账不能用来对账。
-            点击「调用人」可以筛出某个人烧掉的全部调用。
-          </p>
-        </el-card>
-
-        <!-- ==================== 列表 ==================== -->
-        <el-card shadow="never">
-          <el-table v-loading="paged.loading.value" :data="paged.list.value" row-key="id" stripe>
-            <el-table-column label="时间" width="150">
-              <template #default="{ row }">
-                {{ formatDateTime(row.createTime) || '—' }}
-              </template>
-            </el-table-column>
-
-            <el-table-column label="场景" width="110">
-              <template #default="{ row }">
-                <el-tag size="small" effect="plain">{{ row.sceneDesc || '—' }}</el-tag>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="模型" width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.model || '—' }}</template>
-            </el-table-column>
-
-            <el-table-column label="调用人" width="130" show-overflow-tooltip>
-              <template #default="{ row }">
-                <el-button v-if="row.userId" link type="primary" @click="filterByUser(row)">
-                  {{ userLabel(row) }}
-                </el-button>
-                <span v-else>—</span>
-              </template>
-            </el-table-column>
-
-            <!--
-              ★ S6 起作者端会发 novelId / chapterId，这一列才有数据可显示。
-                ★★ 老数据一律是 `—`，那**不是**「没关联作品」，而是「E1 之前的调用
-                   本来就没记」—— 两者在这一列上分不出来，所以不给它加 tooltip 断言。
-                只给裸 id：管理端没有作品/章节的详情页可跳，编一个跳不过去的链接更糟。
-            -->
-            <el-table-column label="作品/章节" width="120" align="right">
-              <template #default="{ row }">
-                <span v-if="row.novelId" class="none">#{{ row.novelId }}</span>
-                <span v-else class="none">—</span>
-                <span v-if="row.chapterId" class="none"> / #{{ row.chapterId }}</span>
-              </template>
-            </el-table-column>
-
-            <!--
-              ★★ token 这一列的三种显示见 tokenText() 的注释。
-                 其中「未统计」和「—」都不能被换成 0。
-            -->
-            <el-table-column label="token" width="110" align="right">
-              <template #default="{ row }">
-                <el-tooltip :content="tokenTip(row)" placement="top">
-                  <span :class="{ warn: row.tokenUntracked, none: !row.success }">
-                    {{ tokenText(row) }}
-                  </span>
-                </el-tooltip>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="耗时" width="90" align="right">
-              <template #default="{ row }">
-                <span v-if="row.durationMs == null" class="none">—</span>
-                <span v-else>{{ (row.durationMs / 1000).toFixed(1) }}s</span>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="结果" width="90">
-              <template #default="{ row }">
-                <el-tag :type="row.success ? 'success' : 'danger'" size="small">
-                  {{ row.success ? '成功' : '失败' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-
-            <!-- 失败原因：来自后端白名单的人话，可能是「请检查 base_url 是否带 /v1」这种可行动的话 -->
-            <el-table-column label="说明" min-width="220" show-overflow-tooltip>
-              <template #default="{ row }">
-                <span v-if="row.success" class="none">—</span>
-                <span v-else>{{ errorText(row) }}</span>
-              </template>
-            </el-table-column>
-
-            <template #empty>
-              <!-- ★ 空态与失败态互斥，由 usePagedList 的构造保证（M5） -->
-              <el-empty v-if="paged.isEmpty.value" description="没有符合条件的调用记录" :image-size="80" />
-              <el-empty v-else-if="paged.failed.value" description="暂时加载不到调用记录" :image-size="80">
-                <el-button @click="paged.reload">重试</el-button>
-              </el-empty>
-            </template>
-          </el-table>
-
-          <el-pagination
-            v-if="paged.total.value > 0"
-            class="pager"
-            :current-page="paged.page.value"
-            :page-size="paged.size.value"
-            :total="paged.total.value"
-            :page-sizes="[10, 20, 50]"
-            layout="total, sizes, prev, pager, next"
-            background
-            @current-change="paged.changePage"
-            @size-change="paged.changeSize"
-          />
-        </el-card>
-      </el-tab-pane>
-
-      <!-- ==================== tab 4：违禁词库 ==================== -->
-      <el-tab-pane label="词库管理" name="word">
+          <el-tab-pane label="内容词库" name="word">
         <!--
           ★★★ 这个 tab 存在的理由只有一个：让「库里改了」和「生效了」在屏幕上分得开。
              所以状态横幅在最上面、词表在下面 —— 顺序反了这页就白做了。
@@ -1952,6 +1712,266 @@ async function toggleWord(row) {
             <el-button type="primary" :loading="wordSaving" @click="submitWord">保存</el-button>
           </template>
         </el-dialog>
+      </el-tab-pane>
+        </el-tabs>
+      </el-tab-pane>
+      <el-tab-pane label="向量模型与知识库" name="book-knowledge" lazy>
+        <el-tabs v-model="knowledgeTab" @tab-change="retrievalRevision++">
+          <el-tab-pane label="向量接口配置" name="connection"><EmbeddingConfigPanel @saved="retrievalRevision++" /></el-tab-pane>
+          <el-tab-pane label="正文知识库" name="knowledge" lazy><BookKnowledgePanel mode="knowledge" :revision="retrievalRevision" :active="activeTab === 'book-knowledge' && knowledgeTab === 'knowledge'" /></el-tab-pane>
+          <el-tab-pane label="风格摘要与审核" name="summaries" lazy><BookKnowledgePanel mode="summaries" :revision="retrievalRevision" :active="activeTab === 'book-knowledge' && knowledgeTab === 'summaries'" /></el-tab-pane>
+        </el-tabs>
+      </el-tab-pane>
+      <el-tab-pane label="重排模型与检索" name="rerank" lazy><RerankConfigPanel @saved="retrievalRevision++" /></el-tab-pane>
+      <el-tab-pane label="运行与用量" name="usage">
+        <el-tabs v-model="reportTab">
+          <el-tab-pane label="MCP 工具接入" name="mcp" lazy><BookFinderMcpPanel /></el-tab-pane>
+          <el-tab-pane label="评测与报告" name="evaluation" lazy><BookFinderEvaluationPanel /></el-tab-pane>
+          <el-tab-pane label="Agent 运行记录与策略" name="agent" lazy><BookKnowledgePanel mode="operations" :revision="retrievalRevision" :active="activeTab === 'usage' && reportTab === 'agent'" /></el-tab-pane>
+          <el-tab-pane label="模型用量" name="usage">
+        <!--
+          ★★ 汇总失败 → 显示「暂时拿不到」，**绝不显示 0**。
+             「今日 0 次调用」和「后端挂了」在视觉上必须能分开。
+        -->
+        <el-alert
+          v-if="summaryFailed"
+          type="error"
+          show-icon
+          :closable="false"
+          class="provider-alert"
+          title="用量汇总暂时拿不到（不是「今天没人用」）"
+        >
+          <template #default>
+            <el-button link type="primary" @click="loadSummary">重试</el-button>
+          </template>
+        </el-alert>
+
+        <el-row v-else :gutter="12" class="stat-row">
+          <!-- 今日 -->
+          <el-col :span="6">
+            <el-card shadow="never" class="stat-card">
+              <div class="stat-label">
+                今日调用
+                <span class="stat-day">{{ summary?.statDay || '' }}</span>
+              </div>
+              <div class="stat-value">
+                <span v-if="summary">{{ fmtNum(summary.today.calls) }}</span>
+                <span v-else class="none">—</span>
+              </div>
+              <div class="stat-sub">
+                <template v-if="summary">
+                  成功 {{ fmtNum(summary.today.successCalls) }} ·
+                  失败 {{ fmtNum(summary.today.failedCalls) }} ·
+                  {{ fmtNum(summary.today.distinctUsers) }} 人
+                </template>
+              </div>
+            </el-card>
+          </el-col>
+
+          <!-- 今日 token -->
+          <el-col :span="6">
+            <el-card shadow="never" class="stat-card">
+              <div class="stat-label">今日 token</div>
+              <div class="stat-value">
+                <span v-if="summary">{{ fmtNum(summary.today.totalTokens) }}</span>
+                <span v-else class="none">—</span>
+              </div>
+              <!--
+                ★★★ 这一行是这张卡片存在的全部意义。
+                   没有它，「今日 3,240 token」会被读成一个完整的数，
+                   而真相可能是「3,240 + 4 次不知道」——
+                   偏小的方向恰好是「看起来更省钱」。
+              -->
+              <div v-if="summary && summary.today.untrackedTokenCalls > 0" class="stat-sub warn">
+                其中 {{ fmtNum(summary.today.untrackedTokenCalls) }} 次未统计到用量
+              </div>
+              <div v-else-if="summary" class="stat-sub">全部调用都有用量数据</div>
+            </el-card>
+          </el-col>
+
+          <!-- 累计 -->
+          <el-col :span="6">
+            <el-card shadow="never" class="stat-card">
+              <div class="stat-label">累计调用</div>
+              <div class="stat-value">
+                <span v-if="summary">{{ fmtNum(summary.total.calls) }}</span>
+                <span v-else class="none">—</span>
+              </div>
+              <div class="stat-sub">
+                <template v-if="summary">
+                  成功 {{ fmtNum(summary.total.successCalls) }} ·
+                  失败 {{ fmtNum(summary.total.failedCalls) }} ·
+                  {{ fmtNum(summary.total.distinctUsers) }} 人
+                </template>
+              </div>
+            </el-card>
+          </el-col>
+
+          <!-- 累计 token -->
+          <el-col :span="6">
+            <el-card shadow="never" class="stat-card">
+              <div class="stat-label">累计 token</div>
+              <div class="stat-value">
+                <span v-if="summary">{{ fmtNum(summary.total.totalTokens) }}</span>
+                <span v-else class="none">—</span>
+              </div>
+              <div v-if="summary && summary.total.untrackedTokenCalls > 0" class="stat-sub warn">
+                其中 {{ fmtNum(summary.total.untrackedTokenCalls) }} 次未统计到用量
+              </div>
+              <div v-else-if="summary" class="stat-sub">全部调用都有用量数据</div>
+            </el-card>
+          </el-col>
+        </el-row>
+
+        <!-- ==================== 筛选栏 ==================== -->
+        <el-card shadow="never" class="filter-card">
+          <div class="filter">
+            <el-select v-model="filter.scene" style="width: 140px" @change="search">
+              <el-option v-for="o in SCENES" :key="String(o.value)" :label="o.label" :value="o.value" />
+            </el-select>
+
+            <el-select v-model="filter.success" style="width: 130px" @change="search">
+              <el-option
+                v-for="o in SUCCESS_OPTIONS"
+                :key="String(o.value)"
+                :label="o.label"
+                :value="o.value"
+              />
+            </el-select>
+
+            <el-date-picker
+              v-model="filter.range"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              style="width: 260px"
+              @change="search"
+            />
+
+            <el-button @click="reset">重置</el-button>
+            <el-button @click="refreshAll">刷新</el-button>
+
+            <!--
+              ★ 调用人筛选做成可见、可关闭的标签（同审核日志页）：
+                藏起来的话，用户点完「只看此人」再换别的条件，
+                会忘记还挂着一个看不见的筛选，然后觉得用量「少了很多」。
+            -->
+            <el-tag v-if="filter.userId" closable type="warning" effect="plain" @close="clearUser">
+              只看：{{ filter.userName || `用户 #${filter.userId}` }} 的调用
+            </el-tag>
+          </div>
+
+          <p class="hint">
+            这一页是<b>只读</b>的流水账，界面上不提供任何修改和删除 —— 能改的账不能用来对账。
+            点击「调用人」可以筛出某个人烧掉的全部调用。
+          </p>
+        </el-card>
+
+        <!-- ==================== 列表 ==================== -->
+        <el-card shadow="never">
+          <el-table v-loading="paged.loading.value" :data="paged.list.value" row-key="id" stripe>
+            <el-table-column label="时间" width="150">
+              <template #default="{ row }">
+                {{ formatDateTime(row.createTime) || '—' }}
+              </template>
+            </el-table-column>
+
+            <el-table-column label="场景" width="110">
+              <template #default="{ row }">
+                <el-tag size="small" effect="plain">{{ row.sceneDesc || '—' }}</el-tag>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="模型" width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.model || '—' }}</template>
+            </el-table-column>
+
+            <el-table-column label="调用人" width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-button v-if="row.userId" link type="primary" @click="filterByUser(row)">
+                  {{ userLabel(row) }}
+                </el-button>
+                <span v-else>—</span>
+              </template>
+            </el-table-column>
+
+            <!--
+              ★ S6 起作者端会发 novelId / chapterId，这一列才有数据可显示。
+                ★★ 老数据一律是 `—`，那**不是**「没关联作品」，而是「E1 之前的调用
+                   本来就没记」—— 两者在这一列上分不出来，所以不给它加 tooltip 断言。
+                只给裸 id：管理端没有作品/章节的详情页可跳，编一个跳不过去的链接更糟。
+            -->
+            <el-table-column label="作品/章节" width="120" align="right">
+              <template #default="{ row }">
+                <span v-if="row.novelId" class="none">#{{ row.novelId }}</span>
+                <span v-else class="none">—</span>
+                <span v-if="row.chapterId" class="none"> / #{{ row.chapterId }}</span>
+              </template>
+            </el-table-column>
+
+            <!--
+              ★★ token 这一列的三种显示见 tokenText() 的注释。
+                 其中「未统计」和「—」都不能被换成 0。
+            -->
+            <el-table-column label="token" width="110" align="right">
+              <template #default="{ row }">
+                <el-tooltip :content="tokenTip(row)" placement="top">
+                  <span :class="{ warn: row.tokenUntracked, none: !row.success }">
+                    {{ tokenText(row) }}
+                  </span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="耗时" width="90" align="right">
+              <template #default="{ row }">
+                <span v-if="row.durationMs == null" class="none">—</span>
+                <span v-else>{{ (row.durationMs / 1000).toFixed(1) }}s</span>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="结果" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.success ? 'success' : 'danger'" size="small">
+                  {{ row.success ? '成功' : '失败' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+
+            <!-- 失败原因：来自后端白名单的人话，可能是「请检查 base_url 是否带 /v1」这种可行动的话 -->
+            <el-table-column label="说明" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span v-if="row.success" class="none">—</span>
+                <span v-else>{{ errorText(row) }}</span>
+              </template>
+            </el-table-column>
+
+            <template #empty>
+              <!-- ★ 空态与失败态互斥，由 usePagedList 的构造保证（M5） -->
+              <el-empty v-if="paged.isEmpty.value" description="没有符合条件的调用记录" :image-size="80" />
+              <el-empty v-else-if="paged.failed.value" description="暂时加载不到调用记录" :image-size="80">
+                <el-button @click="paged.reload">重试</el-button>
+              </el-empty>
+            </template>
+          </el-table>
+
+          <el-pagination
+            v-if="paged.total.value > 0"
+            class="pager"
+            :current-page="paged.page.value"
+            :page-size="paged.size.value"
+            :total="paged.total.value"
+            :page-sizes="[10, 20, 50]"
+            layout="total, sizes, prev, pager, next"
+            background
+            @current-change="paged.changePage"
+            @size-change="paged.changeSize"
+          />
+        </el-card>
+      </el-tab-pane>
+        </el-tabs>
       </el-tab-pane>
     </el-tabs>
   </div>

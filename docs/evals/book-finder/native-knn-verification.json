@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "mode": "Real indexed book, ES native HNSW, read-only",
+  "dimension": 1024,
+  "hits": 6,
+  "durationMs": 123,
+  "paidModelCalls": 0,
+  "returnedVectors": false
+}

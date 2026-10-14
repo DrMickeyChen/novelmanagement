@@ -127,6 +127,7 @@ async function handleLogout() {
 
     <router-link to="/" class="nav-link">首页</router-link>
     <router-link to="/rank" class="nav-link">排行榜</router-link>
+    <router-link to="/book-finder" class="nav-link">找书助手</router-link>
 
     <!--
       ★ 书架 / 历史（P6 加）。**未登录也显示**，不做 v-if ——

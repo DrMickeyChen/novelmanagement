@@ -35,7 +35,17 @@ class AiHttpBoundaryTest {
   mvc.perform(get("/api/ai/quota").header("X-User-Id","99").header("X-Jti","test-session").header("X-Roles","ADMIN")).andExpect(status().isUnauthorized());
  }
  @Test void readerCannotAccessAuthorAi() throws Exception {mvc.perform(identity(get("/api/ai/quota"),"READER")).andExpect(status().isForbidden());}
+ @Test void readerCanAccessOnlyDedicatedBookFinder() throws Exception {
+  mvc.perform(identity(get("/api/ai/book-finder/test"),"READER")).andExpect(status().isOk());
+  mvc.perform(get("/api/ai/book-finder/test")).andExpect(status().isUnauthorized());
+ }
  @Test void authorCannotAccessAdminConfiguration() throws Exception {mvc.perform(identity(get("/api/admin/ai/config"),"AUTHOR")).andExpect(status().isForbidden());}
+ @Test void knowledgeManagementIsAdminOnly() throws Exception {
+  mvc.perform(get("/api/admin/ai/book-finder/status")).andExpect(status().isUnauthorized());
+  mvc.perform(identity(get("/api/admin/ai/book-finder/status"),"READER")).andExpect(status().isForbidden());
+  mvc.perform(identity(get("/api/admin/ai/book-finder/status"),"AUTHOR")).andExpect(status().isForbidden());
+  mvc.perform(identity(get("/api/admin/ai/book-finder/status"),"ADMIN")).andExpect(status().isOk());
+ }
  @Test void authorReceivesSseCompletionAndWorkerIdentity() throws Exception {
   MvcResult first=mvc.perform(identity(post("/api/ai/write"),"AUTHOR").contentType("application/json").accept("text/event-stream, application/json;q=0.9").content("{\"prompt\":\"continue\"}")).andExpect(request().asyncStarted()).andReturn();
   first.getAsyncResult(5000);
@@ -51,6 +61,7 @@ class AiHttpBoundaryTest {
   @Bean RestAuthenticationEntryPoint entry(){return new RestAuthenticationEntryPoint(objectMapper());}
   @Bean RestAccessDeniedHandler denied(){return new RestAccessDeniedHandler(objectMapper());}
   @Bean HeaderAuthenticationFilter header(){return new HeaderAuthenticationFilter(objectMapper(),"test-internal");}
+  @Bean BookFinderProbe bookFinderProbe(){return new BookFinderProbe();}
   @Bean(destroyMethod="shutdown") ThreadPoolTaskExecutor executor(){ThreadPoolTaskExecutor e=new ThreadPoolTaskExecutor();e.setCorePoolSize(1);e.setMaxPoolSize(1);e.initialize();return e;}
   @Bean AiController controller(){
    AiPreflight preflight=mock(AiPreflight.class);RenderedPromptVO prompt=new RenderedPromptVO();prompt.setSystemPrompt("test");prompt.setUserMessage("test");when(preflight.check(any(),any())).thenReturn(prompt);
@@ -58,5 +69,10 @@ class AiHttpBoundaryTest {
    AiStreamSource stream=(scene,req,handler)->{workerUser.set(UserContext.getUserId());handler.onChunk("test");handler.onComplete();};
    return new AiController(stream,executor(),config,mock(AiQuotaService.class),preflight,mock(AiSummaryService.class),"mock");
   }
+ }
+ @org.springframework.web.bind.annotation.RestController
+ static class BookFinderProbe {
+  @org.springframework.web.bind.annotation.GetMapping({"/api/ai/book-finder/test","/api/admin/ai/book-finder/status"})
+  public String test(){return "ok";}
  }
 }

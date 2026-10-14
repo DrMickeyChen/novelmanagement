@@ -15,7 +15,7 @@ public class AiDispositionSyncJob {
  private final AiAuditResultMapper mapper;
  private final AiContentLookup content;
  private long cursor;
- @Scheduled(fixedDelayString="${novel.ai.disposition-sync-ms:5000}",initialDelay=10000)
+ @Scheduled(fixedDelayString="${novel.ai.disposition-sync-ms:5000}",initialDelayString="${novel.ai.disposition-sync-initial-ms:10000}")
  public synchronized void sync() {
   try {
    List<AiAuditResult> rows=mapper.selectList(Wrappers.<AiAuditResult>lambdaQuery().eq(AiAuditResult::getStatus,0).gt(AiAuditResult::getId,cursor).orderByAsc(AiAuditResult::getId).last("LIMIT 100"));

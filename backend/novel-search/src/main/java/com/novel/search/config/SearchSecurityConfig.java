@@ -165,6 +165,7 @@ public class SearchSecurityConfig {
                          *    ES 侧的 status 过滤 + content 装配端的 status 校验，
                          *    两道都在，缺一道就是【直接对外的内容泄露】。
                          */
+                        .requestMatchers("/internal/book-finder/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/search").permitAll()
 
                         /*

@@ -1,0 +1,82 @@
+{
+  "recordedAt": "2026-10-13T14:40:00.967816+00:00",
+  "backendTests": 54,
+  "suites": [
+    {
+      "name": "com.novel.modules.agent.bookfinder.BookFinderAgentTest",
+      "tests": "24",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.BookFinderEvaluationTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.BookFinderIntentTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.BookFinderMcpTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.BookFinderModelTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.knowledge.EmbeddingConfigServiceTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.knowledge.PreferenceEvidenceTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.knowledge.RerankConfigServiceTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.modules.agent.bookfinder.knowledge.RetrievalModelsTest",
+      "tests": "6",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    },
+    {
+      "name": "com.novel.search.service.BookKnowledgeIndexSmokeTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0"
+    }
+  ],
+  "frontendTests": 20,
+  "adminBuild": "passed",
+  "readerBuild": "passed",
+  "paidCalls": 0,
+  "realModelSemanticQuality": "not measured",
+  "uiVisualInspection": "not performed"
+}

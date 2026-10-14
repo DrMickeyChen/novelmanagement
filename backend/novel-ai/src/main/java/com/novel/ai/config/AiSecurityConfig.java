@@ -23,11 +23,19 @@ public class AiSecurityConfig {
   return http.csrf(AbstractHttpConfigurer::disable).cors(AbstractHttpConfigurer::disable)
    .formLogin(AbstractHttpConfigurer::disable).httpBasic(AbstractHttpConfigurer::disable).logout(AbstractHttpConfigurer::disable)
    .sessionManagement(s->s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+   // Commit security headers before SSE workers can flush the response. Tomcat headers
+   // are mutable and cannot safely be written by both the filter and worker threads.
+   .headers(h->h.withObjectPostProcessor(new org.springframework.security.config.annotation.ObjectPostProcessor<org.springframework.security.web.header.HeaderWriterFilter>() {
+    @Override public <O extends org.springframework.security.web.header.HeaderWriterFilter> O postProcess(O filter) {
+     filter.setShouldWriteHeadersEagerly(true); return filter;
+    }
+   }))
    .authorizeHttpRequests(a->a.dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
     .requestMatchers(HttpMethod.OPTIONS,"/**").permitAll()
     .requestMatchers("/doc.html","/webjars/**","/v3/api-docs/**","/swagger-ui/**","/favicon.ico","/error").permitAll()
     .requestMatchers("/internal/**").permitAll()
     .requestMatchers("/api/admin/**").hasRole("ADMIN")
+    .requestMatchers("/api/ai/book-finder/**").authenticated()
     .requestMatchers("/api/ai","/api/ai/**").hasAnyRole("AUTHOR","ADMIN")
     .anyRequest().authenticated())
    .exceptionHandling(e->e.authenticationEntryPoint(authenticationEntryPoint).accessDeniedHandler(accessDeniedHandler))
