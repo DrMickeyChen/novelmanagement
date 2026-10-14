@@ -50,11 +50,13 @@ onUnmounted(()=>clearInterval(timer))
   <el-alert v-if="failed" title="评测记录加载失败，请重试" type="error" />
   <el-table :data="reports" style="margin-top:20px">
     <el-table-column prop="label" label="名称" /><el-table-column prop="startedAt" label="时间" /><el-table-column prop="status" label="状态" />
+    <el-table-column label="执行框架" width="150"><template #default="{row}">{{ row.engine === 'langchain4j' ? 'LangChain4j' : row.engine === 'native' ? '原有实现' : '旧报告未记录' }}</template></el-table-column>
     <el-table-column label="模式"><template #default="{row}">{{ row.mock ? 'Mock，不用于证明真实推荐效果' : '真实模型' }}</template></el-table-column>
     <el-table-column label="操作"><template #default="{row}"><el-button link @click="open(row.id)">查看报告</el-button></template></el-table-column>
   </el-table>
   <section v-if="current">
     <h3>{{ current.label }} · {{ current.status }}</h3>
+    <p>执行框架：{{ current.engine === 'langchain4j' ? 'LangChain4j AI Services' : current.engine === 'native' ? '原有实现' : '旧报告未记录' }} {{ current.engineVersion || '' }}</p>
     <p>执行 {{ current.metrics?.executed || 0 }} / {{ current.suite?.cases?.length }} 题；自动通过 {{ current.metrics?.automaticPassed || 0 }} 题；人工审核 {{ current.metrics?.reviewed || 0 }} 题。</p>
     <p>平均耗时 {{ Math.round(current.metrics?.averageMs || 0) }} ms；P95 {{ current.metrics?.p95Ms ?? '—' }} ms；已返回 Token {{ current.metrics?.reportedTotalTokens ?? '—' }}；聊天估算费用 {{ current.metrics?.estimatedChatCost ?? '未设置价格' }}。</p>
     <p>硬条件符合率 {{ current.metrics?.hardConditionRate == null ? '暂无推荐可统计' : (current.metrics.hardConditionRate*100).toFixed(1)+'%' }}；人工证据支持率 {{ current.metrics?.humanSupportRate == null ? '尚未审核' : (current.metrics.humanSupportRate*100).toFixed(1)+'%' }}。</p>

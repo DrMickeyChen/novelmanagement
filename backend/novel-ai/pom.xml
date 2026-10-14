@@ -15,6 +15,21 @@
     <description>小说管理系统 · AI 服务（模型、创作辅助、审核、配置与用量），端口 8085</description>
 
     <dependencies>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j</artifactId>
+            <version>1.22.0</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+            <version>1.22.0</version>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-http-client-jdk</artifactId>
+            <version>1.22.0</version>
+        </dependency>
 
         <dependency>
             <groupId>com.novel</groupId>

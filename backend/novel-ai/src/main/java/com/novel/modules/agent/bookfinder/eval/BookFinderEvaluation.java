@@ -77,6 +77,8 @@ public class BookFinderEvaluation {
         String id=UUID.randomUUID().toString(); var report=json.createObjectNode();
         report.put("id",id).put("label",input.label()).put("startedAt",Instant.now().toString()).put("status","QUEUED").put("codeVersion",codeVersion).put("mock",agent.mock());
         report.set("suite",json.valueToTree(input)); report.putArray("rows");
+        report.put("engine",agent.engine());
+        report.put("engineVersion","langchain4j".equals(agent.engine())?"1.22.0":"builtin");
         report.put("costScope","仅聊天模型费用估算；不含缓存优惠、Embedding、Rerank及失败未返回的用量");
         active.add(id);
         var response=report.deepCopy();
@@ -95,6 +97,12 @@ public class BookFinderEvaluation {
             }
             try(var in=BookFinderAgent.class.getResourceAsStream("BookFinderAgent.class")) {
                 report.put("agentCodeSha256",HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(in.readAllBytes())));
+            }
+            if("langchain4j".equals(agent.engine())) {
+                var framework=com.novel.modules.agent.bookfinder.model.BookFinderAiServices.class;
+                try(var in=framework.getResourceAsStream("BookFinderAiServices.class")) {
+                    report.put("frameworkCodeSha256",HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(in.readAllBytes())));
+                }
             }
             for(var c:input.cases()) {
                 if(cancelled.contains(id) || Thread.currentThread().isInterrupted()) break;

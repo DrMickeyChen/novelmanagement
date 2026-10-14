@@ -44,6 +44,8 @@ novel:
     expire-days: 7
 
   ai:
+    book-finder:
+      engine: ${BOOK_FINDER_ENGINE:langchain4j}
     provider: deepseek
 
     key-secret: ${AI_KEY_SECRET:}

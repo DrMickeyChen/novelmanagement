@@ -286,6 +286,7 @@ const names = { QUEUED: '等待中', RUNNING: '构建中', DONE: '已完成', FA
     <h3>找书运行记录</h3>
     <el-table :data="runs" max-height="320">
       <el-table-column prop="request" label="用户 / 请求 ID" min-width="250" show-overflow-tooltip />
+      <el-table-column label="执行框架" width="130"><template #default="{ row }">{{ row.record.engine === 'langchain4j' ? 'LangChain4j' : row.record.engine === 'native' ? '原有实现' : '未记录' }}</template></el-table-column>
       <el-table-column label="结果" width="90"><template #default="{ row }">{{ row.record.status === 'done' ? '完成' : '失败' }}</template></el-table-column>
       <el-table-column label="耗时" width="100"><template #default="{ row }">{{ row.record.usage?.durationMs != null ? `${row.record.usage.durationMs} ms` : '—' }}</template></el-table-column>
       <el-table-column label="模型 / 工具次数" width="150"><template #default="{ row }">{{ row.record.usage?.modelCalls ?? row.record.modelCalls }} / {{ row.record.usage?.toolCalls ?? row.record.toolCalls }}</template></el-table-column>

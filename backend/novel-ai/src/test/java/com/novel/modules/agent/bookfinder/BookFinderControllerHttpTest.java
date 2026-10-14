@@ -80,6 +80,9 @@ class BookFinderControllerHttpTest {
         @Bean RestAccessDeniedHandler denied(){return new RestAccessDeniedHandler(json());}
         @Bean HeaderAuthenticationFilter filter(){return new HeaderAuthenticationFilter(json(),"test-internal");}
         @Bean BookFinderStore store(){return mock(BookFinderStore.class,withSettings().mockMaker("mock-maker-subclass"));}
+        @Bean com.novel.modules.agent.bookfinder.model.BookFinderAiServices framework(){
+            return mock(com.novel.modules.agent.bookfinder.model.BookFinderAiServices.class,withSettings().mockMaker("mock-maker-subclass"));
+        }
         @Bean BookFinderAgent agent() throws Exception {
             var agent=mock(BookFinderAgent.class,withSettings().mockMaker("mock-maker-subclass"));
             when(agent.prepare(anyLong(),any())).thenAnswer(invocation->{

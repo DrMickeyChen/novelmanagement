@@ -22,6 +22,12 @@ import java.util.function.Consumer;
 public class BookFinderAgent {
     @org.springframework.beans.factory.annotation.Value("${novel.ai.book-finder.max-total-tokens:60000}")
     private int maxTotalTokens=60000;
+    @org.springframework.beans.factory.annotation.Value("${novel.ai.book-finder.engine:langchain4j}")
+    private String engine="native";
+    private com.novel.modules.agent.bookfinder.model.BookFinderAiServices aiServices;
+    @org.springframework.beans.factory.annotation.Autowired
+    public void framework(com.novel.modules.agent.bookfinder.model.BookFinderAiServices aiServices) { this.aiServices=aiServices; }
+    public String engine() { return engine; }
     private final ObjectMapper json;
     private final BookFinderSearchClient search;
     private final BookFinderContentClient content;
@@ -130,30 +136,25 @@ public class BookFinderAgent {
             state.setShown(new ArrayList<>());
         }
         long deadline=ticket.startedAt()+60000;
-        int calls=0,toolsUsed=0,tokens=0,promptTokens=0,completionTokens=0;
-        var trace=new ArrayList<Map<String,Object>>();
-        var candidates=new LinkedHashMap<String,BookFinderBook>();
-        var detailed=new LinkedHashMap<String,BookFinderBook>();
-        var evidence=new LinkedHashMap<String,BookKnowledge.Hit>();
-        var unavailableEvidence=new HashSet<String>();
-        var checkedEvidence=new HashSet<String>();
-        BookFinderQuery conditions=state.getConditions();
-        boolean searched=false;
+        int calls=0,tokens=0,promptTokens=0,completionTokens=0;
+        var session=new ToolSession(ticket,progress,continuation,deadline);
         try {
             Integer position=com.novel.modules.agent.bookfinder.conversation.BookFinderIntent.referencePosition(ticket.request().message());
             if(position!=null && (position<1 || position>state.getLastBooks().size())) {
                 var answer=new Answer(state.getId(),ticket.request().requestId(),"当前推荐列表没有第"+position+"本，请提供有效序号或书名。",
-                        conditions,List.of(),true,model.mock(),new Usage(0,0,0,System.currentTimeMillis()-ticket.startedAt()));
+                        session.conditions,List.of(),true,model.mock(),new Usage(0,0,0,System.currentTimeMillis()-ticket.startedAt()));
                 commit(ticket,answer);
                 store.runLog(ticket.userId(),ticket.request().requestId(),Map.of("usage",answer.usage(),"status","done","tools",List.of(),
-                        "reason","INVALID_REFERENCE","mock",model.mock(),"model",ticket.config()==null?"mock":ticket.config().model()));
+                        "reason","INVALID_REFERENCE","mock",model.mock(),"model",ticket.config()==null?"mock":ticket.config().model(),"engine",engine));
                 return answer;
             }
+            session.position=position;
             var messages=json.createArrayNode();
             String rules=resource("prompts/system.txt");
-            var context=json.createObjectNode(); context.set("currentConditions",json.valueToTree(conditions));
+            var context=json.createObjectNode(); context.set("currentConditions",json.valueToTree(session.conditions));
             context.put("requestMode",continuation?"CONTINUE":"NEW_SEARCH");
             var availableCategories=categories();
+            session.availableCategories=availableCategories;
             context.set("availableCategories",json.valueToTree(availableCategories));
             var lastRecommendations=modelBooks(state.getLastBooks(),600);
             for(int i=0;i<lastRecommendations.size();i++) ((ObjectNode)lastRecommendations.get(i)).put("position",i+1);
@@ -172,6 +173,29 @@ public class BookFinderAgent {
             }
             messages.addObject().put("role","user").put("content",ticket.request().message());
             JsonNode definitions=json.readTree(resource("prompts/tools.json"));
+            if("langchain4j".equals(engine)) {
+                if(aiServices==null) throw new BusinessException(503,"LangChain4j 执行器未初始化");
+                var invocation=aiServices.open(ticket,messages.get(0).path("content").asText(),definitions,
+                        session::execute,session.frameworkStats,maxTotalTokens,progress,model);
+                String raw=invocation.chat(ticket.request().message());
+                JsonNode result;
+                try { result=parseFinal(raw); }
+                catch(com.fasterxml.jackson.core.JsonProcessingException | BusinessException e) {
+                    session.trace.add(Map.of("name","finalFormatValidation","reason",e instanceof BusinessException?"SCHEMA_INVALID":"JSON_INVALID",
+                            "finishReason",session.frameworkStats.finishReason,"contentLength",raw.length()));
+                    String error=e instanceof BusinessException?e.getMessage():"JSON 语法不合法";
+                    progress.accept("正在校正回答格式");
+                    try { result=parseFinal(invocation.repair(error+"。请根据已有工具结果输出完整 JSON，必须包含 answer、needsClarification、recommendations；不得调用工具或编造 ID。")); }
+                    catch(com.fasterxml.jackson.core.JsonProcessingException | BusinessException invalid) {
+                        if(invalid instanceof BusinessException business && business.getCode()!=502) throw business;
+                        throw new BusinessException(502,"模型回答格式异常，已尝试修正，请重试或调整模型配置");
+                    }
+                }
+                var stats=session.frameworkStats;
+                return completeResult(ticket,result,session,new Usage(stats.calls,session.toolsUsed,stats.tokens,
+                        System.currentTimeMillis()-ticket.startedAt(),stats.promptTokens,stats.completionTokens));
+            }
+            if(!"native".equals(engine)) throw new BusinessException(503,"找书执行器配置无效");
             boolean formatRepair=false;
             for(int round=0;round<6;round++) {
                 check(deadline);
@@ -187,7 +211,7 @@ public class BookFinderAgent {
                     JsonNode result;
                     try { result=parseFinal(message.path("content").asText()); }
                     catch(com.fasterxml.jackson.core.JsonProcessingException | BusinessException e) {
-                        trace.add(Map.of("name","finalFormatValidation","reason",e instanceof BusinessException?"SCHEMA_INVALID":"JSON_INVALID",
+                        session.trace.add(Map.of("name","finalFormatValidation","reason",e instanceof BusinessException?"SCHEMA_INVALID":"JSON_INVALID",
                                 "round",round+1,"finishReason",reply.finishReason(),"contentLength",message.path("content").asText().length()));
                         if(!formatRepair && round<5) {
                             formatRepair=true;
@@ -202,229 +226,268 @@ public class BookFinderAgent {
                         }
                         throw new BusinessException(502,"模型回答格式异常，已尝试修正，请重试或调整模型配置");
                     }
-                    // Recover actionable basic or optional-similarity candidates when the
-                    // model unnecessarily asks for more details after finding candidates.
-                    // Never synthesize style judgments or bypass the final visibility check.
-                    if(result.path("recommendations").isEmpty() && searched && !candidates.isEmpty()
-                            && ((state.getPreference().isBlank() && (state.getPreferences()==null || state.getPreferences().isEmpty()))
-                            || (position!=null && (state.getPreferences()==null || state.getPreferences().stream().noneMatch(Preference::required))))) {
-                        var eligible=new ArrayList<String>();
-                        for(var b:candidates.values())
-                            if(b.matches(conditions) && !state.getShown().contains(b.id()) && eligible.size()<20) eligible.add(b.id());
-                        var missing=eligible.stream().filter(id->!detailed.containsKey(id)).toList();
-                        if(!missing.isEmpty()) {
-                            check(deadline);
-                            if(toolsUsed>=8) throw new BusinessException(422,"找书执行次数达到上限，请简化条件后重试");
-                            toolsUsed++;
-                            long started=System.currentTimeMillis();
-                            var books=sharedTools!=null?sharedTools.getBookDetails(missing):InternalResults.unwrapBusiness(content.details(missing),"候选详情补查");
-                            if(books==null) throw new BusinessException(503,"内容服务未返回有效结果");
-                            for(var b:books) if(missing.contains(b.id())) detailed.put(b.id(),b);
-                            trace.add(Map.of("name","getBookDetails","durationMs",System.currentTimeMillis()-started,
-                                    "count",books.size(),"reason","EMPTY_RECOMMENDATIONS_RECOVERY"));
-                        }
-                        var recovered=json.createArrayNode();
-                        for(var id:eligible) {
-                            var b=detailed.get(id);
-                            if(b!=null && b.matches(conditions)) recovered.addObject().put("id",id).put("quote","");
-                            if(recovered.size()==5) break;
-                        }
-                        if(!recovered.isEmpty()) {
-                            ((ObjectNode)result).set("recommendations",recovered);
-                            ((ObjectNode)result).put("needsClarification",false);
-                            trace.add(Map.of("name","recommendationRecovery","count",recovered.size(),"reason",
-                                    state.getPreference().isBlank()?"NO_SOFT_PREFERENCE":"OPTIONAL_SIMILARITY_CANDIDATES"));
-                        }
-                    }
-                    progress.accept("正在核对作品可见性和筛选条件");
-                    var answer=finish(ticket,result,conditions,candidates,detailed,evidence,checkedEvidence,unavailableEvidence,
-                            new Usage(calls,toolsUsed,tokens,System.currentTimeMillis()-ticket.startedAt(),promptTokens,completionTokens));
-                    if(answer.recommendations().isEmpty() && checkedEvidence.isEmpty()
-                            && trace.stream().anyMatch(entry->"searchBookEvidence".equals(entry.get("name")) && entry.containsKey("errorCode")))
-                        answer=new Answer(answer.conversationId(),answer.requestId(),"本次正文核对未成功执行，无法确认相似偏好；这不表示知识库未构建。请重试或调整条件。",
-                                answer.conditions(),List.of(),true,answer.mock(),answer.usage());
-                    check(deadline);
-                    commit(ticket,answer);
-                    try { store.runLog(ticket.userId(),ticket.request().requestId(),Map.of("usage",answer.usage(),"tools",trace,"status","done","mock",model.mock(),"model",ticket.config()==null?"mock":ticket.config().model(),"startedAt",ticket.startedAt())); }
-                    catch(RuntimeException e) { log.warn("找书运行记录写入失败 | user={} request={}",ticket.userId(),ticket.request().requestId()); }
-                    log.info("找书完成 | user={} request={} models={} tools={} tokens={} durationMs={}",
-                            ticket.userId(),ticket.request().requestId(),calls,toolsUsed,tokens,answer.usage().durationMs());
-                    return answer;
+                    return completeResult(ticket,result,session,
+                            new Usage(calls,session.toolsUsed,tokens,System.currentTimeMillis()-ticket.startedAt(),promptTokens,completionTokens));
                 }
-                if(round>=4 || formatRepair || toolCalls.size()+toolsUsed>8) throw new BusinessException(422,"找书执行次数达到上限，请简化条件后重试");
+                if(round>=4 || formatRepair || toolCalls.size()+session.toolsUsed>8) throw new BusinessException(422,"找书执行次数达到上限，请简化条件后重试");
                 messages.add(message);
                 for(var call:toolCalls) {
-                    if(toolsUsed>=8) throw new BusinessException(422,"找书工具执行次数达到上限");
-                    check(deadline); toolsUsed++;
+                    if(session.toolsUsed>=8) throw new BusinessException(422,"找书工具执行次数达到上限");
+                    check(deadline);
                     String name=call.path("function").path("name").asText();
                     String callId=call.path("id").asText();
                     if(callId.isBlank()||callId.length()>200) throw new BusinessException(502,"模型工具调用格式不合法");
-                    long start=System.currentTimeMillis();
-                    var output=json.createObjectNode(); output.put("tool",name);
-                    try {
-                        String raw=call.path("function").path("arguments").asText();
-                        if(raw.length()>4000) throw new BusinessException(400,"工具参数过长");
-                        var args=json.readTree(raw);
-                        if(args==null||!args.isObject()) throw new BusinessException(400,"工具参数必须是对象");
-                        List<BookFinderBook> books=List.of();
-                        switch(name) {
-                            case "searchBooks" -> {
-                                progress.accept("正在搜索符合条件的作品");
-                                if(args.has("preferences")) {
-                                    if(searched || !args.path("preferences").isArray() || args.path("preferences").size()>6) throw new BusinessException(400,"Invalid preferences");
-                                    var prefs=new ArrayList<Preference>();
-                                    for(var p:args.path("preferences")) {
-                                        if(!p.path("criterion").isTextual() || p.path("criterion").asText().isBlank() || p.path("criterion").asText().length()>60 || !p.path("required").isBoolean()) throw new BusinessException(400,"Invalid preference criterion");
-                                        prefs.add(new Preference(p.path("criterion").asText().trim(),p.path("required").asBoolean()));
-                                    }
-                                    state.setPreferences(prefs);
-                                    String combined=prefs.stream().map(Preference::criterion).collect(java.util.stream.Collectors.joining("、"));
-                                    state.setPreference(combined.substring(0,Math.min(200,combined.length())));
-                                    ((ObjectNode)args).remove("preferences");
-                                }
-                                if(args.has("preference")) {
-                                    if(searched) throw new BusinessException(400,"本轮软偏好已确定，后续搜索请省略 preference");
-                                    var pref=args.get("preference");
-                                    if(!pref.isNull() && (!pref.isTextual() || pref.asText().length()>200)) throw new BusinessException(400,"软偏好最多 200 字");
-                                    state.setPreference(pref.isNull()?"":pref.asText());
-                                    ((ObjectNode)args).remove("preference");
-                                }
-                                // Similarity is not an authorization to invent an exact tag filter.
-                                // Keep existing explicit tags; move newly inferred tags to soft retrieval.
-                                if(continuation && args.path("tag").isTextual()
-                                        && !Objects.equals(conditions.tag(),args.path("tag").asText())
-                                        && !ticket.request().message().contains(args.path("tag").asText())) {
-                                    String inferred=args.path("tag").asText().trim();
-                                    if(!inferred.isBlank() && inferred.length()<=60 && !searched) {
-                                        var prefs=new ArrayList<>(state.getPreferences()==null?List.<Preference>of():state.getPreferences());
-                                        if(prefs.size()<6 && prefs.stream().noneMatch(p->p.criterion().equals(inferred))) prefs.add(new Preference(inferred,false));
-                                        state.setPreferences(prefs);
-                                        String preference=state.getPreference().isBlank()?inferred:state.getPreference()+"、"+inferred;
-                                        state.setPreference(preference.substring(0,Math.min(200,preference.length())));
-                                    }
-                                    ((ObjectNode)args).remove("tag");
-                                    output.put("filterNotice","未明确要求的新标签已移出硬筛选；相似风格仅作为软偏好，不保证符合");
-                                    trace.add(Map.of("name","filterCorrection","field","tag","reason","INFERRED_SIMILARITY_TAG"));
-                                }
-                                if(position!=null) {
-                                    String input=ticket.request().message();
-                                    if(args.path("keyword").isTextual() && !Objects.equals(conditions.keyword(),args.path("keyword").asText())
-                                            && !input.contains(args.path("keyword").asText())) {
-                                        String inferred=args.path("keyword").asText().trim();
-                                        if(!inferred.isBlank() && inferred.length()<=100 && !searched) {
-                                            String combined=state.getPreference().isBlank()?inferred:state.getPreference()+"、"+inferred;
-                                            state.setPreference(combined.substring(0,Math.min(200,combined.length())));
-                                            var prefs=new ArrayList<>(state.getPreferences()==null?List.<Preference>of():state.getPreferences());
-                                            if(inferred.length()<=60 && prefs.size()<6 && prefs.stream().noneMatch(p->p.criterion().equals(inferred)))
-                                                prefs.add(new Preference(inferred,false));
-                                            state.setPreferences(prefs);
-                                        }
-                                        ((ObjectNode)args).remove("keyword");
-                                        output.put("keywordNotice","推断的相似风格已转为软偏好，不作为关键词硬过滤");
-                                        trace.add(Map.of("name","filterCorrection","field","keyword","reason","INFERRED_SIMILARITY_KEYWORD"));
-                                    }
-                                    if(!input.matches(".*(完结|连载|状态).*")) ((ObjectNode)args).remove("completed");
-                                    if(!input.matches(".*(字|万|篇幅).*")) {
-                                        ((ObjectNode)args).remove("minWords"); ((ObjectNode)args).remove("maxWords");
-                                    }
-                                }
-                                var next=normalizeCategory(merge(conditions,args,state.getShown()),availableCategories);
-                                if(searched && !sameHardConditions(conditions,next))
-                                    throw new BusinessException(400,"本轮不能擅自放宽硬条件，请保留首次搜索条件");
-                                conditions=next; searched=true;
-                                books=sharedTools!=null?sharedTools.searchBooks(conditions):InternalResults.unwrapBusiness(search.search(conditions),"找书检索");
-                                if(books==null) throw new BusinessException(503,"搜索服务未返回有效结果");
-                                if(knowledge!=null && !state.getPreference().isBlank()) {
-                                    try {
-                                        var combined=new LinkedHashMap<String,BookFinderBook>();
-                                        knowledge.candidates(conditions,state.getPreference()).forEach(b->combined.put(b.id(),b));
-                                        books.forEach(b->combined.putIfAbsent(b.id(),b)); books=new ArrayList<>(combined.values());
-                                    } catch(InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
-                                    catch(Exception e) { output.put("retrievalNotice","知识候选检索暂时不可用，本次使用结构化搜索"); }
-                                }
-                                books=books.stream().filter(b->b.matches(next)&&!state.getShown().contains(b.id())).limit(20).toList();
-                                for(var b:books) candidates.put(b.id(),b);
-                                output.set("conditions",json.valueToTree(conditions));
-                            }
-                            case "searchBookEvidence" -> {
-                                progress.accept("正在检索正文证据并复核版本");
-                                rejectUnknown(args,Set.of("ids","query"));
-                                if(knowledge==null) throw new BusinessException(400,"正文检索尚未启用");
-                                var ids=args.path("ids");
-                                if(!ids.isArray()||ids.isEmpty()||ids.size()>20||!args.path("query").isTextual()) throw new BusinessException(400,"证据查询参数不正确");
-                                var requested=new ArrayList<String>();
-                                for(var id:ids) {
-                                    if(!id.isTextual()||!candidates.containsKey(id.asText())) throw new BusinessException(400,"只能检索本轮搜索候选作品");
-                                    requested.add(id.asText());
-                                }
-                                var missing=requested.stream().distinct().filter(id->!detailed.containsKey(id)).toList();
-                                if(!missing.isEmpty()) {
-                                    if(toolsUsed>=8) throw new BusinessException(422,"找书工具执行次数达到上限");
-                                    check(deadline); toolsUsed++;
-                                    long detailsStart=System.currentTimeMillis();
-                                    var fetched=sharedTools!=null?sharedTools.getBookDetails(missing):InternalResults.unwrapBusiness(content.details(missing),"证据检索前详情补查");
-                                    if(fetched==null) throw new BusinessException(503,"内容服务未返回有效结果");
-                                    for(var b:fetched) if(missing.contains(b.id())) detailed.put(b.id(),b);
-                                    trace.add(Map.of("name","getBookDetails","count",fetched.size(),"durationMs",System.currentTimeMillis()-detailsStart,"reason","EVIDENCE_PREREQUISITE"));
-                                    output.set("detailBooks",modelBooks(fetched,600));
-                                }
-                                var visible=requested.stream().filter(detailed::containsKey).distinct().toList();
-                                if(visible.isEmpty()) throw new BusinessException(400,"候选作品当前不可见，不能检索正文；这不表示知识库未构建");
-                                var query=new BookKnowledge.EvidenceQuery(visible,args.path("query").asText());
-                                com.novel.modules.agent.bookfinder.knowledge.BookKnowledgeService.Retrieval retrieval;
-                                try { retrieval=sharedTools!=null?sharedTools.searchBookEvidence(query):knowledge.retrieve(query); }
-                                catch(InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
-                                catch(Exception e) { retrieval=new com.novel.modules.agent.bookfinder.knowledge.BookKnowledgeService.Retrieval(
-                                        List.of(),requested,"UNAVAILABLE","正文检索暂时不可用，不能确认软偏好"); }
-                                checkedEvidence.addAll(requested);
-                                unavailableEvidence.addAll(retrieval.unavailable());
-                                retrieval.hits().forEach(hit->evidence.put(hit.chunkId(),hit));
-                                output.set("evidence",json.valueToTree(retrieval));
-                                trace.add(Map.of("name",name,"mode",retrieval.mode(),"hits",retrieval.hits().size(),"unavailable",retrieval.unavailable().size(),
-                                        "notice",retrieval.notice(),"durationMs",System.currentTimeMillis()-start));
-                            }
-                            case "getBookDetails" -> {
-                                progress.accept("正在查询简介和标签");
-                                rejectUnknown(args,Set.of("ids"));
-                                var ids=args.path("ids");
-                                if(!ids.isArray()||ids.isEmpty()||ids.size()>20) throw new BusinessException(400,"详情查询需要 1～20 个作品 ID");
-                                var requested=new ArrayList<String>();
-                                var allowed=new HashSet<>(candidates.keySet());
-                                state.getLastBooks().forEach(b->allowed.add(b.id()));
-                                for(var id:ids) {
-                                    if(!id.isTextual()||!allowed.contains(id.asText())) throw new BusinessException(400,"只能查询搜索候选或上轮推荐");
-                                    requested.add(id.asText());
-                                }
-                                books=sharedTools!=null?sharedTools.getBookDetails(requested):InternalResults.unwrapBusiness(content.details(requested),"找书详情");
-                                if(books==null) throw new BusinessException(503,"内容服务未返回有效结果");
-                                for(var b:books) if(requested.contains(b.id())) detailed.put(b.id(),b);
-                            }
-                            default -> throw new BusinessException(400,"不允许调用该工具");
-                        }
-                        output.set("books",modelBooks(books,"searchBooks".equals(name)?120:600));
-                        trace.add(Map.of("name",name,"durationMs",System.currentTimeMillis()-start,"count",books.size()));
-                    } catch(BusinessException e) {
-                        if(e.getCode()>=500) throw e;
-                        output.put("error",e.getMessage());
-                        trace.add(Map.of("name",name,"durationMs",System.currentTimeMillis()-start,"errorCode",e.getCode(),"reason",e.getMessage()));
-                    } catch(com.fasterxml.jackson.core.JsonProcessingException e) { output.put("error","工具参数不是合法 JSON"); }
+                    var output=session.execute(name,call.path("function").path("arguments").asText());
                     messages.addObject().put("role","tool").put("tool_call_id",callId).put("content",output.toString());
                 }
             }
             throw new BusinessException(422,"找书执行次数达到上限");
         } catch(Exception e) {
+            calls=Math.max(calls,session.frameworkStats.calls); tokens=Math.max(tokens,session.frameworkStats.tokens);
+            promptTokens=Math.max(promptTokens,session.frameworkStats.promptTokens); completionTokens=Math.max(completionTokens,session.frameworkStats.completionTokens);
             boolean interrupted=Thread.interrupted();
             try {
                 store.request(ticket.userId(),ticket.request().requestId(),new RequestRecord(ticket.fingerprint(),"failed",null));
                 store.runLog(ticket.userId(),ticket.request().requestId(),Map.of("status","failed","modelCalls",calls,
-                        "toolCalls",toolsUsed,"tokens",tokens,"tools",trace,"errorType",e.getClass().getSimpleName(),
-                        "usage",new Usage(calls,toolsUsed,tokens,System.currentTimeMillis()-ticket.startedAt(),promptTokens,completionTokens),
-                        "model",ticket.config()==null?"mock":ticket.config().model()));
+                        "toolCalls",session.toolsUsed,"tokens",tokens,"tools",session.trace,"errorType",e.getClass().getSimpleName(),
+                        "usage",new Usage(calls,session.toolsUsed,tokens,System.currentTimeMillis()-ticket.startedAt(),promptTokens,completionTokens),
+                        "model",ticket.config()==null?"mock":ticket.config().model(),"engine",engine));
             } catch(RuntimeException cleanup) { log.warn("找书失败记录写入失败 | user={} request={}",ticket.userId(),ticket.request().requestId()); }
             finally { if(interrupted) Thread.currentThread().interrupt(); }
-            log.warn("找书失败 | user={} request={} models={} tools={} errorType={}",ticket.userId(),ticket.request().requestId(),calls,toolsUsed,e.getClass().getSimpleName());
+            log.warn("找书失败 | user={} request={} models={} tools={} errorType={}",ticket.userId(),ticket.request().requestId(),calls,session.toolsUsed,e.getClass().getSimpleName());
             throw e;
         }
+    }
+
+    /** Per-request tool state. Both engines pass through exactly the same business guards. */
+    private final class ToolSession {
+        final Ticket ticket;
+        final Conversation state;
+        final Consumer<String> progress;
+        final boolean continuation;
+        final long deadline;
+        Integer position;
+        List<String> availableCategories=List.of();
+        final List<Map<String,Object>> trace=new ArrayList<>();
+        final Map<String,BookFinderBook> candidates=new LinkedHashMap<>(), detailed=new LinkedHashMap<>();
+        final Map<String,BookKnowledge.Hit> evidence=new LinkedHashMap<>();
+        final Set<String> unavailableEvidence=new HashSet<>(), checkedEvidence=new HashSet<>();
+        BookFinderQuery conditions;
+        boolean searched;
+        int toolsUsed;
+        final com.novel.modules.agent.bookfinder.model.BookFinderAiServices.Stats frameworkStats=new com.novel.modules.agent.bookfinder.model.BookFinderAiServices.Stats();
+        ToolSession(Ticket ticket,Consumer<String> progress,boolean continuation,long deadline) {
+            this.ticket=ticket; this.state=ticket.state(); this.conditions=state.getConditions();
+            this.progress=progress; this.continuation=continuation; this.deadline=deadline;
+        }
+        ObjectNode execute(String name,String raw) throws Exception {
+            check(deadline);
+            if(toolsUsed>=8) throw new BusinessException(422,"找书工具执行次数达到上限");
+            toolsUsed++;
+        long start=System.currentTimeMillis();
+        var output=json.createObjectNode(); output.put("tool",name);
+        try {
+            if(raw.length()>4000) throw new BusinessException(400,"工具参数过长");
+            var args=json.readTree(raw);
+            if(args==null||!args.isObject()) throw new BusinessException(400,"工具参数必须是对象");
+            List<BookFinderBook> books=List.of();
+            switch(name) {
+                case "searchBooks" -> {
+                    progress.accept("正在搜索符合条件的作品");
+                    if(args.has("preferences")) {
+                        if(searched || !args.path("preferences").isArray() || args.path("preferences").size()>6) throw new BusinessException(400,"Invalid preferences");
+                        var prefs=new ArrayList<Preference>();
+                        for(var p:args.path("preferences")) {
+                            if(!p.path("criterion").isTextual() || p.path("criterion").asText().isBlank() || p.path("criterion").asText().length()>60 || !p.path("required").isBoolean()) throw new BusinessException(400,"Invalid preference criterion");
+                            prefs.add(new Preference(p.path("criterion").asText().trim(),p.path("required").asBoolean()));
+                        }
+                        state.setPreferences(prefs);
+                        String combined=prefs.stream().map(Preference::criterion).collect(java.util.stream.Collectors.joining("、"));
+                        state.setPreference(combined.substring(0,Math.min(200,combined.length())));
+                        ((ObjectNode)args).remove("preferences");
+                    }
+                    if(args.has("preference")) {
+                        if(searched) throw new BusinessException(400,"本轮软偏好已确定，后续搜索请省略 preference");
+                        var pref=args.get("preference");
+                        if(!pref.isNull() && (!pref.isTextual() || pref.asText().length()>200)) throw new BusinessException(400,"软偏好最多 200 字");
+                        state.setPreference(pref.isNull()?"":pref.asText());
+                        ((ObjectNode)args).remove("preference");
+                    }
+                    // Similarity is not an authorization to invent an exact tag filter.
+                    // Keep existing explicit tags; move newly inferred tags to soft retrieval.
+                    if(continuation && args.path("tag").isTextual()
+                            && !Objects.equals(conditions.tag(),args.path("tag").asText())
+                            && !ticket.request().message().contains(args.path("tag").asText())) {
+                        String inferred=args.path("tag").asText().trim();
+                        if(!inferred.isBlank() && inferred.length()<=60 && !searched) {
+                            var prefs=new ArrayList<>(state.getPreferences()==null?List.<Preference>of():state.getPreferences());
+                            if(prefs.size()<6 && prefs.stream().noneMatch(p->p.criterion().equals(inferred))) prefs.add(new Preference(inferred,false));
+                            state.setPreferences(prefs);
+                            String preference=state.getPreference().isBlank()?inferred:state.getPreference()+"、"+inferred;
+                            state.setPreference(preference.substring(0,Math.min(200,preference.length())));
+                        }
+                        ((ObjectNode)args).remove("tag");
+                        output.put("filterNotice","未明确要求的新标签已移出硬筛选；相似风格仅作为软偏好，不保证符合");
+                        trace.add(Map.of("name","filterCorrection","field","tag","reason","INFERRED_SIMILARITY_TAG"));
+                    }
+                    if(position!=null) {
+                        String input=ticket.request().message();
+                        if(args.path("keyword").isTextual() && !Objects.equals(conditions.keyword(),args.path("keyword").asText())
+                                && !input.contains(args.path("keyword").asText())) {
+                            String inferred=args.path("keyword").asText().trim();
+                            if(!inferred.isBlank() && inferred.length()<=100 && !searched) {
+                                String combined=state.getPreference().isBlank()?inferred:state.getPreference()+"、"+inferred;
+                                state.setPreference(combined.substring(0,Math.min(200,combined.length())));
+                                var prefs=new ArrayList<>(state.getPreferences()==null?List.<Preference>of():state.getPreferences());
+                                if(inferred.length()<=60 && prefs.size()<6 && prefs.stream().noneMatch(p->p.criterion().equals(inferred)))
+                                    prefs.add(new Preference(inferred,false));
+                                state.setPreferences(prefs);
+                            }
+                            ((ObjectNode)args).remove("keyword");
+                            output.put("keywordNotice","推断的相似风格已转为软偏好，不作为关键词硬过滤");
+                            trace.add(Map.of("name","filterCorrection","field","keyword","reason","INFERRED_SIMILARITY_KEYWORD"));
+                        }
+                        if(!input.matches(".*(完结|连载|状态).*")) ((ObjectNode)args).remove("completed");
+                        if(!input.matches(".*(字|万|篇幅).*")) {
+                            ((ObjectNode)args).remove("minWords"); ((ObjectNode)args).remove("maxWords");
+                        }
+                    }
+                    var next=normalizeCategory(merge(conditions,args,state.getShown()),availableCategories);
+                    if(searched && !sameHardConditions(conditions,next))
+                        throw new BusinessException(400,"本轮不能擅自放宽硬条件，请保留首次搜索条件");
+                    conditions=next; searched=true;
+                    books=sharedTools!=null?sharedTools.searchBooks(conditions):InternalResults.unwrapBusiness(search.search(conditions),"找书检索");
+                    if(books==null) throw new BusinessException(503,"搜索服务未返回有效结果");
+                    if(knowledge!=null && !state.getPreference().isBlank()) {
+                        try {
+                            var combined=new LinkedHashMap<String,BookFinderBook>();
+                            knowledge.candidates(conditions,state.getPreference()).forEach(b->combined.put(b.id(),b));
+                            books.forEach(b->combined.putIfAbsent(b.id(),b)); books=new ArrayList<>(combined.values());
+                        } catch(InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
+                        catch(Exception e) { output.put("retrievalNotice","知识候选检索暂时不可用，本次使用结构化搜索"); }
+                    }
+                    books=books.stream().filter(b->b.matches(next)&&!state.getShown().contains(b.id())).limit(20).toList();
+                    for(var b:books) candidates.put(b.id(),b);
+                    output.set("conditions",json.valueToTree(conditions));
+                }
+                case "searchBookEvidence" -> {
+                    progress.accept("正在检索正文证据并复核版本");
+                    rejectUnknown(args,Set.of("ids","query"));
+                    if(knowledge==null) throw new BusinessException(400,"正文检索尚未启用");
+                    var ids=args.path("ids");
+                    if(!ids.isArray()||ids.isEmpty()||ids.size()>20||!args.path("query").isTextual()) throw new BusinessException(400,"证据查询参数不正确");
+                    var requested=new ArrayList<String>();
+                    for(var id:ids) {
+                        if(!id.isTextual()||!candidates.containsKey(id.asText())) throw new BusinessException(400,"只能检索本轮搜索候选作品");
+                        requested.add(id.asText());
+                    }
+                    var missing=requested.stream().distinct().filter(id->!detailed.containsKey(id)).toList();
+                    if(!missing.isEmpty()) {
+                        if(toolsUsed>=8) throw new BusinessException(422,"找书工具执行次数达到上限");
+                        check(deadline); toolsUsed++;
+                        long detailsStart=System.currentTimeMillis();
+                        var fetched=sharedTools!=null?sharedTools.getBookDetails(missing):InternalResults.unwrapBusiness(content.details(missing),"证据检索前详情补查");
+                        if(fetched==null) throw new BusinessException(503,"内容服务未返回有效结果");
+                        for(var b:fetched) if(missing.contains(b.id())) detailed.put(b.id(),b);
+                        trace.add(Map.of("name","getBookDetails","count",fetched.size(),"durationMs",System.currentTimeMillis()-detailsStart,"reason","EVIDENCE_PREREQUISITE"));
+                        output.set("detailBooks",modelBooks(fetched,600));
+                    }
+                    var visible=requested.stream().filter(detailed::containsKey).distinct().toList();
+                    if(visible.isEmpty()) throw new BusinessException(400,"候选作品当前不可见，不能检索正文；这不表示知识库未构建");
+                    var query=new BookKnowledge.EvidenceQuery(visible,args.path("query").asText());
+                    com.novel.modules.agent.bookfinder.knowledge.BookKnowledgeService.Retrieval retrieval;
+                    try { retrieval=sharedTools!=null?sharedTools.searchBookEvidence(query):knowledge.retrieve(query); }
+                    catch(InterruptedException e) { Thread.currentThread().interrupt(); throw e; }
+                    catch(Exception e) { retrieval=new com.novel.modules.agent.bookfinder.knowledge.BookKnowledgeService.Retrieval(
+                            List.of(),requested,"UNAVAILABLE","正文检索暂时不可用，不能确认软偏好"); }
+                    checkedEvidence.addAll(requested);
+                    unavailableEvidence.addAll(retrieval.unavailable());
+                    retrieval.hits().forEach(hit->evidence.put(hit.chunkId(),hit));
+                    output.set("evidence",json.valueToTree(retrieval));
+                    trace.add(Map.of("name",name,"mode",retrieval.mode(),"hits",retrieval.hits().size(),"unavailable",retrieval.unavailable().size(),
+                            "notice",retrieval.notice(),"durationMs",System.currentTimeMillis()-start));
+                }
+                case "getBookDetails" -> {
+                    progress.accept("正在查询简介和标签");
+                    rejectUnknown(args,Set.of("ids"));
+                    var ids=args.path("ids");
+                    if(!ids.isArray()||ids.isEmpty()||ids.size()>20) throw new BusinessException(400,"详情查询需要 1～20 个作品 ID");
+                    var requested=new ArrayList<String>();
+                    var allowed=new HashSet<>(candidates.keySet());
+                    state.getLastBooks().forEach(b->allowed.add(b.id()));
+                    for(var id:ids) {
+                        if(!id.isTextual()||!allowed.contains(id.asText())) throw new BusinessException(400,"只能查询搜索候选或上轮推荐");
+                        requested.add(id.asText());
+                    }
+                    books=sharedTools!=null?sharedTools.getBookDetails(requested):InternalResults.unwrapBusiness(content.details(requested),"找书详情");
+                    if(books==null) throw new BusinessException(503,"内容服务未返回有效结果");
+                    for(var b:books) if(requested.contains(b.id())) detailed.put(b.id(),b);
+                }
+                default -> throw new BusinessException(400,"不允许调用该工具");
+            }
+            output.set("books",modelBooks(books,"searchBooks".equals(name)?120:600));
+            trace.add(Map.of("name",name,"durationMs",System.currentTimeMillis()-start,"count",books.size()));
+        } catch(BusinessException e) {
+            if(e.getCode()>=500) throw e;
+            output.put("error",e.getMessage());
+            trace.add(Map.of("name",name,"durationMs",System.currentTimeMillis()-start,"errorCode",e.getCode(),"reason",e.getMessage()));
+        } catch(com.fasterxml.jackson.core.JsonProcessingException e) { output.put("error","工具参数不是合法 JSON"); }
+            return output;
+        }
+    }
+
+    private Answer completeResult(Ticket ticket,JsonNode result,ToolSession session,Usage usage) throws Exception {
+        var state=ticket.state();
+        var position=session.position;
+        var progress=session.progress;
+        // Recover actionable basic or optional-similarity candidates when the
+        // model unnecessarily asks for more details after finding candidates.
+        // Never synthesize style judgments or bypass the final visibility check.
+        if(result.path("recommendations").isEmpty() && session.searched && !session.candidates.isEmpty()
+                && ((state.getPreference().isBlank() && (state.getPreferences()==null || state.getPreferences().isEmpty()))
+                || (position!=null && (state.getPreferences()==null || state.getPreferences().stream().noneMatch(Preference::required))))) {
+            var eligible=new ArrayList<String>();
+            for(var b:session.candidates.values())
+                if(b.matches(session.conditions) && !state.getShown().contains(b.id()) && eligible.size()<20) eligible.add(b.id());
+            var missing=eligible.stream().filter(id->!session.detailed.containsKey(id)).toList();
+            if(!missing.isEmpty()) {
+                check(session.deadline);
+                if(session.toolsUsed>=8) throw new BusinessException(422,"找书执行次数达到上限，请简化条件后重试");
+                session.toolsUsed++;
+                long started=System.currentTimeMillis();
+                var books=sharedTools!=null?sharedTools.getBookDetails(missing):InternalResults.unwrapBusiness(content.details(missing),"候选详情补查");
+                if(books==null) throw new BusinessException(503,"内容服务未返回有效结果");
+                for(var b:books) if(missing.contains(b.id())) session.detailed.put(b.id(),b);
+                session.trace.add(Map.of("name","getBookDetails","durationMs",System.currentTimeMillis()-started,
+                        "count",books.size(),"reason","EMPTY_RECOMMENDATIONS_RECOVERY"));
+            }
+            var recovered=json.createArrayNode();
+            for(var id:eligible) {
+                var b=session.detailed.get(id);
+                if(b!=null && b.matches(session.conditions)) recovered.addObject().put("id",id).put("quote","");
+                if(recovered.size()==5) break;
+            }
+            if(!recovered.isEmpty()) {
+                ((ObjectNode)result).set("recommendations",recovered);
+                ((ObjectNode)result).put("needsClarification",false);
+                session.trace.add(Map.of("name","recommendationRecovery","count",recovered.size(),"reason",
+                        state.getPreference().isBlank()?"NO_SOFT_PREFERENCE":"OPTIONAL_SIMILARITY_CANDIDATES"));
+            }
+        }
+        progress.accept("正在核对作品可见性和筛选条件");
+        var answer=finish(ticket,result,session.conditions,session.candidates,session.detailed,session.evidence,session.checkedEvidence,session.unavailableEvidence,
+                new Usage(usage.modelCalls(),session.toolsUsed,usage.totalTokens(),System.currentTimeMillis()-ticket.startedAt(),usage.promptTokens(),usage.completionTokens()));
+        if(answer.recommendations().isEmpty() && session.checkedEvidence.isEmpty()
+                && session.trace.stream().anyMatch(entry->"searchBookEvidence".equals(entry.get("name")) && entry.containsKey("errorCode")))
+            answer=new Answer(answer.conversationId(),answer.requestId(),"本次正文核对未成功执行，无法确认相似偏好；这不表示知识库未构建。请重试或调整条件。",
+                    answer.conditions(),List.of(),true,answer.mock(),answer.usage());
+        check(session.deadline);
+        commit(ticket,answer);
+        try { store.runLog(ticket.userId(),ticket.request().requestId(),Map.of("usage",answer.usage(),"tools",session.trace,"status","done","mock",model.mock(),"model",ticket.config()==null?"mock":ticket.config().model(),"startedAt",ticket.startedAt(),"engine",engine)); }
+        catch(RuntimeException e) { log.warn("找书运行记录写入失败 | user={} request={}",ticket.userId(),ticket.request().requestId()); }
+        log.info("找书完成 | user={} request={} models={} tools={} tokens={} durationMs={}",
+                ticket.userId(),ticket.request().requestId(),usage.modelCalls(),session.toolsUsed,usage.totalTokens(),answer.usage().durationMs());
+        return answer;
     }
 
     private Answer finish(Ticket t, JsonNode result, BookFinderQuery conditions,
