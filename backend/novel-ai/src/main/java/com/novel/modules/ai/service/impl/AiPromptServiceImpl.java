@@ -50,6 +50,7 @@ public class AiPromptServiceImpl implements AiPromptService {
 
     @Override
     public AiPromptTemplate requireForScene(AiScene scene) {
+        requireActiveTemplateScene(scene);
         /*
          * ★ 用 selectList + 取第一条，而不是 selectOne：
          *   MyBatis-Plus 的 selectOne 在命中多行时抛 TooManyResultsException ——
@@ -79,7 +80,9 @@ public class AiPromptServiceImpl implements AiPromptService {
 
     @Override
     public List<AiPromptTemplateVO> list(AiScene scene) {
+        if (scene != null) requireActiveTemplateScene(scene);
         List<AiPromptTemplate> rows = templateMapper.selectList(Wrappers.<AiPromptTemplate>lambdaQuery()
+                .in(AiPromptTemplate::getScene, AiScene.AUDIT, AiScene.SUMMARY)
                 .eq(scene != null, AiPromptTemplate::getScene, scene)
                 .orderByAsc(AiPromptTemplate::getScene)
                 .orderByAsc(AiPromptTemplate::getSort)
@@ -93,6 +96,7 @@ public class AiPromptServiceImpl implements AiPromptService {
 
     @Override
     public Long create(AiPromptSaveDTO dto) {
+        requireActiveTemplateScene(dto.getScene());
         PromptRenderer.validateTemplate(dto.getScene(), dto.getSystemPrompt(), dto.getUserTemplate());
         assertNameAvailable(dto.getScene(), dto.getName(), null);
 
@@ -111,10 +115,12 @@ public class AiPromptServiceImpl implements AiPromptService {
 
     @Override
     public void update(Long id, AiPromptSaveDTO dto) {
+        requireActiveTemplateScene(dto.getScene());
         AiPromptTemplate exists = templateMapper.selectById(id);
         if (exists == null) {
             throw new BusinessException(ResultCode.AI_PROMPT_NOT_FOUND, "要修改的提示词模板不存在，请刷新后重试。");
         }
+        requireActiveTemplateScene(exists.getScene());
         PromptRenderer.validateTemplate(dto.getScene(), dto.getSystemPrompt(), dto.getUserTemplate());
         // ★ excludeId 必须传：不排除自己的话，「原样保存」「只改个排序」都会被自己的唯一键挡住
         assertNameAvailable(dto.getScene(), dto.getName(), id);
@@ -136,6 +142,7 @@ public class AiPromptServiceImpl implements AiPromptService {
     @Override
     public RenderedPromptVO preview(AiPromptPreviewDTO dto) {
         AiScene scene = dto.getScene();
+        requireActiveTemplateScene(scene);
         AiPromptTemplate template = dto.getId() == null
                 ? requireForScene(scene)
                 : requireByIdAndScene(dto.getId(), scene);
@@ -164,6 +171,13 @@ public class AiPromptServiceImpl implements AiPromptService {
      * 静默回退会让管理员以为看的是刚点的那条、实际看的是另一条，
      * 然后据此判断「模板没问题」。
      */
+    private static void requireActiveTemplateScene(AiScene scene) {
+        if (scene != AiScene.AUDIT && scene != AiScene.SUMMARY) {
+            throw new BusinessException(ResultCode.PARAM_ERROR,
+                    "旧写作助手模板已退役；写作 Agent 使用独立的任务提示词");
+        }
+    }
+
     private AiPromptTemplate requireByIdAndScene(Long id, AiScene scene) {
         AiPromptTemplate template = templateMapper.selectById(id);
         if (template == null || template.getScene() != scene) {

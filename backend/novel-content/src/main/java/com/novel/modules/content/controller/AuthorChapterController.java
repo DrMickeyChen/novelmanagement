@@ -151,9 +151,9 @@ public class AuthorChapterController {
                     ★ 正文**可以存空串**（编辑器「全选删除、准备重写」那一步要能存）。
                     空正文的校验在提交审核那一步。""")
     @PutMapping("/api/author/chapters/{id}")
-    public Result<Void> save(@PathVariable Long id, @Valid @RequestBody ChapterSaveDTO dto) {
+    public Result<Long> save(@PathVariable Long id, @Valid @RequestBody ChapterSaveDTO dto) {
         chapterService.saveContent(id, dto);
-        return Result.success("保存成功", null);
+        return Result.success("保存成功", dto.getSavedVersion());
     }
 
     @Operation(

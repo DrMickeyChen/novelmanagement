@@ -1,0 +1,172 @@
+{
+    "date":  "2026-10-14",
+    "kind":  "implementation-verification",
+    "backend":  {
+                    "tests":  155,
+                    "passed":  152,
+                    "skipped":  3,
+                    "failures":  0,
+                    "suites":  [
+                                   {
+                                       "name":  "com.novel.common.internal.WritingTextTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.internal.controller.BookFinderDatabaseSmokeTest",
+                                       "tests":  2,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  2
+                                   },
+                                   {
+                                       "name":  "com.novel.internal.controller.InternalAiContentControllerTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.internal.controller.InternalBookFinderControllerTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.internal.controller.InternalBookKnowledgeControllerTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.internal.controller.WritingChapterDatabaseTest",
+                                       "tests":  5,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.ai.config.AiHttpBoundaryTest",
+                                       "tests":  6,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderAgentTest",
+                                       "tests":  43,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderControllerHttpTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderEvaluationTest",
+                                       "tests":  3,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderFrameworkRegressionTest",
+                                       "tests":  43,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderIntentTest",
+                                       "tests":  2,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderLangChainHttpTest",
+                                       "tests":  5,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderMcpTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderModelTest",
+                                       "tests":  1,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.BookFinderRedisSmokeTest",
+                                       "tests":  1,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  1
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.knowledge.PreferenceEvidenceTest",
+                                       "tests":  3,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.bookfinder.knowledge.RetrievalModelsTest",
+                                       "tests":  6,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.writing.WritingChecksTest",
+                                       "tests":  3,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.writing.WritingDatabaseTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   },
+                                   {
+                                       "name":  "com.novel.modules.agent.writing.WritingModelHttpTest",
+                                       "tests":  4,
+                                       "failures":  0,
+                                       "errors":  0,
+                                       "skipped":  0
+                                   }
+                               ]
+                },
+    "frontend":  {
+                     "eventTests":  4,
+                     "passed":  4,
+                     "build":  "passed"
+                 },
+    "mysql":  "UUID scratch schemas, actual MySQL row locks; no existing novel data modified by tests",
+    "migration":  "chapter version column and six tables applied to development novel schema",
+    "paidModelQuality":  "not executed",
+    "browserVisualVerification":  "not executed",
+    "codeHashes":  {
+                       "service":  "553524F52C7D182F1EB250814644D143BFB6A4B273932CCCC6F3676B8624F823",
+                       "store":  "7A415B92AEF0EC0E45FB037CD352DBC4992936632988AAEA7259E1CADD963BD1"
+                   }
+}

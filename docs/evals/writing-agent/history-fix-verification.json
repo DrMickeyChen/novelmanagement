@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-14",
+  "scope": "empty-outline history loading, Feign business errors, delegated worker identity",
+  "backend": {"tests": 25, "passed": 25, "failed": 0, "skipped": 0},
+  "suites": {
+    "WritingTextTest": 4,
+    "WritingChapterDatabaseTest": 6,
+    "WritingChecksTest": 3,
+    "WritingDatabaseTest": 6,
+    "WritingModelHttpTest": 4,
+    "WritingRemoteErrorsTest": 2
+  },
+  "frontendBuild": "passed",
+  "databaseTests": "isolated UUID schemas on actual MySQL",
+  "realPaidModel": "not called",
+  "runtimeRestart": "pending user restart of novel-content and novel-ai"
+}

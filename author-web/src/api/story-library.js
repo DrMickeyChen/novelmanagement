@@ -1,0 +1,10 @@
+import request from '@/utils/request'
+export const deleteEntry = (novel,id,version) => request.delete(`/author/novels/${novel}/story-library/${id}`,{params:{expectedVersion:version}})
+export const getLibrary = novel => request.get(`/author/novels/${novel}/story-library`)
+export const saveEntry = (novel, id, data) => id ? request.put(`/author/novels/${novel}/story-library/${id}`, data) : request.post(`/author/novels/${novel}/story-library`, data)
+export const getRevisions = (novel, id) => request.get(`/author/novels/${novel}/story-library/${id}/revisions`)
+export const getWritingChapters = (chapter, nodeId) => request.get(`/ai/writing/resources/${chapter}`, { params: { nodeId } })
+export const previewContext = (chapter, data) => request.post(`/ai/writing/resources/${chapter}/preview`, data)
+export const buildPrivateIndex = (chapter, data) => request.post(`/ai/writing/resources/${chapter}/index`, data, { timeout: 180000 })
+export const getIndexJob = id => request.get(`/ai/writing/resources/index-jobs/${id}`)
+export const clearPrivateIndex = (chapter, nodeId) => request.delete(`/ai/writing/resources/${chapter}/index`, { params: { nodeId } })

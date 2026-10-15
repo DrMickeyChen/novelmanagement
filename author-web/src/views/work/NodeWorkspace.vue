@@ -40,13 +40,15 @@
  * 正确的位置是路由的**异步**离开守卫：返回一个 Promise，
  * router 会等它 resolve 之后再导航。
  */
-import { computed, ref, inject } from 'vue'
+import { computed, ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { createChapterFromNode } from '@/api/outline'
 import ChapterEditor from '@/components/ChapterEditor.vue'
+import WritingAgentPanel from '@/components/writing/WritingAgentPanel.vue'
 import OutlineEditor from '@/components/OutlineEditor.vue'
-import AiPanel from '@/components/AiPanel.vue'
+import PaneDivider from '@/components/PaneDivider.vue'
+import { usePaneWidth } from '@/composables/usePaneWidth'
 
 const props = defineProps({
   novelId: { type: Number, required: true },
@@ -72,6 +74,9 @@ const chapterRef = ref(null)
 const outlineRef = ref(null)
 
 const creating = ref(false)
+const agentOpen = ref(window.innerWidth >= 1200)
+const nodeElement = ref(null)
+const { width: agentWidth, maximum: agentMax, dragging: agentDragging, start: resizeAgent, nudge: nudgeAgent, reset: resetAgent } = usePaneWidth({ key: 'author-pane:writing-agent', initial: 380, min: 280, max: 640, reserve: size => size < 660 || window.innerWidth < 1200 ? 8 : 368, container: nodeElement, direction: -1 })
 
 const branch = computed(() => {
   const n = props.node
@@ -140,190 +145,14 @@ function handleChapterSaved() {
   props.node.chapterStatusDesc = editor.statusDesc
 }
 
-/* ==================== S12：AI 面板 ==================== */
-
-/**
- * 往大纲树里批量建节点的能力。
- *
- * ★ 树在 `OutlineTree` 里、这个组件在 `<router-view>` 后面，
- *   中间隔着两层 —— 所以走 `provide/inject`（沿**组件树**传播，
- *   不受模板层级影响）。详见 `WorkLayout` 里 `provide` 那段说明。
- */
-const outlineOps = inject('outlineOps', null)
-
-/**
- * 哪些 AI 动作在当前分支下有意义。
- *
- * ★★ 这个判断**只能**在这一层做：它同时知道「分支是什么」和
- *    「哪个编辑器挂着」，而 AI 面板两样都不知道。
- *
- * ★ 与其让作者等它生成完几百字再说「这里放不下」，不如事先禁用 ——
- *   一个点了没反应的按钮比一个灰掉的按钮更让人困惑。
- *
- * ★ `inspire` 只在有「剧情笔记」输入框的分支出现：
- *   分支①②里那个折叠面板是**挂着**的（el-collapse 用 v-show），
- *   所以 branch === 'chapter' 时它可用；分支②（还没建正文）
- *   整个是 el-empty，没有笔记框。
- */
-const aiScenes = computed(() => {
-  switch (branch.value) {
-    case 'chapter':
-      return ['outline', 'write', 'inspire', 'polish']
-    case 'outline':
-      return ['outline', 'inspire']
-    case 'empty-chapter':
-      return ['outline']
-    default:
-      return []
-  }
-})
-
-/** 取一段文本的**末尾**若干字，尽量从段落边界开始 */
-function tailOf(text, max) {
-  const t = String(text ?? '')
-  if (t.length <= max) return t
-  const cut = t.slice(-max)
-  // ★ 从第一个换行之后开始切 —— 否则发给 AI 的第一句是半截的，
-  //   它多半会把那半句当成开头照抄回来
-  const nl = cut.indexOf('\n')
-  return nl >= 0 ? cut.slice(nl + 1) : cut
+async function prepareWritingAgent(action) {
+  if (!chapterRef.value || !props.node?.chapterId) throw new Error('请先创建本章正文')
+  if (outlineRef.value?.flush && !await outlineRef.value.flush()) throw new Error('当前章节剧情笔记保存失败，请先保存剧情笔记')
+  return chapterRef.value.withSavedLock(action)
 }
 
-/**
- * 拼一次 AI 请求。
- *
- * ★★ 这个函数放在这里而不是 AiPanel 里，是因为它要的东西
- *    （正文内容、用户选中的那段）**只有这个组件拿得到**。
- *    面板拿到的只是 `{prompt, context}` 两个字符串 ——
- *    它甚至不知道 context 是从哪来的。
- *
- * ★ 返回 `{error}` 而不是抛异常：「没选中就点润色」是**操作顺序**
- *   问题，不是程序错误；提示语由最懂上下文的人（这里）来写。
- */
-function gatherAiRequest(scene) {
-  const n = props.node
-  if (!n) return { error: '请先在左侧选中一个节点' }
-
-  /*
-   * ★★ E1：三个 id —— 让【服务端】去查作品名 / 当前大纲节点 / 前情摘要。
-   *
-   *   这三样内容都在服务端自己的库里（novel / novel_outline / ai_summary），
-   *   所以这里只报「是哪本书的哪个节点」，**不把内容传上去**。
-   *   ★ 传上去的话会有两个来源，而「模板里的 {{outline}} 到底来自哪一份」
-   *     将没有任何办法回答。
-   *
-   * ★★★ 三个 id 一律**无条件带上**（而不是在每个场景的 return 里各写一行）：
-   *   分散写的话，漏掉的那个场景的症状是「服务端少拼了一段上下文」——
-   *   提示词照样渲染、模型照样生成、界面一切正常，**没有任何地方会报错**。
-   *   用展开写在一处，这个错法就构造不出来。
-   *
-   * ★ 用 `?? undefined` 而不是直接给值：`undefined` 在 JSON 里【整个键消失】，
-   *   而 `null` 会把键发出去。后端两者都当「没给」，但少发一个键
-   *   让「这次请求到底带了什么」在抓包时一眼可读。
-   */
-  const ids = {
-    novelId: props.novelId ?? undefined,
-    nodeId: n.id ?? undefined,
-    chapterId: n.chapterId ?? undefined,
-  }
-
-  // ★ 节点上的剧情笔记就是这一段的写作意图，是「生成大纲」和
-  //   「提供灵感」最好的上下文。截到 2000 字 —— 后端 context 上限是 8000，
-  //   留出富余给别的内容。
-  const note = String(n.content ?? '').slice(0, 2000)
-
-  if (scene === 'outline') {
-    return {
-      ...ids,
-      prompt: `为「${n.title}」生成下一级大纲`,
-      context: note || undefined,
-    }
-  }
-
-  if (scene === 'write') {
-    /*
-     * ★★ 续写的上下文是**正文的末尾**，不是全文 ——
-     *   后端 context 上限 8000 字，而一章轻松超过它。
-     *   截断时保留末尾（越靠近要接的地方越相关），
-     *   和 `tailOf` 里那段「从段落边界开始」是同一个考虑。
-     */
-    const tail = tailOf(chapterRef.value?.content, 2000)
-    if (!tail) return { error: '正文还是空的，先写几句再让 AI 接着写' }
-    return {
-      ...ids,
-      prompt: `接着往下写「${chapterRef.value?.title || n.title}」`,
-      context: tail,
-    }
-  }
-
-  if (scene === 'polish') {
-    /*
-     * ★★ 润色的输入是**用户选中的那段**，不是整章。
-     *   发整章过去的话，返回的会是整章的改写，而「采纳」只会
-     *   把它塞进那个小小的选区里 —— 上下文和落点对不上，
-     *   出来的是彻底的乱码。
-     */
-    const selected = chapterRef.value?.getSelection?.() ?? ''
-    if (!selected) return { error: '请先在正文里选中要润色的那一段，再点「润色段落」' }
-    return { ...ids, prompt: '润色下面这段文字', context: selected }
-  }
-
-  if (scene === 'inspire') {
-    return {
-      ...ids,
-      prompt: `为「${n.title}」提供几个剧情走向`,
-      context: note || undefined,
-    }
-  }
-
-  return { error: '未知的 AI 操作' }
-}
-
-/**
- * 采纳 AI 的产出 —— 四个场景四个落点。
- *
- * ★★ outline 走的是**批量建节点**，和另外三个完全不同：
- *   它改的是树，不是当前编辑器。而树在另一个组件里，
- *   所以只能经 `outlineOps`（来自 WorkLayout 的 provide）转过去。
- *
- * ★ 这里的每个分支都已经在 `aiScenes` 里保证了「目标存在」，
- *   所以 `?.` 后面那个兜底提示理论上到不了 —— 但保留它，
- *   因为 `aiScenes` 和这个函数分处两处，将来改了一处忘了另一处时，
- *   静默什么都不发生是最糟的结果。
- */
-async function handleAdopt({ scene, text, payload }) {
-  if (scene === 'outline') {
-    await outlineOps?.addTree(props.node?.id ?? null, payload)
-    return
-  }
-
-  if (scene === 'write') {
-    if (!chapterRef.value?.appendText?.(text)) {
-      ElMessage.warning('这段正文现在不能修改')
-    }
-    return
-  }
-
-  if (scene === 'polish') {
-    // ★ replaceSelection 自己会在「没选中」时提示并返回 false，
-    //   这里不重复提示 —— 那是它更清楚的事
-    chapterRef.value?.replaceSelection?.(text)
-    return
-  }
-
-  if (scene === 'inspire') {
-    if (!outlineRef.value?.appendText?.(text)) {
-      ElMessage.warning('这个节点现在没有可以写笔记的地方')
-      return
-    }
-    /*
-     * ★ 笔记框在折叠面板里，而它默认只在**本来就有笔记时**展开。
-     *   不展开的话，作者点了采纳，屏幕上什么都不动 ——
-     *   他只能认为没生效，然后再点一次（于是笔记里多了一份重复的）。
-     */
-    noteOpen.value = ['note']
-    return
-  }
+function applyWritingAgent(result) {
+  chapterRef.value?.applyAgentResult(result)
 }
 
 /* ==================== 离开前保存 ==================== */
@@ -378,9 +207,14 @@ onBeforeRouteLeave(async () => {
 </script>
 
 <template>
-  <div class="node-workspace">
+  <div ref="nodeElement" class="node-workspace" :class="{ 'chapter-workspace': branch === 'chapter' }" :style="{ '--agent-width': `${agentWidth}px` }">
     <!-- ① 正文（下面挂这个节点的剧情笔记） -->
     <template v-if="branch === 'chapter'">
+      <div class="editor-column">
+        <div class="editor-toolbar">
+          <span>正文与剧情笔记</span>
+          <el-button size="small" :aria-expanded="agentOpen" @click="agentOpen = !agentOpen">{{ agentOpen ? '收起写作助手' : '打开写作助手' }}</el-button>
+        </div>
       <ChapterEditor
         ref="chapterRef"
         :novel-id="novelId"
@@ -400,6 +234,11 @@ onBeforeRouteLeave(async () => {
           <OutlineEditor ref="outlineRef" :node="node" />
         </el-collapse-item>
       </el-collapse>
+      </div>
+      <PaneDivider v-show="agentOpen" class="agent-divider" label="写作助手宽度" :width="agentWidth" :min="280" :max="agentMax" :dragging="agentDragging" @start="resizeAgent" @nudge="nudgeAgent" @reset="resetAgent" />
+      <aside v-show="agentOpen" class="agent-column" aria-label="本章写作助手">
+        <WritingAgentPanel :key="`writing-${node.id}`" :novel-id="novelId" :node="node" :prepare="prepareWritingAgent" :apply="applyWritingAgent" @close="agentOpen = false" />
+      </aside>
     </template>
 
     <!-- ② 还没写正文的「章」节点 -->
@@ -428,40 +267,28 @@ onBeforeRouteLeave(async () => {
     <!-- 没有选中节点（这本书还没有大纲） -->
     <el-empty v-else :image-size="90" description="左侧选择一个大纲节点" />
 
-    <!--
-      ★★ AI 面板挂在**所有分支的下面**，不在任何一个分支里面。
-        因为它对四个分支的行为是一样的（只是可用的动作不同），
-        写进分支里就要复制四份。
-
-      ★ `v-if="aiScenes.length"` 而不是 `v-if="node"`：
-        没有节点时它是空的，渲染出来只是一个标题加一句「作用于：未选中节点」，
-        不如整块不出现。
-
-      ★ `:key="node.id"` 是必须的 —— 见 AiPanel 里那个 watch(output)
-        的说明之外的另一半：换节点时如果不重建，上一次的生成结果
-        （`output` / `result` / `scene`）会**留在面板上**，
-        作者在新节点上看到的是上一个节点的 AI 输出，而「采纳」
-        会把它塞进**新节点**的正文里。这个 bug 不报错，只是内容串了。
-        （正常情况下 NodeWorkspace 整个会被 router-view 的 key 重建，
-          轮不到这里生效 —— 但只要有人把那个 key 去掉，这里就是兜底。）
-    -->
-    <AiPanel
-      v-if="aiScenes.length"
-      :key="node?.id ?? 'none'"
-      :node="node"
-      :scenes="aiScenes"
-      :gather="gatherAiRequest"
-      @adopt="handleAdopt"
-    />
   </div>
 </template>
 
 <style scoped>
 .node-workspace {
-  /* ★ 不写 height: 100%。它在一个 overflow: auto 的滚动容器里，
-     撑满高度会让长正文被截在容器高度上（滚动条反而消失）。
-     滚动归外层管，这里只管内容。 */
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
   padding: 16px;
+}
+
+.chapter-workspace { display: flex; position: relative; padding: 0; overflow: hidden; }
+.editor-column { flex: 1; min-width: 0; min-height: 0; padding: 16px; overflow-y: auto; overscroll-behavior-y: contain; }
+.editor-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; color: #909399; }
+.agent-column { flex: 0 0 var(--agent-width); width: var(--agent-width); min-height: 0; border-left: 1px solid #e4e7ed; background: #fafbfe; }
+@media (max-width: 1199px) {
+  .agent-column { position: absolute; right: 0; top: 0; bottom: 0; width: min(var(--agent-width), 100%); z-index: 5; box-shadow: -6px 0 20px #00000012; }
+  .agent-divider { position: absolute; right: min(var(--agent-width, 280px), 100%); top: 0; bottom: 0; z-index: 6; }
+}
+@container (max-width: 660px) {
+  .agent-column { position: absolute; right: 0; top: 0; bottom: 0; width: min(var(--agent-width), 100%); z-index: 5; box-shadow: -6px 0 20px #00000012; }
+  .agent-divider { position: absolute; right: min(var(--agent-width), 100%); top: 0; bottom: 0; z-index: 6; }
 }
 
 .note-collapse {

@@ -30,6 +30,8 @@ import { useUserStore } from '@/stores/user'
 import { getMyNovels } from '@/api/novel'
 import { READER_WEB_URL, ADMIN_WEB_URL } from '@/utils/auth'
 import { novelStatusType } from '@/utils/status'
+import PaneDivider from '@/components/PaneDivider.vue'
+import { usePaneWidth } from '@/composables/usePaneWidth'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,6 +43,8 @@ const failed = ref(false)
 
 /** 左侧栏折叠（作者想要更大的编辑区时会收起来） */
 const collapsed = ref(false)
+const layoutBody = ref(null)
+const { width: booksWidth, maximum: booksMax, dragging: booksDragging, start: resizeBooks, nudge: nudgeBooks, reset: resetBooks } = usePaneWidth({ key: 'author-pane:books', initial: 232, min: 180, max: 400, reserve: 720, container: layoutBody })
 
 /**
  * 当前选中的作品 id。
@@ -170,14 +174,14 @@ async function handleLogout() {
       </div>
     </el-header>
 
-    <el-container>
+    <el-container ref="layoutBody" class="layout-body">
       <!--
         ★ 折叠时宽度给 0 而不是把 el-aside 干掉：
           直接 v-if 掉的话，它内部的滚动位置和加载状态会跟着丢，
           展开时又要重新拉一次列表。
       -->
-      <el-aside :width="collapsed ? '0px' : '232px'" class="aside">
-        <div class="aside-inner">
+      <el-aside :width="collapsed ? '0px' : `${booksWidth}px`" class="aside" :class="{ resizing: booksDragging }">
+        <div class="aside-inner" :style="{ width: `${booksWidth}px` }">
           <div class="aside-head">
             <span class="aside-title">我的作品</span>
             <el-button
@@ -232,6 +236,7 @@ async function handleLogout() {
           </div>
         </div>
       </el-aside>
+      <PaneDivider v-if="!collapsed" label="作品栏宽度" :width="booksWidth" :min="180" :max="booksMax" :dragging="booksDragging" @start="resizeBooks" @nudge="nudgeBooks" @reset="resetBooks" />
 
       <!-- 折叠把手：贴在左栏右边缘的一条窄条 -->
       <div class="collapse-handle" :title="collapsed ? '展开作品栏' : '收起作品栏'" @click="collapsed = !collapsed">
@@ -247,10 +252,19 @@ async function handleLogout() {
 
 <style scoped>
 .layout {
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.layout-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .header {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -277,6 +291,7 @@ async function handleLogout() {
 
 /* ★ overflow: hidden 是折叠动画的关键 —— 宽度收到 0 时内容不能溢出到外面 */
 .aside {
+  min-height: 0;
   background: #fff;
   border-right: 1px solid #e4e7ed;
   transition: width 0.2s;
@@ -285,14 +300,16 @@ async function handleLogout() {
 }
 
 .aside-inner {
-  width: 232px;
   padding: 14px 12px;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
 }
 
 .aside-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -307,7 +324,8 @@ async function handleLogout() {
 .novel-list {
   flex: 1;
   overflow-y: auto;
-  min-height: 120px;
+  min-height: 0;
+  overscroll-behavior-y: contain;
 }
 
 .aside-tip {
@@ -353,6 +371,7 @@ async function handleLogout() {
 }
 
 .novel-meta {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -365,7 +384,7 @@ async function handleLogout() {
 .novel-title {
   font-size: 14px;
   color: #303133;
-  max-width: 150px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -389,7 +408,13 @@ async function handleLogout() {
   color: #606266;
 }
 
+.aside.resizing { transition: none; }
+
 .main {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior-y: contain;
   background: #f5f7fa;
   padding: 20px;
 }

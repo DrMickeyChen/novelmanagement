@@ -92,6 +92,13 @@ const routes = [
         meta: { title: '章节管理' },
       },
       {
+        path: 'novel/:novelId/story-library',
+        name: 'storyLibrary',
+        component: () => import('@/views/story-library/index.vue'),
+        meta: { title: '故事资料库' },
+      },
+      { path: 'novel/:novelId/writing-lab', name: 'writingLab', component: () => import('@/views/writing-lab/index.vue'), meta: { title: '写作资料与扩展' } },
+      {
         /*
          * ★★★ 工作台 —— 三层里中间那层（见文件头那段）。
          *

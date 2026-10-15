@@ -1,0 +1,41 @@
+{
+  "feature": "写作会话内 MCP 工具实时开关",
+  "date": "2026-10-15",
+  "backend": {
+    "result": "BUILD SUCCESS",
+    "finishedAt": "2026-10-15T17:14:28+08:00",
+    "tests": 34,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "log": "live-tools-tests.log",
+    "suites": {
+      "WritingDatabaseTest": 16,
+      "WritingExtensionsTest": 9,
+      "WritingModelHttpTest": 8,
+      "WritingWiringTest": 1
+    },
+    "coverage": [
+      "Running task tool selections change without changing task id, status or worker lease",
+      "Independent toolsVersion rejects stale edits across windows",
+      "Worker output writes retain the latest tool permissions",
+      "Cross-owner task updates are rejected",
+      "Only individually selected and connection-authorized tools enter the model catalog",
+      "Real AI Services SDK requests reflect tools enabled or disabled between model turns",
+      "Revocation during initialization prevents tools/call dispatch",
+      "Revocation while a remote call is in flight discards its returned reference",
+      "Disabled calls return an explicit unavailable result instead of invented references"
+    ]
+  },
+  "frontend": {
+    "result": "passed",
+    "command": "npm run build",
+    "log": "live-tools-frontend.log",
+    "browserAcceptance": "not_run"
+  },
+  "fixtures": "UUID-isolated MySQL schema, local HTTP model fixture and in-memory MCP transport",
+  "paidModelCalls": 0,
+  "actualThirdPartyMcpCalls": 0,
+  "deployment": "Restart novel-ai and refresh author frontend. No database migration required.",
+  "boundary": "Changes affect subsequent planning/checking model turns and tool permission checks. Already-dispatched remote requests cannot be recalled or refunded."
+}

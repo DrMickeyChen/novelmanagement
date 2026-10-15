@@ -34,6 +34,8 @@ import lombok.ToString;
 @Schema(description = "章节详情（含正文）")
 public class ChapterDetailVO extends ChapterVO {
 
+    private Long contentVersion;
+
     /**
      * 正文。
      *
@@ -81,6 +83,7 @@ public class ChapterDetailVO extends ChapterVO {
         ChapterDetailVO vo = new ChapterDetailVO();
         // ★ 父类那些字段走父类的 fillFrom，这里一个字都不重复
         vo.fillFrom(entity, novelTitle);
+        vo.setContentVersion(entity.getContentVersion());
         vo.setContent(content);
         vo.setAuditRemark(entity.getAuditRemark());
         return vo;

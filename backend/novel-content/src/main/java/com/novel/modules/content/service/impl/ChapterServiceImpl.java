@@ -167,6 +167,7 @@ public class ChapterServiceImpl implements ChapterService {
     }
 
     @Override
+    @Transactional(readOnly = true)
     public ChapterDetailVO authorDetail(Long id) {
         Chapter chapter = guard.requireOwnedChapter(id);
         Novel novel = novelMapper.selectById(chapter.getNovelId());
@@ -177,7 +178,18 @@ public class ChapterServiceImpl implements ChapterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void saveContent(Long id, ChapterSaveDTO dto) {
-        Chapter chapter = guard.requireOwnedChapter(id);
+        Chapter chapter = guard.requireOwnedChapterForUpdate(id);
+        if (dto.getExpectedVersion() == null) throw new BusinessException(428, "请刷新页面后保存（缺少章节版本）", 428);
+        if (!Objects.equals(chapter.getContentVersion(), dto.getExpectedVersion()))
+            throw new BusinessException(409, "章节已被修改，已保留本地内容，请对比后重新编辑", 409);
+        String nextContent = dto.getContent() == null ? "" : dto.getContent();
+        if (Objects.equals(chapter.getTitle(), dto.getTitle().trim())
+                && Objects.equals(Objects.toString(readContent(id), ""), nextContent)) {
+            dto.setSavedVersion(chapter.getContentVersion());
+            return;
+        }
+        chapter.setContentVersion(chapter.getContentVersion() + 1);
+        dto.setSavedVersion(chapter.getContentVersion());
         ChapterStatus from = chapter.getStatus();
         boolean leftPublished = false;
 
@@ -238,7 +250,7 @@ public class ChapterServiceImpl implements ChapterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void submit(Long id) {
-        Chapter chapter = guard.requireOwnedChapter(id);
+        Chapter chapter = guard.requireOwnedChapterForUpdate(id);
 
         /*
          * ★ 空正文不许提交审核。
@@ -284,7 +296,7 @@ public class ChapterServiceImpl implements ChapterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void withdraw(Long id) {
-        Chapter chapter = guard.requireOwnedChapter(id);
+        Chapter chapter = guard.requireOwnedChapterForUpdate(id);
         /*
          * ★ 不显式判断「当前必须是 PENDING」—— 状态机已经限死了
          * 只有 PENDING → DRAFT 这一条（见 ChapterStatus#canTransitTo），
@@ -301,7 +313,7 @@ public class ChapterServiceImpl implements ChapterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(Long id) {
-        Chapter chapter = guard.requireOwnedChapter(id);
+        Chapter chapter = guard.requireOwnedChapterForUpdate(id);
         boolean wasPublished = chapter.getStatus() == ChapterStatus.PUBLISHED;
 
         /*
@@ -398,7 +410,7 @@ public class ChapterServiceImpl implements ChapterService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void audit(Long id, boolean pass, String remark) {
-        Chapter chapter = chapterMapper.selectById(id);
+        Chapter chapter = chapterMapper.selectForUpdate(id);
         if (chapter == null) {
             throw new BusinessException(ResultCode.CHAPTER_NOT_FOUND);
         }

@@ -184,37 +184,11 @@ watch([title, content], () => {
 
 onBeforeUnmount(clearTimer)
 
-/**
- * 追加一段文字到剧情笔记末尾。**「提供灵感」采纳时用这个。**
- *
- * ★ 为什么灵感的落点是**这里**而不是正文：AI 给的三个「走向」
- *   （顺接 / 反转 / 留白）是**备选方案**，不是可以直接接进正文的句子 ——
- *   作者要先挑一个、再自己写。塞进正文会把三个互相矛盾的走向
- *   并排放在读者能看到的地方。
- *   而剧情笔记正是「这一段打算写什么」，是它天然的归宿。
- *
- * ★ 和 ChapterEditor 里那个同名函数一样，必须走 `content.value = ...`，
- *   不能直接改 DOM —— `isDirty` 是内容比对算出来的，
- *   绕过 v-model 的话这段字永远不会被保存，而且不报任何错。
- *
- * @returns {boolean} 是否真的写进去了
- */
-function appendText(text) {
-  const t = String(text ?? '')
-  if (!t) return false
-  const cur = content.value
-  content.value = !cur ? t : cur.endsWith('\n') ? `${cur}${t}` : `${cur}\n\n${t}`
-  return true
-}
-
 defineExpose({
   save,
   flush,
   isDirty,
-  /* ★ S12 给 AI 面板加的：`content` 用来拼请求上下文，「提供灵感」的采纳落点 */
-  content,
-  title,
-  appendText,
+
 })
 </script>
 

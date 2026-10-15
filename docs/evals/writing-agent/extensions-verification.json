@@ -1,0 +1,50 @@
+{
+  "label": "写作 Agent 扩展工程验证",
+  "date": "2026-10-15",
+  "status": "engineering_checks_passed_runtime_acceptance_pending",
+  "finalBackend": {
+    "log": "extensions-final-tests.log",
+    "finishedAt": "2026-10-15T01:22:15+08:00",
+    "tests": 48,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "classes": {
+      "WritingMergeTest": 5,
+      "WritingChapterDatabaseTest": 8,
+      "WritingSyncDatabaseTest": 6,
+      "WritingDatabaseTest": 14,
+      "WritingExtensionsDatabaseTest": 7,
+      "WritingExtensionsTest": 7,
+      "WritingWiringTest": 1
+    },
+    "command": "mvn -o -pl novel-ai,novel-content -am test -Dtest=WritingExtensions*,WritingWiringTest,WritingSyncDatabaseTest,WritingDatabaseTest,WritingChapterDatabaseTest,WritingMergeTest -Dwriting.mysql=true -Dsurefire.failIfNoSpecifiedTests=false -Dnet.bytebuddy.experimental=true -DreuseForks=false"
+  },
+  "earlierBroaderRegression": {
+    "log": "extensions-backend-tests.log",
+    "finishedAt": "2026-10-15T01:03:38+08:00",
+    "result": "BUILD SUCCESS",
+    "scope": "Writing* and PrivateWritingIndexSmokeTest, real isolated MySQL and unique-prefix Elasticsearch",
+    "note": "Precedes final refinements; final targeted run covers the latest source changes."
+  },
+  "frontend": {
+    "command": "npm run build",
+    "result": "passed",
+    "log": "extensions-frontend-build.log",
+    "browserAcceptance": "not_run"
+  },
+  "migration": {
+    "developmentDatabase": "applied",
+    "extensionTables": 13,
+    "sourceTriggers": 7,
+    "additionalChanges": ["adoption novel_id ownership metadata", "UTC event defaults", "processed source fingerprints"],
+    "officialChapterBodiesModifiedByTests": false
+  },
+  "notVerified": [
+    "Real paid model literary quality and provider latency/cost",
+    "Actual third-party MCP endpoint interoperability",
+    "Browser visual and interactive acceptance",
+    "Production backup recovery and deletion journal volume configuration"
+  ],
+  "deployment": "Restart content, search and AI services; refresh author frontend. Automatic billable processing remains opt-in."
+}

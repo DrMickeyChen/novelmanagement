@@ -1,5 +1,7 @@
 # 小说管理系统 · 项目约定
 
+> 2026-10-14：旧四按钮写作助手已删除。`/api/ai/{outline,write,inspire,polish,quota}` 不再提供接口，禁止重新接入旧路径。作者写作使用 `/api/ai/writing/**`；`AiStreamSource` 仅保留前情摘要用途，审核及 Agent 使用各自执行链。旧场景枚举保留用于历史用量解码，旧模板不参与生成或管理。详见 `docs/legacy-writing-retirement.md`。
+
 > ★★ **这份文件每个会话都会自动加载 —— 它本身就是成本。**
 > 只写「不看就会做错」的东西；能从代码里读出来的（目录结构、类名、某个方法怎么实现）不要写。
 > **加内容之前先问自己：删掉这段，下次会不会做错？** 不会就别加。
@@ -454,6 +456,10 @@ MYSQL_PWD=root123456 "/c/Program Files/MySQL/MySQL Workbench 8.0/mysql.exe" \
   **staged 里没有 `__pycache__` / 没有上游 401 的响应体**。
 
 ## AI 服务拆分后的运行约定（覆盖前文 AI 属于 content 的描述）
+
+写作 Agent 当前上下文规则见 `docs/writing-agent-context-library.md`：故事库由作者维护，AI 只提待确认候选；新任务 `contextVersion=2` 读取章/卷/全书笔记、前三章及手选正文，私有 ES 检索在召回前过滤作者/作品/有效版本。旧任务保持旧范围。新增表迁移为 `docs/sql/writing-story-library.sql`，部署顺序 content/search 后 AI。不得把历史 MVP 的“仅前三章末尾、无 RAG”描述当作当前行为。
+
+写作代码按 api/application/domain/context/tool/skill/infrastructure 分层，平台规则从 `novel-ai/src/main/resources/writing/skills/*/SKILL.md` 加载，新任务冻结规则与版本。平台文件修改需打包重启 AI；作者个人 Skill 支持数据库编辑及 MD/ZIP 文本导入，不执行脚本。本次扩展包含 SQL 迁移、使用 UTC 时间的事务来源事件及删除传播，部署需重启内容、搜索和 AI。详见 `docs/writing-agent-architecture.md` 和 `docs/writing-agent-extensions.md`。
 
 AI 独立为 `novel-ai :8085`，`modules/ai` 与 AI 审核消费者只在此服务。原 `novel.ai.*` 配置移到 AI；沿用原 `AI_KEY_SECRET`。AI 路由 order 2，前端路径不变。表归属与启动步骤见 [docs/ai-service-split.md](docs/ai-service-split.md)。
 

@@ -1,0 +1,19 @@
+{
+  "version": "1.0",
+  "status": "quality evaluation not executed",
+  "runsPerCase": 2,
+  "cases": [
+    {"id":"cultivation-normal","genre":"修仙","outline":"初入宗门，询问规矩，结尾见到师兄","previous":"主角谨慎，尚未入门。","goal":"通过动作体现谨慎","expected":"不增加未经铺垫的能力"},
+    {"id":"cultivation-ability","genre":"修仙","outline":"逃离追捕，寻找师兄","previous":"主角不会飞行，也未获得法器。","draft":"他御剑飞出山门。","expectedConflict":"能力与物品来源矛盾"},
+    {"id":"cultivation-knowledge","genre":"修仙","outline":"调查密室","previous":"主角不知道密室的位置。","draft":"他径直来到密室。","expectedConflict":"缺少获知位置的过程"},
+    {"id":"cultivation-unknown","genre":"修仙","outline":"拜访师父","previous":"仅覆盖前章末尾，未介绍师父。","goal":"确认师父是否擅长炼丹","expected":"资料不足，不编造结论"},
+    {"id":"mystery-normal","genre":"悬疑","outline":"检查现场，发现脚印，保留凶手身份","previous":"侦探刚到现场，未见嫌疑人。","goal":"克制叙述，不揭露身份","expected":"完成线索铺垫且不提前揭露"},
+    {"id":"mystery-ability","genre":"悬疑","outline":"追踪目击者","previous":"侦探左腿骨折，需要拐杖。","draft":"他双腿发力疾跑追上车辆。","expectedConflict":"身体状态冲突"},
+    {"id":"mystery-time","genre":"悬疑","outline":"核对证词","previous":"案发时侦探在距现场五小时车程的城市。","draft":"十分钟后他已抵达现场。","expectedConflict":"时间地点衔接不成立"},
+    {"id":"mystery-unknown","genre":"悬疑","outline":"分析证物","previous":"片段没有介绍钥匙属于谁。","goal":"判断钥匙主人","expected":"资料不足"},
+    {"id":"light-normal","genre":"轻小说","outline":"校园相遇，以对话表现误会","previous":"两人今天第一次见面。","goal":"第一人称，对话使用「」","expected":"人称和对话格式符合"},
+    {"id":"light-ability","genre":"轻小说","outline":"整理社团资料","previous":"主角不懂日语。","draft":"我毫无障碍地读懂了未翻译的日文古籍。","expectedConflict":"能力缺少铺垫"},
+    {"id":"light-knowledge","genre":"轻小说","outline":"讨论秘密","previous":"主角不知道同学的秘密身份。","draft":"我早就知道他的秘密身份。","expectedConflict":"知情范围冲突"},
+    {"id":"light-unknown","genre":"轻小说","outline":"社团活动","previous":"只提供活动结束片段。","goal":"确认两人此前是否相识","expected":"说明覆盖不足"}
+  ]
+}

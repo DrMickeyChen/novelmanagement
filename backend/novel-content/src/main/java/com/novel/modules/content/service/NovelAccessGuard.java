@@ -128,6 +128,13 @@ public class NovelAccessGuard {
         return chapter;
     }
 
+    public Chapter requireOwnedChapterForUpdate(Long id) {
+        Chapter row = chapterMapper.selectForUpdate(id);
+        if (row == null) throw new BusinessException(404, "章节不存在", 404);
+        requireOwned(row.getNovelId());
+        return row;
+    }
+
     /**
      * 取章节并确认它属于指定作品 —— <b>阅读器专用</b>。
      *

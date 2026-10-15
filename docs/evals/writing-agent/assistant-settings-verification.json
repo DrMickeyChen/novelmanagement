@@ -1,0 +1,30 @@
+{
+  "feature": "写作助手自定义指令",
+  "date": "2026-10-15",
+  "backend": {
+    "result": "BUILD SUCCESS",
+    "finishedAt": "2026-10-15T16:36:22+08:00",
+    "tests": 31,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "log": "assistant-settings-tests.log",
+    "suites": ["WritingDatabaseTest", "WritingExtensionsDatabaseTest", "WritingModelHttpTest", "WritingWiringTest"],
+    "newCoverage": [
+      "Personal defaults, per-book override and reset inheritance",
+      "Owner and author-role access control",
+      "Optimistic concurrency and input validation",
+      "Book deletion clears scoped settings while preserving personal defaults",
+      "Server-frozen task instructions reject client-forged snapshots",
+      "Setting changes affect new tasks, existing tasks and idempotent retries retain original instructions"
+    ]
+  },
+  "frontend": {
+    "command": "npm run build",
+    "log": "assistant-settings-frontend.log",
+    "browserAcceptance": "not_run"
+  },
+  "developmentMigration": "writing_assistant_settings created using writing-assistant-settings.sql",
+  "paidModelCalls": 0,
+  "deployment": "Restart novel-ai and refresh author frontend; content and search restart are not required for this incremental feature."
+}

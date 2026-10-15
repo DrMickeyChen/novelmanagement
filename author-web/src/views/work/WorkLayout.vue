@@ -44,10 +44,12 @@
  *   所有 Node 实例、清空展开状态（详见 OutlineTree 的文件头），
  *   而验收标准要的恰恰是"纹丝不动"。
  */
-import { ref, computed, watch, onMounted, provide } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getOutlineTree } from '@/api/outline'
 import OutlineTree from '@/components/OutlineTree.vue'
+import PaneDivider from '@/components/PaneDivider.vue'
+import { usePaneWidth } from '@/composables/usePaneWidth'
 
 const route = useRoute()
 const router = useRouter()
@@ -62,6 +64,9 @@ const nodeId = computed(() => {
 const tree = ref({ roots: [], totalNodes: 0 })
 const loading = ref(false)
 const failed = ref(false)
+const outlineCollapsed = ref(false)
+const workElement = ref(null)
+const { width: outlineWidth, maximum: outlineMax, dragging: outlineDragging, start: resizeOutline, nudge: nudgeOutline, reset: resetOutline } = usePaneWidth({ key: 'author-pane:outline', initial: window.innerWidth <= 1400 ? 240 : 320, min: 180, max: 520, reserve: 440, container: workElement })
 
 /** 树里第一个可用的节点（根）。没有大纲时为 null */
 const firstNodeId = computed(() => tree.value.roots?.[0]?.id ?? null)
@@ -183,42 +188,6 @@ function openNode(id) {
   router.push(`/novel/${novelId.value}/work/${id}`)
 }
 
-/* ==================== S12：把「往树里批量加节点」递给 AI 面板 ==================== */
-
-/** OutlineTree 组件实例。★ 只为了调它 `defineExpose` 出来的 `addTree` */
-const treeComp = ref(null)
-
-/*
- * ★★ 这里为什么必须用 provide/inject，而不能用 props + emit。
- *
- *   `AiPanel` 是 `NodeWorkspace` 的子组件，而 `NodeWorkspace` 是
- *   **`<router-view>` 渲染出来的** —— 也就是说它在这个模板里
- *   根本没有一个可以写 `@adopt="..."` 的位置（写了也会被 router-view
- *   当成 attrs 透传给路由组件，那是另一回事）。
- *
- *   要让它把事件传上来，得让 NodeWorkspace 再 emit 一次，而
- *   router-view 上挂 `@created` 之类能不能收到 —— 能，但那是
- *   「靠 attrs 透传传事件」，写起来和读起来都很难相信它是对的。
- *
- *   provide/inject 走的是**组件树**，不是模板里的父子关系 ——
- *   中间隔着 `<router-view>` 一样能 inject 到。
- *
- * ★ 这也是**唯一**一处让 AI 面板碰树的地方：它只拿到一个
- *   `addTree(parentId, draft)`，拿不到 treeRef，也就没法绕过
- *   OutlineTree 内部的 `busy` 闸和那套「必须走 append」的规矩。
- */
-provide('outlineOps', {
-  /**
-   * 在某个节点下批量建出 AI 生成的那棵子树。
-   *
-   * ★ `?.` 短路了整个调用表达式，所以树还没挂载（比如这本书
-   *   还没有大纲、el-tree 根本没渲染）时 `??` 会兜住，
-   *   返回一个和成功同形状的结果 —— 调用方不用写 `?.` 和 `?? {}`。
-   */
-  addTree: (parentId, draft) =>
-    treeComp.value?.addTree(parentId, draft) ?? Promise.resolve({ created: 0, failed: [] }),
-})
-
 /* ==================== 树发上来的事件 ==================== */
 
 /** 点了节点 → 换 URL（工作区因此重建，树不动） */
@@ -272,12 +241,13 @@ function handleResync() {
 </script>
 
 <template>
-  <div class="work-layout">
+  <div ref="workElement" class="work-layout">
     <!-- ============ 左：大纲树 ============ -->
-    <div class="tree-panel">
+    <div class="tree-panel" :class="{ 'tree-collapsed': outlineCollapsed }" :style="{ width: `${outlineCollapsed ? 44 : outlineWidth}px` }">
       <div class="panel-head">
-        <span class="panel-title">大纲</span>
-        <span v-if="totalNodes" class="panel-count">{{ totalNodes }} 个节点</span>
+        <span v-show="!outlineCollapsed" class="panel-title">大纲</span>
+        <span v-if="totalNodes && !outlineCollapsed" class="panel-count">{{ totalNodes }} 个节点</span>
+        <el-button link :aria-expanded="!outlineCollapsed" :aria-label="outlineCollapsed ? '展开大纲' : '收起大纲'" :title="outlineCollapsed ? '展开大纲' : '收起大纲'" @click="outlineCollapsed = !outlineCollapsed">{{ outlineCollapsed ? '›' : '‹' }}</el-button>
         <!--
           ★ 这里原本挂着一个「WorkLayout 挂载 N 次」的验收徽章（见 composables/useMountProbe.js）。
             已按用户要求从界面上撤掉 —— 它对读者没有价值，而它要证明的事（切节点时本层不重建）
@@ -285,9 +255,9 @@ function handleResync() {
         -->
       </div>
 
-      <div class="tree-body">
+      <div v-if="outlineCollapsed" class="collapsed-label">大纲</div>
+      <div v-show="!outlineCollapsed" class="tree-body">
         <OutlineTree
-          ref="treeComp"
           :novel-id="novelId"
           :roots="tree.roots"
           :current-node-id="nodeId"
@@ -302,7 +272,9 @@ function handleResync() {
         />
       </div>
 
-      <div class="panel-foot">
+      <div v-show="!outlineCollapsed" class="panel-foot">
+        <el-button link size="small" @click="router.push(`/novel/${novelId}/story-library`)">故事资料库</el-button>
+        <el-button link size="small" @click="router.push(`/novel/${novelId}/writing-lab`)">写作扩展</el-button>
         <el-button link size="small" @click="router.push(`/novel/${novelId}/chapters`)">
           章节管理
         </el-button>
@@ -313,6 +285,7 @@ function handleResync() {
       </div>
     </div>
 
+    <PaneDivider v-if="!outlineCollapsed" label="大纲栏宽度" :width="outlineWidth" :min="180" :max="outlineMax" :dragging="outlineDragging" @start="resizeOutline" @nudge="nudgeOutline" @reset="resetOutline" />
     <!-- ============ 右：工作区 ============ -->
     <div class="workspace">
       <!--
@@ -379,14 +352,12 @@ function handleResync() {
 </template>
 
 <style scoped>
-/* ★ 高度用 calc 减掉顶部导航的 56px，让工作台恰好占满剩余视口 ——
-   不然两侧的 overflow: auto 都不会生效，整个页面会跟着一起滚，
-   左侧的树和右侧的正文就会互相带着滚。
-   （这是 reader-web 阅读器那条「滚动容器必须是自己」的同一条经验。） */
+/* 父布局已限定视口高度；工作台占满主区域，树和正文分别滚动。 */
 .work-layout {
   display: flex;
-  gap: 12px;
-  height: calc(100vh - 56px - 40px);
+  gap: 0;
+  height: 100%;
+  min-height: 0;
 }
 
 .tree-panel {
@@ -400,7 +371,12 @@ function handleResync() {
   overflow: hidden;
 }
 
+.tree-panel.tree-collapsed { width: 44px; }
+.tree-collapsed .panel-head { justify-content: center; padding: 10px 4px; }
+.collapsed-label { writing-mode: vertical-rl; align-self: center; padding-top: 12px; color: #909399; font-size: 13px; letter-spacing: 4px; }
+
 .panel-head {
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -421,11 +397,14 @@ function handleResync() {
 
 .tree-body {
   flex: 1;
+  min-height: 0;
   overflow: auto;
+  overscroll-behavior-y: contain;
   padding: 8px;
 }
 
 .panel-foot {
+  flex-shrink: 0;
   border-top: 1px solid #f0f2f5;
   padding: 8px 12px;
   display: flex;
@@ -433,6 +412,7 @@ function handleResync() {
 }
 
 .workspace {
+  container-type: inline-size;
   flex: 1;
   min-width: 0;
   background: #fff;
@@ -476,6 +456,7 @@ function handleResync() {
 .ws-body {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
 }
+
 </style>

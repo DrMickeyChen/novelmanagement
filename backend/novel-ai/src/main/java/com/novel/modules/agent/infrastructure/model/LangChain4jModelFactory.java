@@ -27,4 +27,25 @@ public class LangChain4jModelFactory {
         if(settings.model().startsWith("deepseek")) builder.customParameters(Map.of("thinking",Map.of("type","disabled")));
         return builder.build();
     }
+
+    public ChatModel writer(AiRuntimeConfig settings,int maxTokens) {
+        var builder=OpenAiChatModel.builder().baseUrl(settings.baseUrl().replaceAll("/+$","")+"/")
+                .apiKey(config.decryptCurrentApiKey()).modelName(settings.model()).maxTokens(maxTokens)
+                .httpClientBuilder(new JdkHttpClientBuilder().connectTimeout(Duration.ofSeconds(5)).readTimeout(Duration.ofSeconds(90)))
+                .timeout(Duration.ofSeconds(90)).maxRetries(0).logRequests(false).logResponses(false);
+        if(settings.temperature()!=null) builder.temperature(settings.temperature().doubleValue());
+        if(settings.model().startsWith("deepseek")) builder.customParameters(Map.of("thinking",Map.of("type","disabled")));
+        return builder.build();
+    }
+
+    public dev.langchain4j.model.chat.StreamingChatModel writerStream(AiRuntimeConfig settings,int maxTokens) {
+        var builder=dev.langchain4j.model.openai.OpenAiStreamingChatModel.builder()
+                .baseUrl(settings.baseUrl().replaceAll("/+$","")+"/").apiKey(config.decryptCurrentApiKey())
+                .modelName(settings.model()).maxTokens(maxTokens)
+                .httpClientBuilder(new JdkHttpClientBuilder().connectTimeout(Duration.ofSeconds(5)).readTimeout(Duration.ofSeconds(90)))
+                .timeout(Duration.ofSeconds(90)).logRequests(false).logResponses(false);
+        if(settings.temperature()!=null) builder.temperature(settings.temperature().doubleValue());
+        if(settings.model().startsWith("deepseek")) builder.customParameters(Map.of("thinking",Map.of("type","disabled")));
+        return builder.build();
+    }
 }

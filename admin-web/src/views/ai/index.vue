@@ -304,7 +304,7 @@ const editForm = reactive({ scene: null, name: '', systemPrompt: '', userTemplat
 function openCreate() {
   editId.value = null
   Object.assign(editForm, {
-    scene: promptScene.value || 2,
+    scene: promptScene.value || 5,
     name: '',
     systemPrompt: '',
     userTemplate: '',
@@ -419,30 +419,13 @@ const previewVars = ref({})
  * ★ 值只是随便编的演示文字，**不要**往这里放真实稿件。
  */
 const SAMPLE_DEFAULTS = {
-  1: {
-    request: '为「雨夜」生成下一级大纲',
-    novelTitle: '剑冢',
-    outline: '雨夜 · 主角在破庙避雨',
-    summary: '主角已拿到残剑，正在被追杀。',
-  },
-  2: {
-    selected: '（正文末尾）雨点砸在瓦上，他握紧了那把残剑。',
-    request: '接着往下写「雨夜」',
-    novelTitle: '剑冢',
-    outline: '雨夜 · 相遇',
-    summary: '主角已拿到残剑，正在被追杀。',
-  },
-  3: {
-    request: '为「雨夜」提供几个剧情走向',
-    novelTitle: '剑冢',
-    outline: '雨夜 · 主角在破庙避雨',
-  },
-  4: {
-    selected: '雨点砸在瓦上，他握紧了那把残剑。',
-    novelTitle: '剑冢',
-  },
   5: {
     selected: '他把刀架在对方脖子上，笑着说：这把刀今天要见血。',
+  },
+  6: {
+    selected: '主角在雨夜获得残剑，随后遭到追捕，在破庙与同伴会合。',
+    novelTitle: '剑冢',
+    summary: '主角离开故乡，开始寻找失踪的师父。',
   },
 }
 
@@ -556,12 +539,14 @@ function sceneLabel(code) {
  */
 const SCENES = [
   { label: '全部场景', value: null },
-  { label: '生成大纲', value: 1 },
-  { label: '续写正文', value: 2 },
-  { label: '提供灵感', value: 3 },
-  { label: '润色段落', value: 4 },
+  { label: '生成大纲（已退役）', value: 1 },
+  { label: '写作（含历史续写）', value: 2 },
+  { label: '提供灵感（已退役）', value: 3 },
+  { label: '润色段落（已退役）', value: 4 },
   { label: '违禁审核', value: 5 },
+  { label: '前情摘要', value: 6 },
 ]
+const TEMPLATE_SCENES = SCENES.filter((scene) => scene.value === 5 || scene.value === 6)
 
 const SUCCESS_OPTIONS = [
   { label: '全部结果', value: null },
@@ -1124,7 +1109,7 @@ async function toggleWord(row) {
               @change="loadPrompts"
             >
               <!-- ★ 跳过 SCENES 的第一项（「全部场景」，值是 null）—— 它只用于用量筛选 -->
-              <el-option v-for="s in SCENES.slice(1)" :key="s.value" :label="s.label" :value="s.value" />
+              <el-option v-for="s in TEMPLATE_SCENES" :key="s.value" :label="s.label" :value="s.value" />
             </el-select>
             <el-button type="primary" @click="openCreate">新增模板</el-button>
             <el-button :disabled="promptLoading" @click="loadPrompts">刷新</el-button>
@@ -1190,13 +1175,13 @@ async function toggleWord(row) {
                   作者点续写还是老样子」。要换场景请停用旧的、再新建一条。
               -->
               <el-select v-model="editForm.scene" :disabled="!!editId" class="prompt-scene-select">
-                <el-option v-for="s in SCENES.slice(1)" :key="s.value" :label="s.label" :value="s.value" />
+                <el-option v-for="s in TEMPLATE_SCENES" :key="s.value" :label="s.label" :value="s.value" />
               </el-select>
               <span v-if="editId" class="hint-inline">场景不可改：换场景请停用这条、再新建一条</span>
             </el-form-item>
 
             <el-form-item label="模板名">
-              <el-input v-model="editForm.name" placeholder="续写正文-默认" maxlength="50" show-word-limit />
+              <el-input v-model="editForm.name" placeholder="违禁审核-默认" maxlength="50" show-word-limit />
               <span class="hint-inline">同一场景下不能重名（重名会被拒绝，不会静默覆盖）</span>
             </el-form-item>
 

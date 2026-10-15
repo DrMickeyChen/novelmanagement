@@ -64,6 +64,8 @@ novel:
     secret: ${JWT_SECRET:novel-dev-only-jwt-secret-please-change-in-production-2026}
 
   ai:
+    writing:
+      enabled: ${WRITING_AGENT_ENABLED:true}
     key-secret: ${AI_KEY_SECRET:novel-dev-only-ai-key-secret-please-change-in-production-2026}
 
 rocketmq:

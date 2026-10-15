@@ -1,0 +1,658 @@
+{
+  "id": "writing-structure-file-skills-20261014",
+  "recordedAt": "2026-10-14T22:21:25.098139+08:00",
+  "type": "engineering-regression-evidence",
+  "totals": {
+    "tests": 200,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1,
+    "passed": 199
+  },
+  "suites": [
+    {
+      "suite": "com.novel.ai.config.AiHttpBoundaryTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.ai.config.AiHttpBoundaryTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "readerCanAccessOnlyDedicatedBookFinder",
+        "authorCannotAccessAdminConfiguration",
+        "retiredGenerationRoutesAreAbsentAndNeverInvokeModels",
+        "knowledgeManagementIsAdminOnly",
+        "forgedIdentityWithoutInternalTokenIsRejected",
+        "readerCannotAccessAuthorAi",
+        "summaryRouteRemainsAvailable"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderAgentTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderAgentTest.xml",
+      "tests": 43,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "readerStillChargesAndRefundsRejectedRun",
+        "followupPreservesHardConditionsAndExcludesShownIds",
+        "inferredSimilarityKeywordIsSoftAndRemainsSoOnRetry",
+        "cumulativeBudgetAllowsAdvancedLoopBeyondTwentyThousand",
+        "cumulativeBudgetStillStopsOverSixtyThousand",
+        "cachedRetryDoesNotAcquireQuotaOrCallModel",
+        "explicitContinuationStillInheritsFilters",
+        "bodyEvidenceHasValidatedProvenanceWithoutLeakingPlot",
+        "unknownToolNeverInvokesBackend",
+        "recoveredCandidateStillMustPassFinalVisibilityCheck",
+        "evidenceOutsideCandidateSetNeverInvokesKnowledge",
+        "requiredPreferenceCannotBeSilentlyIgnoredWhenOnlyIntroIsAvailable",
+        "inferredSimilarityTagDoesNotChangeHardConditionsOnRetry",
+        "fourthBookReferenceRetainsOrderedCardsAndSurvivesEmptyClarification",
+        "incompleteJsonGetsOneRepairAndPersistentFailureIsActionable",
+        "unindexedBodyIsExplicitlyReportedInsteadOfRepeatingIntro",
+        "greetingQuestionCorrectsFalseClarificationFlag",
+        "lastRegularRoundStillHasOneBoundedFormatRepair",
+        "malformedFinalAnswerIsRepairedOnceWithoutRepeatingTools",
+        "emptySearchResultCorrectsFalseClarificationFlag",
+        "executionCannotLoopForever",
+        "missingOrdinalStopsBeforeModelSearchAndRecovery",
+        "fullToolLoopReturnsGroundedStringIdAndStoresState",
+        "explicitlyRequestedKeywordIsKeptForSimilarSearch",
+        "inventedBodyCitationIsRejected",
+        "fabricatedIdIsRejectedWithoutCommittingConversation",
+        "newTopicResetsOldFiltersAndDoesNotSendOldTopicToModel",
+        "similarCandidatesCanBeReturnedWithUnknownStyleWithoutInventingSupport",
+        "explicitlyRequestedTagIsNotConvertedToSoftPreference",
+        "adminSkipsDailyQuotaAndRejectedRunDoesNotRefund",
+        "emptyRecommendationRecoversCandidatesAndLogsActualDetailCall",
+        "genreAbbreviationUsesRealCategoryWithoutRepeatingKeyword",
+        "recommendationRefreshAndFourthReferenceExecuteThreeRealAgentTurns",
+        "missingFinalFieldsAreNamedInRepairInstruction",
+        "disappearingBookIsRemovedByFinalVisibilityCheck",
+        "emptyRecommendationDoesNotOverrideStyleClarification",
+        "failingEvidenceServiceKeepsBasicSearchAvailable",
+        "noCandidatesOrGreetingDoesNotInventRecommendations",
+        "unsupportedEvidenceIsDiscarded",
+        "evidenceToolAutomaticallyFetchesMissingCandidateDetails",
+        "inferredSimilarityTagBecomesSoftPreferenceAndKeepsExplicitFilters",
+        "repairReceivesActualMalformedOutputWithoutRepeatingTools",
+        "similarityDoesNotInheritReferenceCompletionOrWordCount"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderControllerHttpTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderControllerHttpTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "anonymousCannotSpendAndInvalidRequestsNeverReachAgent",
+        "consecutiveRequestsEachCompleteAndReleaseTheirWorker",
+        "adminQuotaReportsUnlimitedWithoutReadingDailyCounter",
+        "readerGetsRealSseEventsAndWorkerRetainsIdentity"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderEvaluationTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderEvaluationTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "reportSurvivesServiceRestartAndRejectsPathTraversal",
+        "aggregatesFailuresLatencyCostAndHumanReviewSeparately",
+        "calculatesMetricsWithoutInventingAccuracyForEmptyRecommendations"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderFrameworkRegressionTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderFrameworkRegressionTest.xml",
+      "tests": 43,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "readerStillChargesAndRefundsRejectedRun",
+        "followupPreservesHardConditionsAndExcludesShownIds",
+        "inferredSimilarityKeywordIsSoftAndRemainsSoOnRetry",
+        "cumulativeBudgetAllowsAdvancedLoopBeyondTwentyThousand",
+        "cumulativeBudgetStillStopsOverSixtyThousand",
+        "cachedRetryDoesNotAcquireQuotaOrCallModel",
+        "explicitContinuationStillInheritsFilters",
+        "bodyEvidenceHasValidatedProvenanceWithoutLeakingPlot",
+        "unknownToolNeverInvokesBackend",
+        "recoveredCandidateStillMustPassFinalVisibilityCheck",
+        "evidenceOutsideCandidateSetNeverInvokesKnowledge",
+        "requiredPreferenceCannotBeSilentlyIgnoredWhenOnlyIntroIsAvailable",
+        "inferredSimilarityTagDoesNotChangeHardConditionsOnRetry",
+        "fourthBookReferenceRetainsOrderedCardsAndSurvivesEmptyClarification",
+        "incompleteJsonGetsOneRepairAndPersistentFailureIsActionable",
+        "unindexedBodyIsExplicitlyReportedInsteadOfRepeatingIntro",
+        "greetingQuestionCorrectsFalseClarificationFlag",
+        "lastRegularRoundStillHasOneBoundedFormatRepair",
+        "malformedFinalAnswerIsRepairedOnceWithoutRepeatingTools",
+        "emptySearchResultCorrectsFalseClarificationFlag",
+        "executionCannotLoopForever",
+        "missingOrdinalStopsBeforeModelSearchAndRecovery",
+        "fullToolLoopReturnsGroundedStringIdAndStoresState",
+        "explicitlyRequestedKeywordIsKeptForSimilarSearch",
+        "inventedBodyCitationIsRejected",
+        "fabricatedIdIsRejectedWithoutCommittingConversation",
+        "newTopicResetsOldFiltersAndDoesNotSendOldTopicToModel",
+        "similarCandidatesCanBeReturnedWithUnknownStyleWithoutInventingSupport",
+        "explicitlyRequestedTagIsNotConvertedToSoftPreference",
+        "adminSkipsDailyQuotaAndRejectedRunDoesNotRefund",
+        "emptyRecommendationRecoversCandidatesAndLogsActualDetailCall",
+        "genreAbbreviationUsesRealCategoryWithoutRepeatingKeyword",
+        "recommendationRefreshAndFourthReferenceExecuteThreeRealAgentTurns",
+        "missingFinalFieldsAreNamedInRepairInstruction",
+        "disappearingBookIsRemovedByFinalVisibilityCheck",
+        "emptyRecommendationDoesNotOverrideStyleClarification",
+        "failingEvidenceServiceKeepsBasicSearchAvailable",
+        "noCandidatesOrGreetingDoesNotInventRecommendations",
+        "unsupportedEvidenceIsDiscarded",
+        "evidenceToolAutomaticallyFetchesMissingCandidateDetails",
+        "inferredSimilarityTagBecomesSoftPreferenceAndKeepsExplicitFilters",
+        "repairReceivesActualMalformedOutputWithoutRepeatingTools",
+        "similarityDoesNotInheritReferenceCompletionOrWordCount"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderIntentTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderIntentTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "explicitRefinementsAndReferencesKeepConditions",
+        "independentCultivationRequestDoesNotInheritFanfiction"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderLangChainHttpTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderLangChainHttpTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "businessToolFailurePreservesErrorCodeAndNeverCommits",
+        "sdkAndAiServicesExecuteRefreshAndOrdinalWithLiveKeyUpdates",
+        "interruptCancelsStalledSdkCallWithoutCommittingConversation",
+        "sdkDoesNotRetryProviderFailuresOrInvokeBusinessTools",
+        "stalledProviderRespectsRemainingTaskDeadline"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderMcpTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderMcpTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "httpTransportReturnsJsonRpcParseErrorAndSupportsValidRequests",
+        "unknownToolCannotReachBusinessLogicAndBadVersionIsRejected",
+        "supportsInitializeNotificationDiscoveryAndUnknownMethod",
+        "toolsCallUsesSharedToolsAndReturnsMcpContent"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderModelTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderModelTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "compatibleEndpointReceivesToolDefinitionsAndReturnsCallAndUsage"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.BookFinderRedisSmokeTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.BookFinderRedisSmokeTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 1,
+      "cases": [
+        "realRedisEnforcesOwnershipLockQuotaAndSerialization"
+      ],
+      "skippedCases": [
+        "realRedisEnforcesOwnershipLockQuotaAndSerialization"
+      ]
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.EmbeddingConfigServiceTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.EmbeddingConfigServiceTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "conflictingKeysInvalidUrlAndBatchAreRejected",
+        "blankPreservesAndExplicitClearPersistsNull",
+        "unreadableCipherProducesNoticeWithoutLeakingIt",
+        "missingEncryptionSecretCannotPersistPlaintext",
+        "keyIsEncryptedAndOnlyMaskedInResponse"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.EvidenceRankingTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.EvidenceRankingTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "contractsRejectUnboundedOrInjectedIds",
+        "modelOrDimensionChangesCannotReuseOldVectors",
+        "chunksCoverEveryCharacterAndKeepExactOverlappingOffsets",
+        "emptyChaptersProduceNoFabricatedEvidence",
+        "hybridFindsMeaningFromVectorsWithoutLiteralOverlap",
+        "lexicalRetrievalHasNoHitsForUnrelatedTerms"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.KnowledgeNotesTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.KnowledgeNotesTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "pendingAndRejectedNotesCannotEnterRetrieval",
+        "inventedQuoteOrChunkIsRejectedBeforeSaving",
+        "humanReviewOnlyWorksForCurrentEvidenceVersion"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.PreferenceEvidenceTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.PreferenceEvidenceTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "openingEvidenceCannotEstablishAllBookAbsence",
+        "similarityOrMissingCitationsNeverConfirmsPreference",
+        "OnlyFreshCitationsCanSupportOrContradictAndOtherCriteriaStayUnknown"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.RerankConfigServiceTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.RerankConfigServiceTest.xml",
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "conflictingKeysInvalidUrlAndBatchAreRejected",
+        "blankPreservesAndExplicitClearPersistsNull",
+        "unreadableCipherProducesNoticeWithoutLeakingIt",
+        "missingEncryptionSecretCannotPersistPlaintext",
+        "keyIsEncryptedAndOnlyMaskedInResponse"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.bookfinder.knowledge.RetrievalModelsTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.bookfinder.knowledge.RetrievalModelsTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "rerankValidatesIndexesAndActuallyOrdersByScores",
+        "savedConfigurationOverridesEnvironmentAndSplitsBatches",
+        "missingProviderCannotSilentlyPretendToEmbed",
+        "duplicateEmbeddingIndexesAreRejected",
+        "embeddingReordersByIndexAndDoesNotExposeKey",
+        "savedRerankConfigIsUsedImmediatelyAndExplicitClearDisablesIt"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.skill.WritingSkillRegistryTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.skill.WritingSkillRegistryTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "selectionsRejectUnknownDuplicateAndTooManyIds",
+        "metadataCannotDeclareUnknownFieldsOrTraversalIds",
+        "springConstructsRegistryAndDefaultLimitsWithoutOtherServices",
+        "missingDuplicateMalformedAndOversizeFilesFailExplicitly",
+        "taskSnapshotsRemainStableAcrossDeploymentAndSelectionChanges",
+        "filesExtendTheCatalogWithoutChangingJavaAllowLists",
+        "deployedFilesPreserveBothOriginalRules"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingChecksTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingChecksTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "validQuoteAnchorsVersionAndOffsets",
+        "dialogueFormatHasDeterministicWarning",
+        "fabricatedAndOtherSourceQuotesBecomeUnknown",
+        "settingAndPlanConflictsRequireBothSourceAndDraftAnchors"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingDatabaseTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingDatabaseTest.xml",
+      "tests": 14,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "failedRepairDoesNotLoopAndManualRetryKeepsRepairLimit",
+        "emptyOutlineAllowsHistoryButRejectsCreationAs422",
+        "taskSkillsAreServerFrozenAndIdempotentWithoutMutatingCaller",
+        "separateSessionsKeepTheirPlansAndHistoryMetadata",
+        "completePlanDraftReviewAdoptUndoAndReplay",
+        "crossOwnerAndChangedSourcesFailBeforeGeneration",
+        "commandsAndLateWorkerWritesHaveStrongGuards",
+        "skillsCanBeChangedAndRemovedBeforeNextGeneration",
+        "onlyOneWorkerCanClaimAndEventsArePersistent",
+        "privateIndexJobsPersistProgressAndCannotBeReadByAnotherAuthor",
+        "invalidPlanIsRepairedOnceAndOriginalOutputRemains",
+        "openingChapterSkipsModelRecapAndStillPlans",
+        "existingTaskCanBeViewedAfterOutlineCleared",
+        "legacyTaskFingerprintsRemainCompatibleAfterContextUpgrade"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingJsonTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingJsonTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "validObjectAndSingleCodeFenceAreAccepted",
+        "clarificationIsValidStructuredOutput",
+        "invalidSchemaDoesNotBecomeAPlan",
+        "proseMultipleObjectsNullAndArrayAreRejected"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingModelHttpTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingModelHttpTest.xml",
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "planningInvokesPrivateResearchAndPersistsEvidenceThroughBudget",
+        "providerFailureHasNoHiddenRetry",
+        "realAiServicesExecutesReadOnlyJavaTool",
+        "realStreamingSdkDeliversTextAndUsage",
+        "onlyCheckingExposesPendingMemoryProposalTool",
+        "cancellationRejectsFurtherOutput"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingRemoteErrorsTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingRemoteErrorsTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "internalDetailsAndMalformedBodiesAreNotExposed",
+        "businessOutlineRejectionRemains422"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingRetrievalTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingRetrievalTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "modelMemoryProposalCannotUseUnloadedOrInventedSources",
+        "freshVersionsAndAclAreValidatedBeforeExternalReranking",
+        "indexBuildRejectsFutureIdsBeforeBodyOrEmbeddingCalls"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.agent.writing.WritingWiringTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.agent.writing.WritingWiringTest.xml",
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "reorganizedComponentsWireAndCapabilitiesComeFromFiles"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.ai.integration.AiContentLookupTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.ai.integration.AiContentLookupTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "ownershipBusinessCodeSurvivesHttpBoundary",
+        "unavailableContentIsNeverPresentedAsMissingBook"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.ai.job.AiDispositionSyncJobTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.ai.job.AiDispositionSyncJobTest.xml",
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "failureLeavesPendingRowsUntouchedAndRetries",
+        "missingDispositionIsNotInvented",
+        "alreadyDisposedRowsAreNotReconciled"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.modules.ai.service.LegacyWritingRetirementTest",
+      "report": "backend/novel-ai/target/surefire-reports/TEST-com.novel.modules.ai.service.LegacyWritingRetirementTest.xml",
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "retiredTemplatesCannotBeLoadedOrSaved",
+        "sourcesRejectOldScenesBeforeAnyModelAccess"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.common.internal.WritingTextTest",
+      "report": "backend/novel-common/target/surefire-reports/TEST-com.novel.common.internal.WritingTextTest.xml",
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "insertionAndFullReplacement",
+        "refusesDriftAndSplitEmoji",
+        "repeatedTextUsesExactSelection",
+        "hashIsStable"
+      ],
+      "skippedCases": []
+    },
+    {
+      "suite": "com.novel.common.security.JwtUtilTest",
+      "report": "backend/novel-common/target/surefire-reports/TEST-com.novel.common.security.JwtUtilTest.xml",
+      "tests": 7,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "cases": [
+        "shouldParseWhatWasSigned",
+        "shouldRejectTamperedToken",
+        "shouldRejectTokenSignedByAnotherKey",
+        "shouldRejectExpiredToken",
+        "remainingMillisShouldMatchConfiguredExpiry",
+        "shouldProduceDifferentTokenForDifferentJti",
+        "shouldRejectShortSecret"
+      ],
+      "skippedCases": []
+    }
+  ],
+  "writingSpecialistPassed": 45,
+  "frontend": {
+    "build": "PASS",
+    "eventTestsPassed": 4,
+    "visualBrowserValidation": "NOT_RUN"
+  },
+  "packaging": {
+    "bundledSkills": [
+      "BOOT-INF/classes/writing/skills/dialogue/SKILL.md",
+      "BOOT-INF/classes/writing/skills/restrained/SKILL.md"
+    ],
+    "obsoleteFlatPackageClasses": [],
+    "jarSha256": "799c665c39139bb675a8679e8e1282e6e655645d11840b586ff179983423649f"
+  },
+  "sourceFiles": [
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/api/WritingController.java",
+      "sha256": "d7ad16eb37ff2496e56d7eef50a082e3037cea6e6e875215a43e6289dae0270b"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/api/WritingResourcesController.java",
+      "sha256": "379c0f507da2ff34f5300a7474329770b6137e3631f55b13489db64ce909ef19"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/application/WritingBudgetFactory.java",
+      "sha256": "95d22da4f32870bd44519b10fc26a3626ea9f4e5ee6dbc747bc1403251044805"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/application/WritingService.java",
+      "sha256": "e8c6573ea9d00f11886c907a14b8294c145d267849b726f45f97a89059c75d8c"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/context/WritingContext.java",
+      "sha256": "45df836bee1ebf22661370944e862efee5e5b5ffe763528d8717a219d53f4882"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/context/WritingRetrieval.java",
+      "sha256": "f0fe2d03b2d72a4751025d309dd4511fa07570e771cfe833fa87832a4c9407b9"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/domain/WritingChecks.java",
+      "sha256": "6c7eac9d7cf1e2a59fd02d483d5bd1ede69daa8abcc0001351ad5a2e0754390c"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/domain/WritingJson.java",
+      "sha256": "529a270bd4ba14e99636921ae163e79609940a0f1225837c76d2d6d69d14c450"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/domain/WritingLimits.java",
+      "sha256": "8005d70d88ed999f4324cfbed82ffe1f59506b22519c7f966bf04d0d240a95d9"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/domain/WritingTaskRules.java",
+      "sha256": "61d1a6fa9ff40f38a58bb19251bfc79190846ec4eae16539dbcdf17a1b6ddcfd"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/client/WritingContentClient.java",
+      "sha256": "345eff5fc17d2908007def181e162104604c6892c15c469d71241e38a93978e9"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/client/WritingRemoteErrors.java",
+      "sha256": "b553ff299675525a4d8f2b287d8576656af58843501e290d46f77ed66b279401"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/client/WritingSearchClient.java",
+      "sha256": "458c213cf23e34e0102024c3eb4de8f28965aaabd63481a92616f59c4ec4e5b1"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/job/WritingIndexJobs.java",
+      "sha256": "2e906d298c28bd4d0fab36f0a61038ed0a12b595a8e98e987e3c2cc7f2eaa6fd"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/job/WritingTaskWorker.java",
+      "sha256": "37fef875baa2a7e52372fbcbfa5258bc4be21d3ee8ef1fe534b30b7d4580eccf"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/model/WritingModel.java",
+      "sha256": "1570abeb30cb40d68d57c86a8d7eac1498614f794ea47c24174c1d888fc178a8"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/infrastructure/persistence/WritingStore.java",
+      "sha256": "cd5b69c5aca0ad268dce45d5cbf440c58537c50a94d96fcee9747fddca3c37ff"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/skill/WritingSkillRegistry.java",
+      "sha256": "cf89b5804a7f239d050bdb4ffa6be99c774a9fb8ddb03b369544a186564b8584"
+    },
+    {
+      "path": "backend/novel-ai/src/main/java/com/novel/modules/agent/writing/tool/WritingTools.java",
+      "sha256": "216e2412a8cd6042fcef2c14b9d771431d067de30db6bcc9527f8dc7ce5beac8"
+    },
+    {
+      "path": "backend/novel-ai/src/main/resources/writing/skills/dialogue/SKILL.md",
+      "sha256": "07e68626be0460ee2a22dad97a20fb6001023c41e88080d7737090946225af1c"
+    },
+    {
+      "path": "backend/novel-ai/src/main/resources/writing/skills/restrained/SKILL.md",
+      "sha256": "bcc62ba4e3585d88b71d07d4845968bb0774e2e049de728c8f994da2714758b5"
+    }
+  ],
+  "compatibility": {
+    "apiPathsChanged": false,
+    "databaseMigrationRequired": false,
+    "defaultSkillBodiesPreserved": true,
+    "taskSkillRulesServerFrozen": true,
+    "callerSkillSnapshotIgnored": true,
+    "workerIdentityEstablishedBeforeExecution": true
+  },
+  "commands": [
+    "mvn -o -pl novel-ai -am clean package -Dtest=Writing*Test -Dsurefire.failIfNoSpecifiedTests=false -Dwriting.mysql=true -Dnet.bytebuddy.experimental=true -DreuseForks=false",
+    "mvn -o -pl novel-ai -am package -Dwriting.mysql=true -Dnet.bytebuddy.experimental=true -DreuseForks=false",
+    "mvn -o -pl novel-ai -am package -Dtest=Writing*Test -Dsurefire.failIfNoSpecifiedTests=false -Dwriting.mysql=true -Dnet.bytebuddy.experimental=true -DreuseForks=false",
+    "npm run build",
+    "node --test tests/writing-events.test.mjs"
+  ],
+  "paidProviderCalls": false,
+  "servicesRestarted": false,
+  "limitations": [
+    "Class-path Skill catalog loads on startup; rebuild and restart after file changes",
+    "Historical tasks without rule snapshots resolve their IDs using deployed files",
+    "External Skill import and live hot reload excluded",
+    "Actual provider literary quality and live browser visual checks not performed"
+  ]
+}

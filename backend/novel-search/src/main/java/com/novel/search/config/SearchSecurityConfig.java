@@ -185,6 +185,7 @@ public class SearchSecurityConfig {
                          * 未登录 → 走 authenticationEntryPoint（body code:401）
                          * 已登录但权限不够 → 走 accessDeniedHandler（body code:403）
                          */
+                        .requestMatchers("/internal/writing-index/**").hasAnyRole("AUTHOR", "ADMIN")
                         .anyRequest().authenticated())
 
                 /*

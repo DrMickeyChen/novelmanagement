@@ -150,9 +150,9 @@ public class DeepSeekAiStreamSource implements AiStreamSource {
          *     也【故意不写 default】—— 见那个类里更长的论证。
          *   ★ 放在 try 之外：这是一条不该存在的调用路径，不该在账本上留一行。
          */
-        if (scene == AiScene.AUDIT) {
+        if (scene != AiScene.SUMMARY) {
             throw new IllegalStateException(
-                    "AUDIT 不是流式场景，不该走到 DeepSeekAiStreamSource —— 见 AiScene.AUDIT 的注释");
+                    "此生成器仅用于前情摘要；写作请使用 Writing Agent");
         }
 
         /*

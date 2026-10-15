@@ -44,6 +44,8 @@ novel:
     expire-days: 7
 
   ai:
+    writing:
+      enabled: ${WRITING_AGENT_ENABLED:false}
     book-finder:
       engine: ${BOOK_FINDER_ENGINE:langchain4j}
     provider: deepseek

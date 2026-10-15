@@ -23,7 +23,7 @@
  * 这里只做「组合调用 + 状态管理」，不直接碰 axios ——
  * 所有错误提示都由 request.js 的拦截器统一发，这个组件不重复弹。
  */
-import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getChapterDetail, saveChapter, createChapter } from '@/api/chapter'
 
@@ -57,6 +57,9 @@ const statusDesc = ref('草稿')
 
 const loading = ref(false)
 const saving = ref(false)
+const contentVersion = ref(0)
+const agentBusy = ref(false)
+const conflict = ref(false)
 
 /**
  * 正文输入框的组件引用。
@@ -99,7 +102,7 @@ const isDirty = computed(
 const wordCount = computed(() => content.value.replace(/[\t\n\x0B\f\r ]/g, '').length)
 
 /** 待审核的章节存不了（后端 2003），提前把输入框封上，别让作者白写 */
-const readOnly = computed(() => status.value === 1 && currentId.value !== null)
+const readOnly = computed(() => agentBusy.value || (status.value === 1 && currentId.value !== null))
 
 /**
  * 加载章节详情。
@@ -123,6 +126,8 @@ async function load() {
   loading.value = true
   try {
     const detail = await getChapterDetail(currentId.value)
+    contentVersion.value = detail.contentVersion ?? 0
+    conflict.value = false
     title.value = detail.title ?? ''
     content.value = detail.content ?? ''
     status.value = detail.status ?? 0
@@ -207,18 +212,19 @@ async function doSave(opts = {}) {
   saving.value = true
   const previousStatus = status.value
   try {
-    const payload = { title: trimmedTitle, content: content.value }
+    const payload = { title: trimmedTitle, content: content.value.replace(/\r\n?/g, '\n'), expectedVersion: contentVersion.value }
 
     if (currentId.value === null) {
       currentId.value = await createChapter(props.novelId, payload)
+      contentVersion.value = (await getChapterDetail(currentId.value)).contentVersion ?? 0
       emit('created', currentId.value)
       if (!opts.silent) ElMessage.success('章节已创建')
     } else {
-      await saveChapter(currentId.value, payload)
+      contentVersion.value = await saveChapter(currentId.value, payload)
       if (!opts.silent) ElMessage.success('已保存')
     }
 
-    snapshot.value = { title: title.value, content: content.value }
+    snapshot.value = { title: payload.title, content: payload.content }
 
     /*
      * ★★ 已发布的章节一保存就会被后端【自动退回草稿】
@@ -244,7 +250,9 @@ async function doSave(opts = {}) {
 
     emit('saved', currentId.value)
     return true
-  } catch {
+  } catch (error) {
+    // Shared request utility strips HTTP metadata; stop automatic retries on any save failure.
+    conflict.value = true
     // ★ 拦截器已提示具体原因（2003 审核期间不能改 / 3005 正文为空等）
     return false
   } finally {
@@ -285,7 +293,7 @@ function clearTimer() {
  *   作者点「取消」的意思是放弃，而自动保存已经悄悄存进去了。
  */
 watch([title, content], () => {
-  if (!props.autosave || readOnly.value) return
+  if (!props.autosave || readOnly.value || conflict.value) return
   clearTimer()
   if (!isDirty.value) return
   timer = setTimeout(() => save({ silent: true }), AUTOSAVE_DELAY)
@@ -312,116 +320,50 @@ onBeforeUnmount(clearTimer)
  *   而那两个说法直接打架。调用方拿到这两个值去改节点就行了。
  *   （章节管理页不用它们 —— 那边保存之后会重新拉整个列表。）
  */
-/* ==================== AI 面板的「采纳」落点 ==================== */
-
-/**
- * 追加一段文字到正文末尾。**「续写正文」采纳时用这个。**
- *
- * ★ 中间补一个空行（`\n\n`）分段，因为阅读端就是按空行分段的
- *   （见模板里那个 placeholder）。不补的话，续写出来的第一句会
- *   直接粘在原文最后一个字后面，作者还得手动去敲一个回车。
- *   ★ 但原文本来就以换行结尾时不补 —— 否则会多出一个空段落。
- *
- * ★ 走 `content.value = ...` 而不是直接塞 textarea：那样绕过了 v-model，
- *   `isDirty` 会是 false（它是**内容比对**算出来的，见上面那段说明），
- *   于是这几十个字既不会被自动保存、切节点时也不会被 flush ——
- *   **作者看着字在屏幕上，一离开就没了。**
- *
- * @returns {boolean} 是否真的写进去了
- */
-function appendText(text) {
-  const t = String(text ?? '')
-  if (!t) return false
-  if (readOnly.value) {
-    ElMessage.warning('这一章正在审核中，不能修改正文')
-    return false
-  }
-  const cur = content.value
-  content.value = !cur ? t : cur.endsWith('\n') ? `${cur}${t}` : `${cur}\n\n${t}`
-  return true
+async function withSavedLock(action) {
+  const el = inputRef.value?.textarea
+  const start = el?.selectionStart ?? content.value.length
+  const end = el?.selectionEnd ?? start
+  agentBusy.value = true
+  clearTimer()
+  try {
+    if (inflight) await inflight
+    if (!await flush() || conflict.value) throw new Error('正文保存失败，已保留本地内容，请先处理版本冲突')
+    const selection = { start, end, original: content.value.slice(start, end) }
+    return await action({ chapterId: currentId.value, expectedChapterVersion: contentVersion.value, selection })
+  } finally { agentBusy.value = false }
 }
 
-/**
- * 用一段文字**替换用户选中的部分**。「润色段落」采纳时用这个。
- *
- * ★ 选区是在 textarea **失焦之后**仍然保留的（`selectionStart/End`
- *   是元素的属性，不是「有没有焦点」）。所以用户先选好一段、
- *   再去右边点 AI 面板的按钮，回来点「采纳」时选区还在。
- *
- * ★★ 换完之后要把光标移到替换段的末尾，否则它会被浏览器重置到 0 ——
- *   作者接着打字会打到最后一次保存前的位置（很可能是全文开头），
- *   而屏幕上看着一切正常。
- *
- * @returns {boolean} 是否真的替换了
- */
-function replaceSelection(text) {
-  const t = String(text ?? '')
-  if (!t) return false
-  if (readOnly.value) {
-    ElMessage.warning('这一章正在审核中，不能修改正文')
-    return false
-  }
-
-  const el = inputRef.value?.textarea
-  if (!el) return false
-
-  const start = el.selectionStart ?? 0
-  const end = el.selectionEnd ?? 0
-  if (start === end) {
-    ElMessage.warning('请先在正文里选中要润色的那一段')
-    return false
-  }
-
-  const cur = content.value
-  content.value = cur.slice(0, start) + t + cur.slice(end)
-
-  const caret = start + t.length
-  // ★ 等 Vue 把新值刷进 DOM 之后再设光标，否则会被 DOM 更新覆盖掉
-  nextTick(() => {
-    el.focus()
-    el.setSelectionRange(caret, caret)
-  })
-  return true
-}
-
-/**
- * 读用户当前选中的文本，没有选中时返回空串。
- *
- * ★ 给「润色」拼请求上下文用的 —— 润色的**输入就是选中的那段**，
- *   不是整章。作者选中一段点润色，拿到的是那一段的改写；
- *   把整章发过去的话，返回的会是整章的改写，替换进选区里就全乱了。
- */
-function getSelection() {
-  const el = inputRef.value?.textarea
-  if (!el) return ''
-  const start = el.selectionStart ?? 0
-  const end = el.selectionEnd ?? 0
-  if (start === end) return ''
-  return content.value.slice(start, end)
+function applyAgentResult(result) {
+  title.value = result.title
+  content.value = result.content
+  contentVersion.value = result.version
+  snapshot.value = { title: result.title, content: result.content }
+  conflict.value = false
+  if (status.value === 2) { status.value = 0; statusDesc.value = '草稿' }
+  clearTimer()
+  emit('saved', currentId.value)
 }
 
 defineExpose({
+  withSavedLock,
+  applyAgentResult,
+  contentVersion,
   save,
   flush,
   isDirty,
   currentId,
   status,
   statusDesc,
-  /* ★ 下面这组是 S12 给 AI 面板加的。`content`/`title` 是当前值
-     （defineExpose 会拆 ref，读到的是字符串不是 ref 对象），
-     拼「续写」的上下文要用。 */
-  content,
-  title,
-  appendText,
-  replaceSelection,
-  getSelection,
+
 })
 </script>
 
 <template>
   <div v-loading="loading" class="chapter-editor">
+    <el-alert v-if="conflict" title="章节版本冲突：本地内容已保留，自动保存暂停。请复制内容后刷新并对比。" type="error" :closable="false" show-icon />
     <el-alert
-      v-if="readOnly"
+      v-if="status === 1 && currentId !== null"
       type="warning"
       show-icon
       :closable="false"

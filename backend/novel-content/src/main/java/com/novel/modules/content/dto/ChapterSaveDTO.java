@@ -18,6 +18,11 @@ import lombok.Data;
 @Schema(description = "作者保存章节内容入参")
 public class ChapterSaveDTO {
 
+    private Long expectedVersion;
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    private Long savedVersion;
+
     @Schema(description = "章节标题", example = "第一章 测试", requiredMode = Schema.RequiredMode.REQUIRED)
     @NotBlank(message = "章节标题不能为空")
     @Size(max = 200, message = "章节标题最多 200 个字")

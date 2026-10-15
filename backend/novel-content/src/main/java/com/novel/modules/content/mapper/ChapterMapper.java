@@ -25,6 +25,9 @@ import java.util.List;
 @Mapper
 public interface ChapterMapper extends BaseMapper<Chapter> {
 
+    @Select("SELECT * FROM chapter WHERE id=#{id} AND deleted=0 FOR UPDATE")
+    Chapter selectForUpdate(@Param("id") Long id);
+
     /**
      * 取某本作品当前最大的章节序号，用于给新章节分配 {@code MAX + 1}。<b>查不到返回 {@code null}</b>。
      *

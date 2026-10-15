@@ -34,6 +34,9 @@ import java.time.LocalDateTime;
 @TableName("chapter")
 public class Chapter implements Serializable {
 
+    /** Incremented under the chapter row lock for every title/body change. */
+    private Long contentVersion = 0L;
+
     @Serial
     private static final long serialVersionUID = 1L;
 

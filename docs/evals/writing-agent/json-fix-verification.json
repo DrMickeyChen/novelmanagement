@@ -1,0 +1,16 @@
+{
+  "date": "2026-10-14",
+  "scope": "opening chapter recap, JSON object output mode, schema parsing and bounded format repair",
+  "backend": {"tests": 26, "passed": 26, "failed": 0, "skipped": 0},
+  "suites": {
+    "WritingTextTest": 4,
+    "WritingChecksTest": 3,
+    "WritingDatabaseTest": 9,
+    "WritingJsonTest": 4,
+    "WritingModelHttpTest": 4,
+    "WritingRemoteErrorsTest": 2
+  },
+  "diagnosis": {"phase": "RECAP", "sources": 0, "calls": 1, "inputTokens": 117, "outputTokens": 21, "totalTokens": 138, "originalReplyRetained": false},
+  "paidModelTest": "not called",
+  "deployment": "restart novel-ai; no SQL migration"
+}
